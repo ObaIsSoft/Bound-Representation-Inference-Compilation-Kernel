@@ -1,0 +1,6 @@
+timestamp,session_id,regime,material_name,geometry_mass,physics_safe,manufacturable,cost_estimate,max_stress_mpa,flight_thrust_req_n,corrosion_score
+2026-01-13T18:26:07.161665,unknown,AERIAL,unknown,0.0,True,True,0.0,0.0,9.81,0.0
+2026-01-14T00:46:09.147700,unknown,AERIAL,unknown,0.0,True,True,0.0,0.0,2.78,0.0
+2026-01-14T05:00:52.097463,unknown,GROUND,unknown,0.0,False,True,0.0,0.0,0.0,0.0
+2026-01-14T05:01:06.442493,unknown,GROUND,unknown,0.0,False,True,0.0,0.0,0.0,0.0
+2026-01-14T05:01:17.333705,unknown,GROUND,unknown,0.0,False,True,0.0,0.0,0.0,0.0

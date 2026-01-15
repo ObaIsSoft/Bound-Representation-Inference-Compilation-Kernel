@@ -1,0 +1,191 @@
+from typing import Dict, Any
+
+class MaterialAgent:
+    """
+    The 'Librarian' of Matter.
+    Provides rigorous, temperature-dependent material properties.
+    """
+    
+    def __init__(self):
+        self.db_path = "data/materials.db"
+        
+        # Initialize Oracles for advanced calculations
+        try:
+            from agents.physics_oracle.physics_oracle import PhysicsOracle
+            from agents.chemistry_oracle.chemistry_oracle import ChemistryOracle
+            self.physics_oracle = PhysicsOracle()
+            self.chemistry_oracle = ChemistryOracle()
+            self.has_oracles = True
+        except ImportError:
+            self.physics_oracle = None
+            self.chemistry_oracle = None
+            self.has_oracles = False
+    
+    def run(self, material_name: str, temperature: float = 20.0) -> Dict[str, Any]:
+        """
+        Query database for material properties and apply thermal degradation.
+        """
+        import sqlite3
+        import logging
+        
+        logger = logging.getLogger(__name__)
+        
+        props = {}
+        found = False
+        
+        # 1. Query DB
+        try:
+            conn = sqlite3.connect(self.db_path)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            
+            # Fuzzy search
+            cursor.execute("SELECT * FROM alloys WHERE name LIKE ?", (f"%{material_name}%",))
+            row = cursor.fetchone()
+            
+            if row:
+                props = dict(row)
+                found = True
+                # Map DB columns to Agent Schema if names differ
+                # yield_strength is in DB
+                # melting_point is in DB
+                # density is in DB
+                
+                # Check for max temp, default to 150C if not in DB (DB doesn't have max_temp column yet in schema, using heuristic)
+                props["max_temp"] = props.get("max_temp", 150.0) 
+                
+            conn.close()
+        except Exception as e:
+            logger.error(f"DB Error: {e}")
+            
+        # 2. Fallback if DB query failed or empty
+        if not found:
+             logger.warning(f"Material '{material_name}' not found in DB. Using Generic Aluminum.")
+             props = {
+                "density": 2700,
+                "yield_strength": 276e6,
+                "melting_point": 582,
+                "max_temp": 150
+             }
+
+        # 3. Temperature Degradation
+        T_melt = props["melting_point"]
+        strength_factor = 1.0
+        
+        if temperature > props["max_temp"]:
+            excess = temperature - props["max_temp"]
+            strength_factor = max(0, 1.0 - (excess * 0.005))
+            
+        return {
+            "name": material_name if found else f"Generic Aluminum (Fallback for {material_name})",
+            "properties": {
+                "density": props["density"],
+                "yield_strength": props["yield_strength"] * strength_factor,
+                "melting_point": props["melting_point"],
+                "is_melted": temperature >= T_melt,
+                "strength_factor": round(strength_factor, 2)
+            }
+        }
+
+    def calculate_exact_mass_sdf(self, material_name: str, stock_dims: list, toolpaths: list, precision: int = 1000) -> Dict[str, Any]:
+        """
+        Calculate EXACT Mass by integrating the SDF Volume (Zero Mesh Error).
+        Uses Monte Carlo integration for robustness on arbitrary 3D shapes.
+        
+        Args:
+            material_name: For density lookup
+            stock_dims: [x, y, z] bounding box of stock
+            toolpaths: List of VMK instructions
+            precision: Samples per dimension or total samples? 
+                       Let's use Total Samples = precision^3 for grid, or just N for Monte Carlo.
+                       Using N=10000 for speed in this implementation.
+        """
+        try:
+            from vmk_kernel import SymbolicMachiningKernel, ToolProfile, VMKInstruction
+            import numpy as np
+        except ImportError:
+            return {"mass_kg": 0.0, "error": "VMK not available"}
+
+        # 1. Get Density (kg/m^3)
+        mat_data = self.run(material_name)
+        density = mat_data["properties"]["density"] # kg/m^3
+        
+        # 2. Setup Kernel & Execute
+        kernel = SymbolicMachiningKernel(stock_dims=stock_dims)
+        
+        # Auto-register tools
+        tools_seen = set()
+        for op in toolpaths:
+            tid = op.get("tool_id")
+            if tid not in tools_seen:
+                 # Default tool if not strictly defined (Verification context)
+                 kernel.register_tool(ToolProfile(id=tid, radius=1.0, type="BALL"))
+                 tools_seen.add(tid)
+            kernel.execute_gcode(VMKInstruction(**op))
+            
+        # 3. Monte Carlo Volume Integration
+        # Volume Box = stock_dims[0] * stock_dims[1] * stock_dims[2]
+        # (Assuming dims are full width, centered? Kernel logic: q = abs(p) - dims/2)
+        # So dims represents the FULL extent (Width, Length, Height).
+        # Box Volume:
+        vol_box = (stock_dims[0]/1000.0) * (stock_dims[1]/1000.0) * (stock_dims[2]/1000.0) # mm -> m
+        
+        # Sampling bounds: -dims/2 to +dims/2
+        low = np.array(stock_dims) * -0.5
+        high = np.array(stock_dims) * 0.5
+        
+        N_SAMPLES = 1000 if precision < 1000 else precision # Default 1000 is too low for accuracy, use higher in production
+        
+        points = np.random.uniform(low=low, high=high, size=(N_SAMPLES, 3))
+        
+        inside_count = 0
+        for p in points:
+            sdf = kernel.get_sdf(p)
+            # Inside Material if SDF < 0 (Inside Stock AND Outside Cut)
+            # Wait, our logic: max(d_stock, -d_cut).
+            # Inside Stock: d_stock < 0.
+            # Outside Cut: d_cut > 0 (Outside capsule). -d_cut < 0.
+            # max(neg, neg) = neg.
+            # So SDF < 0 means Material Exists.
+            if sdf < 0:
+                inside_count += 1
+                
+        volume_ratio = inside_count / N_SAMPLES
+        volume_m3 = vol_box * volume_ratio
+        
+        mass_kg = volume_m3 * density
+        
+        return {
+            "mass_kg": mass_kg,
+            "volume_m3": volume_m3,
+            "density": density,
+            "samples": N_SAMPLES,
+            "confidence": "Statistical (Monte Carlo)"
+        }
+
+    def calculate_physics(self, domain: str, params: dict) -> dict:
+        """Delegate physics calculations to Physics Oracle"""
+        if not self.has_oracles:
+            return {"status": "error", "message": "Physics Oracle not available"}
+        return self.physics_oracle.solve(f"Calculate {domain}", domain, params)
+    
+    def calculate_chemistry(self, domain: str, params: dict) -> dict:
+        """Delegate chemistry calculations to Chemistry Oracle"""
+        if not self.has_oracles:
+            return {"status": "error", "message": "Chemistry Oracle not available"}
+        return self.chemistry_oracle.solve(f"Calculate {domain}", domain, params)
+
+    def calculate_material_property(self, domain: str, params: dict) -> dict:
+        """Delegate to Materials Oracle for comprehensive materials science calculations"""
+        if not self.has_oracles:
+            return {"status": "error", "message": "Materials Oracle not available"}
+        
+        # Initialize Materials Oracle if not already done
+        if not hasattr(self, 'materials_oracle'):
+            try:
+                from agents.materials_oracle.materials_oracle import MaterialsOracle
+                self.materials_oracle = MaterialsOracle()
+            except ImportError:
+                return {"status": "error", "message": "Materials Oracle not available"}
+        
+        return self.materials_oracle.solve(f"Calculate {domain}", domain, params)

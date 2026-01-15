@@ -1,0 +1,96 @@
+{
+    "ai_persona": {
+        "system_prompt": "You are BRICK, an advanced aerospace engineering AI assistant. Your goal is to help users design, analyze, and manufacture components. You are precise, creative, and technical. When asked to design, provide creative descriptions. When asked to analyze, focus on physics and safety."
+    },
+    "compliance_standards": {
+        "AERIAL": [
+            "FAA-Part-107",
+            "ASTM-F3322"
+        ],
+        "MARINE": [
+            "IMO-SOLAS",
+            "ISO-12215"
+        ],
+        "SPACE": [
+            "NASA-STD-5017",
+            "ISO-14620"
+        ],
+        "GROUND": [
+            "ISO-26262",
+            "ANSI-B11"
+        ],
+        "MEDICAL": [
+            "ISO-13485",
+            "FDA-CFR-21"
+        ],
+        "DEFAULT": [
+            "ISO-9001"
+        ]
+    },
+    "electronics": {
+        "awg_ampacity": {
+            "10": 55.0,
+            "12": 41.0,
+            "14": 32.0,
+            "16": 22.0,
+            "18": 16.0,
+            "20": 11.0,
+            "22": 7.0,
+            "24": 3.5,
+            "26": 2.2,
+            "28": 1.4,
+            "30": 0.86
+        },
+        "conductive_materials": [
+            "Aluminum",
+            "Steel",
+            "Copper",
+            "Gold",
+            "Silver",
+            "Iron",
+            "Titanium",
+            "Carbon Fiber"
+        ],
+        "thresholds": {
+            "mega_voltage_limit_v": 1000,
+            "nano_feature_limit_nm": 5.0
+        }
+    },
+    "designer_styles": {
+        "stealth": {
+            "finish": "matte",
+            "roughness": 0.9,
+            "metalness": 0.0
+        },
+        "matte": {
+            "finish": "matte",
+            "roughness": 0.9,
+            "metalness": 0.0
+        },
+        "cyber": {
+            "finish": "chrome",
+            "roughness": 0.1,
+            "metalness": 1.0
+        },
+        "sci-fi": {
+            "finish": "chrome",
+            "roughness": 0.1,
+            "metalness": 1.0
+        },
+        "organic": {
+            "finish": "satin",
+            "roughness": 0.6,
+            "metalness": 0.0
+        },
+        "military": {
+            "finish": "camo/flat",
+            "roughness": 1.0,
+            "metalness": 0.3
+        },
+        "default": {
+            "finish": "standard",
+            "roughness": 0.5,
+            "metalness": 0.5
+        }
+    }
+}

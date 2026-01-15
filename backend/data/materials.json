@@ -1,0 +1,182 @@
+{
+    "_comment": "Material Database for BRICK OS. Used by ChemistryAgent and MaterialsConnector.",
+    "periodic_table": {
+        "H": {
+            "atomic_number": 1,
+            "mass": 1.008,
+            "name": "Hydrogen",
+            "isotopes": [
+                1,
+                2,
+                3
+            ]
+        },
+        "Li": {
+            "atomic_number": 3,
+            "mass": 6.94,
+            "name": "Lithium",
+            "isotopes": [
+                6,
+                7
+            ],
+            "group": "Alkali Metal"
+        },
+        "C": {
+            "atomic_number": 6,
+            "mass": 12.011,
+            "name": "Carbon",
+            "isotopes": [
+                12,
+                13,
+                14
+            ]
+        },
+        "O": {
+            "atomic_number": 8,
+            "mass": 15.999,
+            "name": "Oxygen",
+            "isotopes": [
+                16,
+                17,
+                18
+            ]
+        },
+        "Na": {
+            "atomic_number": 11,
+            "mass": 22.99,
+            "name": "Sodium",
+            "isotopes": [
+                23
+            ],
+            "group": "Alkali Metal"
+        },
+        "Mg": {
+            "atomic_number": 12,
+            "mass": 24.305,
+            "name": "Magnesium",
+            "isotopes": [
+                24,
+                25,
+                26
+            ]
+        },
+        "Al": {
+            "atomic_number": 13,
+            "mass": 26.982,
+            "name": "Aluminum",
+            "isotopes": [
+                27
+            ]
+        },
+        "Si": {
+            "atomic_number": 14,
+            "mass": 28.085,
+            "name": "Silicon",
+            "isotopes": [
+                28,
+                29,
+                30
+            ]
+        },
+        "Fe": {
+            "atomic_number": 26,
+            "mass": 55.845,
+            "name": "Iron",
+            "isotopes": [
+                54,
+                56,
+                57,
+                58
+            ]
+        },
+        "Cu": {
+            "atomic_number": 29,
+            "mass": 63.546,
+            "name": "Copper",
+            "isotopes": [
+                63,
+                65
+            ]
+        },
+        "Zn": {
+            "atomic_number": 30,
+            "mass": 65.38,
+            "name": "Zinc",
+            "isotopes": [
+                64,
+                66,
+                67,
+                68,
+                70
+            ]
+        }
+    },
+    "galvanic_series": {
+        "magnesium": -2.37,
+        "zinc": -0.76,
+        "aluminum": -0.75,
+        "steel": -0.44,
+        "copper": 0.34,
+        "titanium": -0.10,
+        "carbon": 0.30,
+        "gold": 1.50
+    },
+    "corrosion_kinetics": {
+        "steel": {
+            "base_rate_mm_year": 0.1,
+            "ph_sensitivity": 2.0,
+            "chloride_sensitivity": 0.5
+        },
+        "aluminum": {
+            "base_rate_mm_year": 0.01,
+            "ph_limit_low": 4.0,
+            "ph_limit_high": 9.0,
+            "amphoteric_factor": 10.0
+        },
+        "titanium": {
+            "base_rate_mm_year": 0.0001,
+            "ph_sensitivity": 0.0
+        }
+    },
+    "materials": [
+        {
+            "id": "aluminum_6061",
+            "name": "Aluminum 6061-T6",
+            "formula": "Al0.97Mg0.01Si0.006",
+            "elements": [
+                "Al",
+                "Mg",
+                "Si",
+                "Fe",
+                "Cu",
+                "Cr"
+            ],
+            "density": 2.7,
+            "type": "aluminum"
+        },
+        {
+            "id": "steel_304",
+            "name": "Stainless Steel 304",
+            "formula": "Fe0.70Cr0.19Ni0.09",
+            "elements": [
+                "Fe",
+                "Cr",
+                "Ni",
+                "Mn"
+            ],
+            "density": 8.0,
+            "type": "steel"
+        },
+        {
+            "id": "carbon_fiber",
+            "name": "Carbon Fiber Standard Modulus",
+            "elements": [
+                "C",
+                "N",
+                "O"
+            ],
+            "density": 1.6,
+            "type": "carbon"
+        }
+    ]
+}

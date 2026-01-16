@@ -5,9 +5,14 @@ import { useTheme } from '../../contexts/ThemeContext';
 import { useDesign } from '../../contexts/DesignContext';
 import { useSettings } from '../../contexts/SettingsContext';
 import { useSimulation } from '../../contexts/SimulationContext';
-import DefaultSimulation from './DefaultSimulation';
-import RaymarchScene from './RaymarchScene';
-import TypeGPURaymarch from './TypeGPURaymarch';
+
+// Unified SDF Renderer (replaces DefaultSimulation, RaymarchScene, TypeGPURaymarch)
+import UnifiedSDFRenderer from './UnifiedSDFRenderer';
+
+// Legacy imports kept for gradual migration (can be removed after verification)
+// import DefaultSimulation from './DefaultSimulation';
+// import RaymarchScene from './RaymarchScene';
+// import TypeGPURaymarch from './TypeGPURaymarch';
 
 // View Modes Definition (Stable)
 const ALL_VIEW_MODES = [
@@ -80,16 +85,12 @@ const SimulationBay = ({ activeActivity }) => {
                             Select a file to start designing
                         </span>
                     </div>
-                ) : viewMode === 'micro' ? (
-                    <div className="w-full h-full">
-                        <RaymarchScene design={activeTab} />
-                    </div>
-                ) : viewMode === 'micro_wgsl' ? (
-                    <div className="w-full h-full">
-                        <TypeGPURaymarch design={activeTab} />
-                    </div>
                 ) : (
-                    <DefaultSimulation viewMode={viewMode} physicsResult={physicsResult} showGrid={showGrid} />
+                    <UnifiedSDFRenderer 
+                        design={activeTab}
+                        viewMode={viewMode}
+                        physicsData={physicsResult}
+                    />
                 )}
 
                 {/* Overlay UI - Combined FPS + Buffer */}

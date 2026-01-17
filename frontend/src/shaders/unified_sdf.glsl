@@ -15,6 +15,11 @@
  * 7 = Stress/Flow (physics overlay arrows)
  */
 
+precision highp float;
+precision highp int;
+precision highp sampler2D;
+precision highp sampler3D; // [FIX] Required for uMeshSDFTexture
+
 // ============================================
 // UNIFORMS
 // ============================================
@@ -37,6 +42,13 @@ uniform int uComponentCount;
 // Physics Data
 uniform float uPhysicsDataEnabled;
 uniform sampler2D uPhysicsTexture;
+
+// Mesh SDF Texture (Phase 8: Imported Meshes)
+uniform bool uMeshSDFEnabled;
+uniform sampler3D uMeshSDFTexture;
+uniform vec3 uMeshBounds[2];      // [0]=min, [1]=max
+uniform float uMeshSDF_min;
+uniform float uMeshSDF_max;
 
 // Theme & Background
 uniform vec3 uBgColor1;
@@ -72,12 +84,101 @@ float sdCylinder(vec3 p, float h, float r) {
 }
 
 // ============================================
+// MESH SDF SAMPLING (Phase 8: Texture Atlas)
+// ============================================
+
+// Component Definition (Matches Backend Manifest)
+struct ComponentSDF {
+    vec3 atlasOffset;
+    vec3 atlasScale;
+    vec3 localBounds[2];
+    vec2 sdfRange;
+    mat4 transform; // World to Local Matrix (Inverse of Mesh Transform)
+};
+
+#define MAX_COMPONENTS 16 // WebGL Loop Limit Safe
+uniform ComponentSDF uComponents[MAX_COMPONENTS];
+uniform int uAtlasComponentCount; // Number of active components
+
+// Helper for soft min (optional, but nice for intersections)
+float smin(float a, float b, float k) {
+    float h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
+    return mix(b, a, h) - k * h * (1.0 - h);
+}
+
+float sampleMeshSDF(vec3 p) {
+    if (!uMeshSDFEnabled) return 1e10;
+
+    // Single Mesh Mode (Legacy / Simple)
+    if (uAtlasComponentCount <= 1) {
+        // Fallback to original logic if no complex manifest
+        // ... (Original Logic Kept for safety or re-implemented here)
+        // For now, let's assume if count <=1 we might still use the atlas logic 
+        // OR the legacy uniforms. Let's use legacy uniforms for robust fallback.
+        if (uAtlasComponentCount == 0) {
+             vec3 uvw = (p - uMeshBounds[0]) / (uMeshBounds[1] - uMeshBounds[0]);
+             if (any(lessThan(uvw, vec3(0.0))) || any(greaterThan(uvw, vec3(1.0)))) return 1e10;
+             float normalized = texture(uMeshSDFTexture, uvw).r;
+             return normalized * (uMeshSDF_max - uMeshSDF_min) + uMeshSDF_min;
+        }
+    }
+
+    // Atlas Mode
+    float d_min = 1e10;
+    
+    // Unrolled Loop slightly better for some drivers, but standard for ok
+    for(int i=0; i<MAX_COMPONENTS; i++) {
+        if (i >= uAtlasComponentCount) break;
+
+        // 1. World -> Local Component Space
+        // Note: uComponents[i].transform MUST be the INVERSE World Matrix 
+        // to take World P -> Local P
+        vec4 localP4 = uComponents[i].transform * vec4(p, 1.0);
+        vec3 localP = localP4.xyz; 
+
+        // 2. AABB Check (Optimization)
+        vec3 bMin = uComponents[i].localBounds[0];
+        vec3 bMax = uComponents[i].localBounds[1];
+        
+        // Exact box distance for empty space skipping
+        vec3 d_box_vec = max(abs(localP - (bMin+bMax)*0.5) - (bMax-bMin)*0.5, 0.0);
+        float d_box = length(d_box_vec);
+        
+        // If inside box, d_box is 0. If outside far, it's > 0
+        // We can just add this to the texture sample if we want exactness, 
+        // or skip texture sample if > epsilon.
+        // For accurate SDF, we need the value inside.
+        
+        bool insideBox = (d_box < 0.01);
+        
+        float dist = 1e10;
+
+        if (insideBox) {
+            // 3. Map to Atlas UV
+            vec3 uv_local = (localP - bMin) / (bMax - bMin);
+            vec3 uv_atlas = uComponents[i].atlasOffset + uv_local * uComponents[i].atlasScale;
+            
+            // 4. Sample
+            float norm = texture(uMeshSDFTexture, uv_atlas).r;
+            dist = norm * (uComponents[i].sdfRange.y - uComponents[i].sdfRange.x) + uComponents[i].sdfRange.x;
+        } else {
+             dist = d_box + 0.05; // Approximation outside
+        }
+
+        d_min = min(d_min, dist);
+    }
+
+    return d_min;
+}
+
+// ============================================
 // SCENE MAP
 // ============================================
 
 float map(vec3 p) {
     float d = 100.0;
     
+    // Native SDF primitives
     if (uBaseShape == 1) {
         d = sdBox(p, uBaseDims * 0.5);
     } else if (uBaseShape == 2) {
@@ -85,7 +186,13 @@ float map(vec3 p) {
     } else if (uBaseShape == 3) {
         d = sdCylinder(p, uBaseDims.y * 0.5, uBaseDims.x * 0.5);
     } else {
-        return 100.0;
+        d = 100.0;
+    }
+    
+    // Combine with mesh SDF (union operation)
+    if (uMeshSDFEnabled) {
+        float d_mesh = sampleMeshSDF(p);
+        d = min(d, d_mesh); // Union: take minimum distance
     }
     
     // Clip Plane (cutaway or interior mode)

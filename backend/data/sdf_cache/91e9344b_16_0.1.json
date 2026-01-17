@@ -1,0 +1,19 @@
+{
+  "bounds": [
+    [
+      -0.5,
+      -0.5,
+      -0.5
+    ],
+    [
+      0.5,
+      0.5,
+      0.5
+    ]
+  ],
+  "resolution": 16,
+  "format": "float32",
+  "mesh_path": "test_assets/test_cube.stl",
+  "face_count": 12,
+  "is_watertight": true
+}

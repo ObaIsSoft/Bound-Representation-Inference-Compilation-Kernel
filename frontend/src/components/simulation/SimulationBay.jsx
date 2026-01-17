@@ -53,6 +53,14 @@ const SimulationBay = ({ activeActivity }) => {
 
     // Physics State (Lifted for Visualization)
     const [physicsResult, setPhysicsResult] = useState(null);
+    const { physState, motionTrail, metrics } = useSimulation();
+
+    // Combine live simulation data
+    const livePhysicsData = {
+        state: physState,
+        motionTrail: motionTrail,
+        metrics: metrics
+    };
 
     // Simply use all modes always. 
     // Restriction logic was preventing users from inspecting static models.
@@ -86,10 +94,10 @@ const SimulationBay = ({ activeActivity }) => {
                         </span>
                     </div>
                 ) : (
-                    <UnifiedSDFRenderer 
+                    <UnifiedSDFRenderer
                         design={activeTab}
                         viewMode={viewMode}
-                        physicsData={physicsResult}
+                        physicsData={livePhysicsData || physicsResult}
                     />
                 )}
 

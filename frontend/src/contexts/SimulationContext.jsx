@@ -84,7 +84,7 @@ export const SimulationProvider = ({ children }) => {
     React.useEffect(() => {
         if (!isRunning) return;
 
-        // Physics Loop (Fast - 100ms)
+        // Physics Loop (200ms instead of 100ms to prevent browser resource exhaustion)
         const physInterval = setInterval(async () => {
             try {
                 // Build environment config based on active scenario
@@ -134,7 +134,7 @@ export const SimulationProvider = ({ children }) => {
                 const res = await fetch('http://localhost:8000/api/physics/step', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ state: physState, inputs, dt: 0.1 })
+                    body: JSON.stringify({ state: physState, inputs, dt: 0.2 })
                 });
                 if (res.ok) {
                     const data = await res.json();
@@ -160,9 +160,13 @@ export const SimulationProvider = ({ children }) => {
 
                     setPhysState(newState);
 
-                    // Update motion trail (keep last 100 points)
+                    // Update motion trail (keep last 100 points) with velocity data
                     if (newState.position) {
-                        setMotionTrail(prev => [...prev.slice(-99), newState.position]);
+                        const trailPoint = {
+                            ...newState.position,
+                            velocity: newState.velocity || 0
+                        };
+                        setMotionTrail(prev => [...prev.slice(-99), trailPoint]);
                     }
 
                     // Update CPU/Memory from Physics
@@ -188,7 +192,7 @@ export const SimulationProvider = ({ children }) => {
                 console.error("Physics Fault:", err);
                 setKernelLogs(prev => [...prev, `[ERR] Physics Kernel Fault: ${err.message}`].slice(-20));
             }
-        }, 100);
+        }, 200); // 200ms interval to prevent browser resource exhaustion
 
         // Chemistry Loop (Slower - 500ms)
         const chemInterval = setInterval(async () => {

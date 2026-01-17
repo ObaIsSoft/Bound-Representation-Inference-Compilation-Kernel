@@ -12,6 +12,8 @@ export const SettingsProvider = ({ children }) => {
     const [showTemperatureSensor, setShowTemperatureSensor] = useState(false);
     const [show3DThermometer, setShow3DThermometer] = useState(false);
     const [aiModel, setAiModel] = useState('mock'); // 'mock', 'openai', 'gemini-robotics', 'gemini-3-pro', 'gemini-3-flash', 'gemini-2.5-flash', 'gemini-2.5-pro'
+    const [visualizationQuality, setVisualizationQualityState] = useState('HIGH'); // 'ULTRA', 'HIGH', 'MEDIUM', 'LOW'
+    const [meshRenderingMode, setMeshRenderingMode] = useState('sdf'); // 'sdf' (boolean ops), 'preview' (fast mesh)
 
     // Load settings from localStorage on mount
     useEffect(() => {
@@ -28,6 +30,8 @@ export const SettingsProvider = ({ children }) => {
                 if (settings.showTemperatureSensor !== undefined) setShowTemperatureSensor(settings.showTemperatureSensor);
                 if (settings.show3DThermometer !== undefined) setShow3DThermometer(settings.show3DThermometer);
                 if (settings.aiModel) setAiModel(settings.aiModel);
+                if (settings.visualizationQuality) setVisualizationQualityState(settings.visualizationQuality);
+                if (settings.meshRenderingMode) setMeshRenderingMode(settings.meshRenderingMode);
             } catch (e) {
                 console.error('Failed to load settings:', e);
             }
@@ -46,6 +50,8 @@ export const SettingsProvider = ({ children }) => {
             showTemperatureSensor,
             show3DThermometer,
             aiModel,
+            visualizationQuality,
+            meshRenderingMode,
             ...newSettings
         };
         localStorage.setItem('brick-settings', JSON.stringify(currentSettings));
@@ -96,6 +102,11 @@ export const SettingsProvider = ({ children }) => {
         saveSettings({ aiModel: value });
     };
 
+    const updateVisualizationQuality = (value) => {
+        setVisualizationQualityState(value);
+        saveSettings({ visualizationQuality: value });
+    };
+
     const resetToDefaults = () => {
         setFontSizeState('12');
         setAutoSave(true);
@@ -105,6 +116,8 @@ export const SettingsProvider = ({ children }) => {
         setCompilerOptimization('balanced');
         setShowTemperatureSensor(false);
         setShow3DThermometer(false);
+        setVisualizationQualityState('HIGH');
+        setMeshRenderingMode('sdf');
         localStorage.removeItem('brick-settings');
     };
 
@@ -130,6 +143,15 @@ export const SettingsProvider = ({ children }) => {
 
                 aiModel,
                 setAiModel: updateAiModel,
+
+                visualizationQuality,
+                setVisualizationQuality: updateVisualizationQuality,
+
+                meshRenderingMode,
+                setMeshRenderingMode: (mode) => {
+                    setMeshRenderingMode(mode);
+                    saveSettings({ meshRenderingMode: mode });
+                },
 
                 resetToDefaults
             }}

@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Dict, Any, List, Optional
 from pydantic import BaseModel
@@ -29,6 +29,92 @@ app = FastAPI(title="BRICK OS API", version="0.1.0")
 
 # --- Agent Registry ---
 AGENTS = get_agent_registry()
+
+# --- Component API ---
+
+@app.get("/api/components/catalog")
+async def get_component_catalog(category: Optional[str] = None, search: Optional[str] = ""):
+    """
+    Get list of available COTS components (Universal Catalog).
+    """
+    # For now, we aggregate from AssetSourcingAgent mocks + Supabase
+    # and return a unified list for the UI.
+    from agents.asset_sourcing_agent import AssetSourcingAgent
+    
+    # 1. Get Sourced Assets (NASA, etc.)
+    sourcing_agent = AssetSourcingAgent()
+    sourced = sourcing_agent.run({"query": search, "source": ""})
+    
+    # 2. Add local/mock components
+    catalog = sourced.get("assets", [])
+    
+    # Return empty if nothing found (Frontend handles empty state)
+    if not catalog:
+        catalog = []
+        
+    return {"catalog": catalog}
+
+class InstallComponentRequest(BaseModel):
+    component_id: str
+    mesh_path: Optional[str] = None
+    mesh_url: Optional[str] = None
+
+class InspectUrlRequest(BaseModel):
+    url: str
+
+@app.post("/api/components/inspect")
+async def inspect_component_url(request: InspectUrlRequest):
+    """
+    Inspects a remote URL (HEAD request) to get metadata before download.
+    """
+    import requests
+    try:
+        # 2-second timeout for responsiveness
+        response = requests.head(request.url, timeout=2, allow_redirects=True)
+        
+        # If HEAD fails (some servers block it), try GET with stream=True and close immediately
+        if response.status_code >= 400:
+             response = requests.get(request.url, stream=True, timeout=2)
+             response.close()
+             
+        if response.status_code >= 400:
+             return {"valid": False, "error": f"HTTP {response.status_code}"}
+             
+        size = response.headers.get("Content-Length", 0)
+        ctype = response.headers.get("Content-Type", "unknown")
+        
+        # Format size
+        size_mb = int(size) / (1024 * 1024) if size else 0
+        
+        return {
+            "valid": True,
+            "size_bytes": int(size) if size else 0,
+            "size_fmt": f"{size_mb:.2f} MB",
+            "type": ctype,
+            "filename": request.url.split("/")[-1].split("?")[0]
+        }
+    except Exception as e:
+        return {"valid": False, "error": str(e)}
+
+@app.post("/api/components/install")
+async def api_install_component(request: InstallComponentRequest):
+    """
+    Install a component (Mesh -> SDF conversion).
+    """
+    if "component" not in AGENTS:
+        raise HTTPException(status_code=500, detail="ComponentAgent not initialized")
+        
+    agent = AGENTS["component"]
+    result = agent.install_component(
+        component_id=request.component_id, 
+        mesh_path=request.mesh_path,
+        mesh_url=request.mesh_url
+    )
+    
+    if result.get("status") == "error":
+        raise HTTPException(status_code=500, detail=result.get("error"))
+        
+    return result
 
 @app.get("/api/agents")
 async def list_agents():
@@ -196,8 +282,8 @@ async def verify_physics(params: Dict[str, Any]):
         return {"type": "err", "text": f"Verification Failed: {str(e)}"}
 
 class PhysicsStepRequest(BaseModel):
-    state: Dict[str, float]
-    inputs: Dict[str, float]
+    state: Dict[str, Any]
+    inputs: Dict[str, Any]
     dt: float = 0.1
 
 @app.post("/api/physics/step")
@@ -206,9 +292,15 @@ async def step_physics(request: PhysicsStepRequest):
     Advances physics simulation by one time step.
     For vHIL real-time telemetry.
     """
-    from agents.physics_agent import PhysicsAgent
-    agent = PhysicsAgent()
-    return agent.step(request.state, request.inputs, request.dt)
+    try:
+        from agents.physics_agent import PhysicsAgent
+        agent = PhysicsAgent()
+        return agent.step(request.state, request.inputs, request.dt)
+    except Exception as e:
+        import traceback
+        print(f"[PHYSICS ERROR] {e}")
+        traceback.print_exc()
+        return {"error": str(e), "state": {}, "metrics": {}}
 
 # --- Chemistry API ---
 
@@ -227,7 +319,7 @@ async def analyze_chemistry(request: ChemistryAnalysisRequest):
     return agent.run(request.materials, request.environment)
 
 class ChemistryStepRequest(BaseModel):
-    state: Dict[str, float]
+    state: Dict[str, Any]
     inputs: Dict[str, Any]
     dt: float = 0.1
 
@@ -237,9 +329,15 @@ async def step_chemistry(request: ChemistryStepRequest):
     Simulates chemical degradation (Corrosion) over time.
     vHIL accelerated aging.
     """
-    from agents.chemistry_agent import ChemistryAgent
-    agent = ChemistryAgent()
-    return agent.step(request.state, request.inputs, request.dt)
+    try:
+        from agents.chemistry_agent import ChemistryAgent
+        agent = ChemistryAgent()
+        return agent.step(request.state, request.inputs, request.dt)
+    except Exception as e:
+        import traceback
+        print(f"[CHEMISTRY ERROR] {e}")
+        traceback.print_exc()
+        return {"error": str(e), "state": {}, "metrics": {}}
 
 
 # --- OpenSCAD API ---
@@ -272,6 +370,83 @@ async def openscad_info():
     
     agent = OpenSCADAgent()
     return agent.get_info()
+
+
+# --- Mesh to SDF API ---
+
+@app.post("/api/mesh/convert")
+async def convert_mesh_to_sdf(
+    file: UploadFile = File(...),
+    resolution: Optional[int] = None
+):
+    """
+    Converts uploaded mesh file (STL/OBJ/GLTF) to SDF texture.
+    
+    Args:
+        file: Mesh file upload
+        resolution: Optional grid resolution (auto if None: 32-256 based on complexity)
+        
+    Returns:
+        {
+            "success": bool,
+            "metadata": {bounds, resolution, face_count},
+            "glsl": GLSL sampler code,
+            "texture_data": base64-encoded float32 texture,
+            "sdf_range": [min, max]
+        }
+    """
+    from utils.mesh_to_sdf_bridge import MeshSDFBridge
+    import tempfile
+    
+    # Validate file type
+    allowed_extensions = ['.stl', '.obj', '.gltf', '.glb']
+    file_ext = os.path.splitext(file.filename)[1].lower()
+    
+    if file_ext not in allowed_extensions:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type: {file_ext}. Allowed: {allowed_extensions}"
+        )
+    
+    bridge = MeshSDFBridge()
+    
+    # Save uploaded file temporarily
+    with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp:
+        content = await file.read()
+        tmp.write(content)
+        tmp_path = tmp.name
+        
+    try:
+        logger.info(f"Converting mesh to SDF: {file.filename} ({len(content)} bytes)")
+        
+        # Convert to SDF (Atlas Strategy)
+        # We now use bake_scene_to_atlas to support both single meshes and multi-part assemblies
+        # This provides the necessary manifest for exploded views.
+        result = bridge.bake_scene_to_atlas(tmp_path, resolution=resolution or 64)
+        
+        return {
+            "success": True,
+            "filename": file.filename,
+            "metadata": result.get("manifest", []), # API backwards compat might need adjustment if client expects single metadata dict
+            "glsl": result["glsl"], 
+            "texture_data": result["texture_data"],
+            "resolution": result["resolution"],
+            "sdf_range": result["sdf_range"],
+            "bounds": result["manifest"][0]["local_bounds"] if result["manifest"] else [[-1,-1,-1],[1,1,1]], # Fallback
+            "is_atlas": True,
+            "manifest": result["manifest"]
+        }
+        
+    except Exception as e:
+        logger.error(f"Mesh conversion failed: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Conversion failed: {str(e)}"
+        )
+    finally:
+        # Clean up temp file
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
 
 
 # --- Shell API ---

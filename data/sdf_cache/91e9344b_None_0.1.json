@@ -1,0 +1,19 @@
+{
+  "bounds": [
+    [
+      -0.5,
+      -0.5,
+      -0.5
+    ],
+    [
+      0.5,
+      0.5,
+      0.5
+    ]
+  ],
+  "resolution": 32,
+  "format": "float32",
+  "mesh_path": "data/components/nasa_shuttle.stl",
+  "face_count": 12,
+  "is_watertight": true
+}

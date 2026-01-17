@@ -143,12 +143,21 @@ class PhysicsAgent:
         Advances the simulation by one time step (dt).
         Implements basic 1D Euler integration for vertical motion and thermal dynamics.
         Now Stochastic: Injects noise if inputs['noise_level'] > 0.
+        Enhanced: Returns 3D position and force vectors for visualization.
         """
         # Unpack State
         velocity = state.get("velocity", 0.0)
         altitude = state.get("altitude", 0.0)
         temp = state.get("temperature", 20.0) # Ambient start
         fuel = state.get("fuel", 100.0)
+        
+        # 3D position (for visualization)
+        pos_x = state.get("position", {}).get("x", 0.0) if isinstance(state.get("position"), dict) else 0.0
+        pos_y = state.get("position", {}).get("y", 0.0) if isinstance(state.get("position"), dict) else altitude
+        pos_z = state.get("position", {}).get("z", 0.0) if isinstance(state.get("position"), dict) else 0.0
+        
+        # Orientation (yaw, pitch, roll)
+        yaw = state.get("orientation", {}).get("yaw", 0.0) if isinstance(state.get("orientation"), dict) else 0.0
 
         # Unpack Inputs
         thrust = inputs.get("thrust", 0.0)
@@ -166,7 +175,7 @@ class PhysicsAgent:
              max_wind = inputs.get("max_wind_force", 10.0)
              wind_force = (random.random() - 0.5) * max_wind * noise_level 
 
-        # Physics Calculations (1D Vertical Motion)
+        # Physics Calculations (1D Vertical Motion + 3D Position Tracking)
         # F_net = Thrust - Weight - Drag + Wind
         weight = mass * gravity
         
@@ -185,9 +194,17 @@ class PhysicsAgent:
         new_velocity = velocity + acceleration * dt
         new_altitude = altitude + velocity * dt
         
+        # 3D position update (simple 2D motion on XZ plane based on yaw)
+        vx = new_velocity * math.sin(yaw)
+        vz = new_velocity * math.cos(yaw)
+        new_pos_x = pos_x + vx * dt
+        new_pos_y = new_altitude
+        new_pos_z = pos_z + vz * dt
+        
         # Ground Constraint
         if new_altitude <= 0:
             new_altitude = 0
+            new_pos_y = 0
             if new_velocity < -1.0:
                new_velocity = 0 
             else:
@@ -208,7 +225,7 @@ class PhysicsAgent:
         # Fuel Consumer
         fuel_burn = thrust * 0.01 * dt
         new_fuel = max(0, fuel - fuel_burn)
-        new_mass = mass - (fuel - new_fuel) * 0.01
+        new_mass = mass - (fuel -new_fuel) * 0.01
 
         # Generate Logs
         logs = []
@@ -231,6 +248,42 @@ class PhysicsAgent:
                 "fuel": new_fuel,
                 "acceleration": acceleration,
                 "mass": new_mass,
+                "position": {
+                    "x": new_pos_x,
+                    "y": new_pos_y,
+                    "z": new_pos_z
+                },
+                "orientation": {
+                    "yaw": yaw,
+                    "pitch": 0.0,
+                    "roll": 0.0
+                },
+                "force_vectors": {
+                    "gravity": {
+                        "x": 0.0,
+                        "y": -weight,
+                        "z": 0.0,
+                        "magnitude": weight
+                    },
+                    "thrust": {
+                        "x": 0.0,
+                        "y": thrust,
+                        "z": 0.0,
+                        "magnitude": thrust
+                    },
+                    "drag": {
+                        "x": 0.0,
+                        "y": -drag_force if velocity > 0 else drag_force,
+                        "z": 0.0,
+                        "magnitude": abs(drag_force)
+                    },
+                    "net": {
+                        "x": 0.0,
+                        "y": f_net,
+                        "z": 0.0,
+                        "magnitude": abs(f_net)
+                    }
+                },
                 "logs": logs # Added logs to the state
             },
             "metrics": {

@@ -3,7 +3,9 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls, PerspectiveCamera } from '@react-three/drei';
 import * as THREE from 'three';
 import { useTheme } from '../../contexts/ThemeContext';
-import PhysicsOverlays from './PhysicsOverlays';
+import { useSettings } from '../../contexts/SettingsContext';
+import { StandardMeshPreview } from './StandardMeshPreview';
+// import PhysicsOverlays from './PhysicsOverlays'; // Disabled temporarily
 
 // Import shaders as raw strings (Vite handles this with ?raw)
 import vertexShader from '../../shaders/unified_sdf_vertex.glsl?raw';
@@ -68,7 +70,9 @@ const SDFKernel = ({
     clipEnabled = false,
     physicsData = null,
     onShaderError = null,
-    theme = 'dark' // Default prop
+    theme = 'dark', // Default prop
+    meshRenderingMode = 'sdf', // 'sdf' or 'preview'
+    design = null // [FIX] Added missing prop
 }) => {
     const meshRef = useRef();
     const materialRef = useRef();
@@ -94,8 +98,32 @@ const SDFKernel = ({
         uPhysicsDataEnabled: { value: physicsData ? 1.0 : 0.0 },
         uPhysicsTexture: { value: new THREE.Texture() }, // Safety dummy texture
         uComponentCount: { value: 0 },
-        uBgColor1: { value: new THREE.Vector3(0.02, 0.03, 0.05) },
-        uBgColor2: { value: new THREE.Vector3(0.0, 0.0, 0.0) },
+
+        // Mesh SDF Uniforms (Phase 8)
+        uMeshSDFEnabled: { value: false },
+        uMeshSDFTexture: { value: null },
+        uAtlasComponentCount: { value: 0 },
+        // We need an array of structs for uComponents. 
+        // Three.js handles array of structs via property flattening or careful object construction if UniformsUtils is used.
+        // However, raw ShaderMaterial usually expects uComponents[0].transform etc.
+        // Best practice in React Three Fiber / raw shader is to initialize with correctly structured objects.
+        uComponents: {
+            value: new Array(16).fill(0).map(() => ({
+                atlasOffset: new THREE.Vector3(),
+                atlasScale: new THREE.Vector3(),
+                localBounds: [new THREE.Vector3(), new THREE.Vector3()],
+                sdfRange: new THREE.Vector2(),
+                transform: new THREE.Matrix4()
+            }))
+        },
+
+        // Single Mesh Fallback (Wrapped in atlas logic or legacy)
+        uMeshBounds: { value: [new THREE.Vector3(0, 0, 0), new THREE.Vector3(1, 1, 1)] },
+        uMeshSDF_min: { value: 0.0 },
+        uMeshSDF_max: { value: 1.0 },
+
+        uBgColor1: { value: new THREE.Vector3(0.4, 0.5, 0.7) }, // Visible sky blue
+        uBgColor2: { value: new THREE.Vector3(0.1, 0.12, 0.18) }, // Dark blue
         uGridEnabled: { value: 1.0 },
         uGridColor: { value: new THREE.Vector3(0.1, 0.1, 0.1) }
     }), []);
@@ -104,7 +132,11 @@ const SDFKernel = ({
     useEffect(() => {
         if (materialRef.current) {
             materialRef.current.uniforms.uViewMode.value = viewModeInt;
-            materialRef.current.uniforms.uBaseShape.value = baseShape;
+
+            // If in preview mode, hide the SDF object (set shape to 0)
+            // Assuming 0 is treated as 'empty' or handled in shader to render nothing
+            materialRef.current.uniforms.uBaseShape.value = (meshRenderingMode === 'preview') ? 0 : baseShape;
+
             materialRef.current.uniforms.uBaseDims.value.set(...baseDims);
             materialRef.current.uniforms.uBaseColor.value.set(...baseColor);
             materialRef.current.uniforms.uMetalness.value = metalness;
@@ -115,21 +147,37 @@ const SDFKernel = ({
 
             // Dynamic Theme Integration
             if (theme && theme.colors) {
-                // Use Tertiary for clearer theme identity (lighter sky)
-                const bg1 = new THREE.Color(theme.colors.bg.primary);
-                const bg2 = new THREE.Color(theme.colors.bg.tertiary || theme.colors.bg.secondary);
+                const parseColor = (c) => {
+                    if (!c) return '#4080c0'; // Fallback to visible blue
+                    if (c.includes('#')) return c.substring(0, 7);
+                    if (c.includes('rgba')) return c.replace('rgba', 'rgb').split(',').slice(0, 3).join(',') + ')';
+                    return c;
+                };
 
-                // Use Accent for Grid (e.g. Gold for White theme, Blue for Dark)
-                // Fallback to primary border if accent not defined
-                const gridColorStr = theme.colors.border.accent || theme.colors.border.primary;
-                const grid = new THREE.Color(gridColorStr);
+                const bg1 = new THREE.Color(parseColor(theme.colors.bg?.primary));
+                const bg2 = new THREE.Color(parseColor(theme.colors.bg?.tertiary || theme.colors.bg?.secondary));
+                const gridColorStr = theme.colors.border?.accent || theme.colors.border?.primary || '#3b82f6';
+                const gridColor = new THREE.Color(parseColor(gridColorStr));
 
+                // FIX: Use .set() with r,g,b - Vector3.copy(Color) doesn't work!
                 materialRef.current.uniforms.uBgColor1.value.set(bg1.r, bg1.g, bg1.b);
                 materialRef.current.uniforms.uBgColor2.value.set(bg2.r, bg2.g, bg2.b);
-                materialRef.current.uniforms.uGridColor.value.set(grid.r, grid.g, grid.b);
+                materialRef.current.uniforms.uGridColor.value.set(gridColor.r, gridColor.g, gridColor.b);
+            } else {
+                // No theme - use visible defaults
+                materialRef.current.uniforms.uBgColor1.value.set(0.4, 0.5, 0.7);
+                materialRef.current.uniforms.uBgColor2.value.set(0.1, 0.12, 0.18);
+                materialRef.current.uniforms.uGridColor.value.set(0.1, 0.1, 0.1);
             }
+
+            // Phase 8.4: Control Mesh SDF Enabled based on settings
+            // If data is loaded (checked in other effect), we still respect this switch
+            if (materialRef.current && materialRef.current.uniforms.uMeshSDFTexture.value) {
+                materialRef.current.uniforms.uMeshSDFEnabled.value = (meshRenderingMode === 'sdf');
+            }
+            // Note: The specific texture loading effect below also sets it to true, so we need to sync.
         }
-    }, [viewModeInt, baseShape, baseDims, baseColor, metalness, roughness, clipPlane, clipOffset, clipEnabled, theme]);
+    }, [viewModeInt, baseShape, baseDims, baseColor, metalness, roughness, clipPlane, clipOffset, clipEnabled, theme, meshRenderingMode]);
 
     // Animate time, resolution, and camera position per frame
     useFrame((state) => {
@@ -139,6 +187,118 @@ const SDFKernel = ({
             materialRef.current.uniforms.uCameraPos.value.copy(state.camera.position);
         }
     });
+
+    // Load Mesh SDF Texture (Phase 8)
+    useEffect(() => {
+        if (!design?.mesh_sdf_data || !materialRef.current) return;
+
+        try {
+            // Decode base64 texture data
+            const binary = atob(design.mesh_sdf_data);
+            const length = binary.length;
+            const array = new Float32Array(length / 4); // Float32 = 4 bytes
+
+            // Convert binary string to Float32Array
+            const dataView = new DataView(new ArrayBuffer(length));
+            for (let i = 0; i < length; i++) {
+                dataView.setUint8(i, binary.charCodeAt(i));
+            }
+            for (let i = 0; i < array.length; i++) {
+                array[i] = dataView.getFloat32(i * 4, true); // true = little-endian
+            }
+
+            const resolution = design.sdf_resolution || 64;
+
+            // Create 3D texture
+            const texture = new THREE.DataTexture3D(
+                array,
+                resolution,
+                resolution,
+                resolution
+            );
+            texture.format = THREE.RedFormat;
+            texture.type = THREE.FloatType;
+            texture.minFilter = THREE.LinearFilter;
+            texture.magFilter = THREE.LinearFilter;
+            texture.wrapS = THREE.ClampToEdgeWrapping;
+            texture.wrapT = THREE.ClampToEdgeWrapping;
+            texture.wrapR = THREE.ClampToEdgeWrapping;
+            texture.needsUpdate = true;
+
+            // Update uniforms
+            materialRef.current.uniforms.uMeshSDFTexture.value = texture;
+            // Respect current mode setting immediately
+            materialRef.current.uniforms.uMeshSDFEnabled.value = (meshRenderingMode === 'sdf');
+
+            if (design.sdf_bounds) {
+                const [min, max] = design.sdf_bounds;
+                materialRef.current.uniforms.uMeshBounds.value[0].set(min[0], min[1], min[2]);
+                materialRef.current.uniforms.uMeshBounds.value[1].set(max[0], max[1], max[2]);
+            }
+
+            if (design.sdf_range) {
+                const [sdf_min, sdf_max] = design.sdf_range;
+                materialRef.current.uniforms.uMeshSDF_min.value = sdf_min;
+                materialRef.current.uniforms.uMeshSDF_max.value = sdf_max;
+            }
+
+            console.log(`[MeshSDF] Loaded ${resolution}³ texture from design`);
+
+            // Phase 8.5: Load Atlas Manifest
+            if (design.manifest && Array.isArray(design.manifest)) {
+                console.log(`[MeshSDF] Loading Atlas Manifest (${design.manifest.length} components)`);
+                materialRef.current.uniforms.uAtlasComponentCount.value = design.manifest.length;
+
+                design.manifest.forEach((comp, i) => {
+                    if (i >= 16) return; // limit
+
+                    const uComp = materialRef.current.uniforms.uComponents.value[i];
+
+                    // Atlas UV
+                    if (comp.atlas_offset) uComp.atlasOffset.set(...comp.atlas_offset);
+                    if (comp.atlas_scale) uComp.atlasScale.set(...comp.atlas_scale);
+
+                    // SDF Range
+                    if (comp.sdf_range) uComp.sdfRange.set(...comp.sdf_range);
+
+                    // Local Bounds
+                    if (comp.local_bounds) {
+                        uComp.localBounds[0].set(...comp.local_bounds[0]);
+                        uComp.localBounds[1].set(...comp.local_bounds[1]);
+                    }
+
+                    // Transform (Identity for now, but will be wired to Physics/Scatter later)
+                    uComp.transform.identity();
+
+                    // If we want to support initial transforms from GLTF, we'd read them here.
+                    // But usually we bake centered.
+                });
+            } else {
+                // Fallback for Legacy Single-Mesh (treat as 1 component)
+                // If we have data but no manifest, we assume it's a single baked mesh
+                console.log('[MeshSDF] No manifest found, assuming single legacy mesh.');
+                materialRef.current.uniforms.uAtlasComponentCount.value = 1;
+                const uComp = materialRef.current.uniforms.uComponents.value[0];
+
+                // Full Texture usage
+                uComp.atlasOffset.set(0, 0, 0);
+                uComp.atlasScale.set(1, 1, 1);
+
+                if (design.sdf_range) uComp.sdfRange.set(...design.sdf_range);
+
+                if (design.sdf_bounds) {
+                    uComp.localBounds[0].set(...design.sdf_bounds[0]);
+                    uComp.localBounds[1].set(...design.sdf_bounds[1]);
+                }
+
+                uComp.transform.identity();
+            }
+
+        } catch (error) {
+            console.error('[MeshSDF] Failed to load texture:', error);
+        }
+    }, [design?.mesh_sdf_data, design?.sdf_resolution, design?.sdf_bounds, design?.sdf_range, meshRenderingMode]);
+
 
     // WebGL 2 detection and error handling
     useEffect(() => {
@@ -166,7 +326,7 @@ const SDFKernel = ({
     }, [gl]);
 
     return (
-        <mesh ref={meshRef}>
+        <mesh ref={meshRef} frustumCulled={false}>
             <planeGeometry args={[2, 2]} />
             <shaderMaterial
                 ref={materialRef}
@@ -191,6 +351,7 @@ const UnifiedSDFRenderer = ({
     style = {}
 }) => {
     const { theme, currentTheme } = useTheme();
+    const { meshRenderingMode } = useSettings();
     const controlsRef = useRef();
     const cameraStateRef = useRef({ position: [4, 3, 4], target: [0, 0, 0] });
 
@@ -284,6 +445,8 @@ const UnifiedSDFRenderer = ({
                     target={cameraStateRef.current.target}
                     onEnd={handleCameraChange}
                 />
+
+                {/* 1. SDF Background & Kernel (Always rendered for background/grid) */}
                 <SDFKernel
                     viewMode={viewMode}
                     baseShape={geometryState.baseShape}
@@ -297,12 +460,26 @@ const UnifiedSDFRenderer = ({
                     physicsData={physicsData}
                     onShaderError={handleShaderError}
                     theme={theme}
+                    meshRenderingMode={meshRenderingMode}
+                    design={design} // [FIX] Passing design prop
                 />
+
+                {/* 2. Preview Mode Overlays (Standard Mesh Rasterization) */}
+                {meshRenderingMode === 'preview' && (
+                    <StandardMeshPreview
+                        design={design}
+                        viewMode={viewMode}
+                        theme={theme}
+                    />
+                )}
+
+                {/* PhysicsOverlays disabled temporarily - will fix later
                 <PhysicsOverlays
                     viewMode={viewMode}
                     physicsData={physicsData}
                     baseDims={geometryState.baseDims}
                 />
+                */}
             </Canvas>
         </div>
     );

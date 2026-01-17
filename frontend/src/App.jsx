@@ -11,6 +11,7 @@ import IntegratedTerminal from './components/terminal/IntegratedTerminal';
 
 import SettingsPage from './components/settings/SettingsPage';
 import SearchPanel from './components/panels/SearchPanel';
+import ComponentPanel from './components/panels/ComponentPanel';
 import RunDebugPanel from './components/panels/RunDebugPanel';
 import AgentPodsPanel from './components/panels/AgentPodsPanel';
 import CompilePanel from './components/panels/CompilePanel';
@@ -479,6 +480,8 @@ export default function App() {
         switch (activeActivity) {
             case 'search':
                 return <SearchPanel width={leftWidth} />;
+            case 'components':
+                return <ComponentPanel width={leftWidth} />;
             case 'design':
                 return <DesignLibrary width={leftWidth} />;
             case 'run':

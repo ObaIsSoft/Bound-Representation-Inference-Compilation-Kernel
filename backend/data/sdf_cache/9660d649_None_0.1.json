@@ -1,0 +1,19 @@
+{
+  "bounds": [
+    [
+      -1.0,
+      -1.0,
+      -1.0
+    ],
+    [
+      1.0,
+      1.0,
+      1.0
+    ]
+  ],
+  "resolution": 32,
+  "format": "float32",
+  "mesh_path": "test_assets/sphere_low.stl",
+  "face_count": 80,
+  "is_watertight": true
+}

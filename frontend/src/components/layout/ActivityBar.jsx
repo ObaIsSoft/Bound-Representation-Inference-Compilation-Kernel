@@ -1,7 +1,7 @@
 import React from 'react';
 import {
     Search, Package, Play, Layers, Code2, Wrench,
-    GitBranch, Download, FileText, Settings
+    GitBranch, Download, FileText, Settings, Cpu
 } from 'lucide-react';
 import { ACTIVITY_BAR_WIDTH } from '../../utils/constants';
 import { useTheme } from '../../contexts/ThemeContext';
@@ -12,6 +12,7 @@ const ActivityBar = ({ activeTab, setActiveTab }) => {
     const topActions = [
         { id: 'search', icon: Search, label: 'Global Search' },
         { id: 'design', icon: Package, label: 'Design Explorer' },
+        { id: 'components', icon: Cpu, label: 'Universal Catalog' },
         { id: 'run', icon: Play, label: 'Run and Debug' },
         { id: 'agents', icon: Layers, label: 'Agent Pods' },
         { id: 'compile', icon: Code2, label: 'Compile ISA' },

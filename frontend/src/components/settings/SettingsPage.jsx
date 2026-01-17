@@ -23,6 +23,10 @@ const SettingsPage = () => {
         setShowTemperatureSensor,
         show3DThermometer,
         setShow3DThermometer,
+        meshRenderingMode,
+        setMeshRenderingMode,
+        visualizationQuality,
+        setVisualizationQuality,
         resetToDefaults
     } = useSettings();
 
@@ -118,6 +122,36 @@ const SettingsPage = () => {
                     value: show3DThermometer,
                     onChange: setShow3DThermometer,
                     description: 'Visualizes temperature with a 3D model in the scene.'
+                }
+            ]
+        },
+        {
+            title: 'Rendering (Phase 8)',
+            icon: Zap,
+            settings: [
+                {
+                    label: 'Mesh Rendering Mode',
+                    type: 'select',
+                    value: meshRenderingMode,
+                    onChange: setMeshRenderingMode,
+                    options: [
+                        { value: 'sdf', label: 'SDF Mode (Boolean Ops)' },
+                        { value: 'preview', label: 'Preview Mode (Fast)' }
+                    ],
+                    description: 'SDF mode enables boolean operations, Preview mode uses fast mesh rendering'
+                },
+                {
+                    label: 'Visualization Quality (Bake Resolution)',
+                    type: 'select',
+                    value: visualizationQuality,
+                    onChange: setVisualizationQuality,
+                    options: [
+                        { value: 'LOW', label: 'Low (32³ - Fast)' },
+                        { value: 'MEDIUM', label: 'Medium (64³ - Balanced)' },
+                        { value: 'HIGH', label: 'High (128³ - Detailed)' },
+                        { value: 'ULTRA', label: 'Ultra (256³ - Precision)' }
+                    ],
+                    description: 'Controls the precision of SDF generation. Higher quality = longer bake time.'
                 }
             ]
         },

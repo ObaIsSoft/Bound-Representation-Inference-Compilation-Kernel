@@ -145,6 +145,12 @@ export const DesignProvider = ({ children }) => {
         ));
     }, []);
 
+    const updateTabMetadata = useCallback((tabId, metadata) => {
+        setTabs(prev => prev.map(tab =>
+            tab.id === tabId ? { ...tab, ...metadata, modified: true } : tab
+        ));
+    }, []);
+
     const openFile = useCallback((file) => {
         // Check if file is already open
         const existingTab = tabs.find(tab => tab.fileId === file.id);
@@ -406,6 +412,7 @@ export const DesignProvider = ({ children }) => {
         closeTab,
         renameTab,
         updateTabContent,
+        updateTabMetadata,
         openFile,
         createArtifactTab,
         reopenArtifact,

@@ -15,11 +15,7 @@ class AssetSourcingAgent:
     
     def __init__(self):
         self.name = "AssetSourcingAgent"
-        self.mock_assets = [
-            {"id": "nasa_shuttle", "name": "Space Shuttle Orbiter", "source": "NASA", "format": "GLB", "license": "Public Domain"},
-            {"id": "nasa_curiosity", "name": "Curiosity Rover", "source": "NASA", "format": "STL", "license": "Public Domain"},
-            {"id": "mcmaster_bolt_m3", "name": "M3x10mm SHCS", "source": "McMaster", "format": "STEP", "license": "Proprietary"}
-        ]
+        self.mock_assets = []
     
     def run(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -44,6 +40,68 @@ class AssetSourcingAgent:
         logs = [f"[ASSET_SOURCING] Searching for '{query}' in {source or 'all sources'}"]
         
         matches = []
+        
+        
+        # --- Smart Sourcing (Generative Intelligence) ---
+        # Detect high-level intents that require a "Kit" of parts using LLM
+        
+        # If the search query is complex/high-level (more than 2 chars), ask the oracle
+        if len(query) > 2 and query not in [a["name"].lower() for a in self.mock_assets]:
+            try:
+                # 1. Try to use LLM to break down the request
+                # We'll try to find an available provider
+                from llm.openai_provider import OpenAIProvider
+                import os
+                
+                if os.getenv("OPENAI_API_KEY"):
+                    provider = OpenAIProvider()
+                    logs.append(f"[ASSET_SOURCING] 🧠 Analyzing intent '{query}' with AI...")
+                    
+                    schema = {
+                        "intent_detected": True,
+                        "kit_name": "string (e.g. Smartphone Kit)",
+                        "components": [
+                            {
+                                "name": "string (e.g. OLED Screen)",
+                                "category": "string (Display, Power, Sensor, Logic, Actuator)",
+                                "manufacturer": "string", 
+                                "reason": "string"
+                            }
+                        ]
+                    }
+                    
+                    prompt = f"""
+                    The user is searching for '{query}' in an engineering component catalog.
+                    If this is a high-level system (like 'phone', 'drone', 'robot', 'car'), break it down into 4-6 CRITICAL COTS components needed to build it.
+                    If it is a specific part search, return 'intent_detected': false.
+                    """
+                    
+                    response = provider.generate_json(prompt, schema)
+                    
+                    if response.get("intent_detected"):
+                        kit_name = response.get("kit_name", "Kit")
+                        logs.append(f"[ASSET_SOURCING] 📦 Generated Smart Kit: {kit_name}")
+                        
+                        for comp in response.get("components", []):
+                            # Create synthetic asset entry
+                            import uuid
+                            matches.append({
+                                "id": f"gen_{uuid.uuid4().hex[:8]}",
+                                "name": comp["name"],
+                                "source": comp["manufacturer"],
+                                "category": comp["category"],
+                                "mesh_url": None, # Agent would search for specific mesh in next step
+                                "is_generated": True
+                            })
+                            
+                else:
+                    logs.append("[ASSET_SOURCING] ⚠️ AI Key missing. Skipping smart generation.")
+
+            except Exception as e:
+                logs.append(f"[ASSET_SOURCING] ⚠️ Smart sourcing failed: {e}")
+             
+        # --- Standard Search (Mock Catalog) ---
+        # Always include matches from the static catalog (NASA/McMaster mocks)
         for asset in self.mock_assets:
             if query in asset["name"].lower() or query in asset["id"]:
                 if not source or source in asset["source"].lower():

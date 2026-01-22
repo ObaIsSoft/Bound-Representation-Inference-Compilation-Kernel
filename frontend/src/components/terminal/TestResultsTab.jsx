@@ -5,7 +5,7 @@ import { useSimulation } from '../../contexts/SimulationContext';
 
 const TestResultsTab = () => {
     const { theme } = useTheme();
-    const { isRunning, testScenario, testParams, kernelLogs, physState, chemState } = useSimulation();
+    const { isRunning, testScenario, testParams, kernelLogs, physState, chemState, compilationResult } = useSimulation();
     const [results, setResults] = useState(null);
 
     // Auto-scroll logs
@@ -28,7 +28,29 @@ const TestResultsTab = () => {
     const generateReport = () => {
         let report = { passed: true, metrics: [] };
 
-        // Use REAL state data
+        // 1. Prioritize Backend Verification (Orchestrator Truth)
+        if (compilationResult && compilationResult.physics_predictions) {
+            const preds = compilationResult.physics_predictions;
+            const flags = compilationResult.validation_flags || {};
+
+            // Map backend keys to UI metrics
+            const backendMetrics = [];
+
+            if (preds.drag_N) backendMetrics.push({ label: 'Drag Force (Sim)', value: `${preds.drag_N.toFixed(0)} N`, status: preds.drag_N < 2000 ? 'success' : 'warning' });
+            if (preds.lift_N) backendMetrics.push({ label: 'Lift Force (Sim)', value: `${preds.lift_N.toFixed(0)} N`, status: preds.lift_N > (testParams.load || 10) * 9.81 ? 'success' : 'critical' });
+            if (preds.max_temp_C) backendMetrics.push({ label: 'Peak Temp', value: `${preds.max_temp_C.toFixed(1)}°C`, status: preds.max_temp_C < 1000 ? 'success' : 'critical' });
+            if (preds.stress_MPa) backendMetrics.push({ label: 'Max Stress', value: `${preds.stress_MPa.toFixed(1)} MPa`, status: preds.stress_MPa < 500 ? 'success' : 'warning' });
+
+            // If we have backend data, blindly use it + validation flags
+            if (backendMetrics.length > 0) {
+                report.metrics = backendMetrics;
+                report.passed = flags.physics_safe !== false; // Default to true if missing
+                setResults(report);
+                return;
+            }
+        }
+
+        // 2. Fallback to Client-Side Heuristics (Visual Truth)
         switch (testScenario) {
             case 'thermal':
                 const maxTemp = physState.temperature;

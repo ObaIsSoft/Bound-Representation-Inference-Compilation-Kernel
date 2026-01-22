@@ -47,13 +47,21 @@ class MaterialsProjectAPI:
             logger.warning("Materials Project API key not set. Using mock data.")
             return self._mock_search(formula, elements)
         
-        endpoint = f"{self.base_url}/materials/summary"
+        # Correct endpoint for Materials Project API v2
+        endpoint = f"{self.base_url}/materials/core/"
         params = {}
         
         if formula:
             params["formula"] = formula
         if elements:
-            params["elements"] = ",".join(elements)
+            # MP v2 uses 'elements' but expects list of symbols, not compound names
+            # Validate elements first - only allow 1-2 char keys
+            valid_elements = [e for e in elements if len(e) <= 2]
+            if valid_elements:
+                params["elements"] = ",".join(valid_elements)
+            else:
+                logger.warning(f"Invalid elements for MP API: {elements}")
+                return []
         if limit:
             params["_limit"] = limit
         

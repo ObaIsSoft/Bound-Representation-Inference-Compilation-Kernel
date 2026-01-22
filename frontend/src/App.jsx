@@ -29,7 +29,7 @@ export default function App() {
     const { theme } = useTheme();
     const { fontSize, aiModel } = useSettings();
     const { isEditorVisible, createArtifactTab, setPendingPlanId } = useDesign();
-    const { isRunning, setIsRunning, metrics, setKclCode, setFocusedPodId, focusedPodId } = useSimulation(); // Phase 9: Added focusedPodId
+    const { isRunning, setIsRunning, metrics, setKclCode, setFocusedPodId, focusedPodId, setCompilationResult } = useSimulation(); // Phase 9: Added focusedPodId
     const [activeActivity, setActiveActivity] = useState('design');
     const [activeTab, setActiveTab] = useState('terminal');
 
@@ -429,6 +429,8 @@ export default function App() {
                             if (data.kcl_code) {
                                 setKclCode(data.kcl_code);
                             }
+                            // Update Simulation Context with full result for Panels
+                            setCompilationResult(data);
 
                             // Format compilation output
                             const flags = data.validation_flags || {};

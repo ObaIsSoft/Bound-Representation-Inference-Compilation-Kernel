@@ -283,6 +283,61 @@ class PhysicsAgent:
             "sub_agent_reports": sub_agent_reports
         }
 
+    def critique_design(self, geometry_tree: List[Dict[str, Any]]) -> List[Dict[str, str]]:
+        """
+        Critique the overall design geometry for physical viability.
+        Rules:
+        1. Mass/Stability.
+        2. Aspect Ratio (Structural).
+        """
+        critiques = []
+        
+        total_mass = 0.0
+        max_dim = 0.0
+        
+        # Quick Scan
+        for part in geometry_tree:
+            p = part.get("params", {})
+            # simplistic
+            
+            # Check Mass (if available)
+            if "mass_kg" in part:
+                 total_mass += part["mass_kg"]
+                 
+            # Check Limits
+            dims = [p.get("width",0), p.get("height",0), p.get("length",0), p.get("radius",0)*2]
+            max_d = max(dims)
+            if max_d > max_dim: max_dim = max_d
+            
+        # Rule 1: Heavy but Small? (Density Check)
+        # Rule 2: Floating/Zero Mass?
+        if total_mass < 0.001:
+             critiques.append({
+                 "level": "WARN", 
+                 "agent": "Physics",
+                 "message": "Design has near-zero mass. Assign material properties?"
+             })
+             
+        # Rule 3: Slenderness Ratio (Buckling Risk)
+        # If Length >> Width
+        # Hard to heuristics without seeing full assembly, but if any single part is very thin...
+        for part in geometry_tree:
+            p = part.get("params", {})
+            l = p.get("length", 0)
+            r = p.get("radius", 0)
+            # Cylinder Slenderness
+            if r > 0 and l > 0:
+                 slenderness = l / (2*r)
+                 if slenderness > 20:
+                     critiques.append({
+                         "level": "INFO", 
+                         "agent": "Physics",
+                         "message": f"Part '{part.get('name','unnamed')}' is very slender (ratio {slenderness:.0f}). Check buckling."
+                     })
+                     
+        return critiques
+
+
     def step(self, state: Dict[str, float], inputs: Dict[str, float], dt: float = 0.1) -> Dict[str, Any]:
         """
         Advances the simulation using 6-DOF Rigid Body Dynamics (scipy.odeint).

@@ -44,6 +44,26 @@ const RunDebugPanel = ({ width }) => {
         </div>
     );
 
+    const toggleSimulation = async () => {
+        const newStatus = !isRunning;
+        setIsRunning(newStatus); // Optimistic
+
+        try {
+            await fetch('http://localhost:8000/api/simulation/control', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    command: newStatus ? 'START' : 'STOP',
+                    scenario: testScenario,
+                    params: testParams
+                })
+            });
+        } catch (e) {
+            console.error("Simulation control failed:", e);
+            setIsRunning(!newStatus); // Revert
+        }
+    };
+
     return (
         <aside
             className="h-full flex flex-col shrink-0 overflow-hidden"
@@ -97,7 +117,7 @@ const RunDebugPanel = ({ width }) => {
                 {/* 2. Run Controls */}
                 <div className="flex gap-2">
                     <button
-                        onClick={() => setIsRunning(!isRunning)}
+                        onClick={toggleSimulation}
                         className="flex-1 flex items-center justify-center gap-2 py-2 rounded font-mono text-xs font-bold transition-all shadow-lg"
                         style={{
                             backgroundColor: isRunning ? theme.colors.status.error + '22' : theme.colors.status.success + '22',

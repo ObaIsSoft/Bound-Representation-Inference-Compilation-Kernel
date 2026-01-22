@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Layers, ChevronRight, ChevronDown, Box, Cpu, Server } from 'lucide-react';
+import { Layers, ChevronRight, ChevronDown, Box, Cpu, Server, Save, FolderOpen } from 'lucide-react';
 import PanelHeader from '../shared/PanelHeader';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useSimulation } from '../../contexts/SimulationContext';
 
 const ISABrowserPanel = ({ width }) => {
     const { theme } = useTheme();
-    const { focusedPodId, setFocusedPodId, isaTree, refreshIsaTree } = useSimulation();
+    const { focusedPodId, setFocusedPodId, isaTree, refreshIsaTree, updateIsaNode, saveProject, loadProject } = useSimulation();
     const [expanded, setExpanded] = useState(new Set());
 
     // Auto-expand root when tree loads
@@ -39,6 +39,42 @@ const ISABrowserPanel = ({ width }) => {
 
     const handleCheckoutRoot = () => {
         setFocusedPodId(null);
+    };
+
+    const handleSave = async () => {
+        try {
+            // Get current tree state from context or backend?
+            // Ideally we save the backend state directly.
+            const res = await fetch('http://localhost:8000/api/project/save', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    data: {
+                        manifest: { author: "User" },
+                        geometry_tree: isaTree
+                    },
+                    filename: "latest.brick"
+                })
+            });
+            const data = await res.json();
+            if (data.success) alert(`Project Saved: ${data.path}`);
+        } catch (e) {
+            alert("Save Failed: " + e.message);
+        }
+    };
+
+    const handleLoad = async () => {
+        try {
+            const res = await fetch('http://localhost:8000/api/project/load?filename=latest.brick');
+            const data = await res.json();
+            if (data.success) {
+                // Refresh Context
+                if (refreshIsaTree) refreshIsaTree();
+                alert("Project Loaded Successfully!");
+            }
+        } catch (e) {
+            alert("Load Failed: " + e.message);
+        }
     };
 
     const renderNode = (node, depth = 0) => {
@@ -110,6 +146,28 @@ const ISABrowserPanel = ({ width }) => {
         >
             <PanelHeader title="Hardware ISA" icon={Layers} />
 
+            {/* Toolbar */}
+            <div className="px-2 py-1 flex space-x-1 border-b" style={{ borderColor: theme.colors.border.secondary }}>
+                <button
+                    onClick={handleSave}
+                    className="p-1 rounded hover:bg-white/10 transition-colors flex items-center space-x-1"
+                    title="Save Project"
+                    style={{ color: theme.colors.text.secondary }}
+                >
+                    <Save size={12} />
+                    <span className="text-[10px] uppercase font-bold">Save</span>
+                </button>
+                <button
+                    onClick={handleLoad}
+                    className="p-1 rounded hover:bg-white/10 transition-colors flex items-center space-x-1"
+                    title="Load Project"
+                    style={{ color: theme.colors.text.secondary }}
+                >
+                    <FolderOpen size={12} />
+                    <span className="text-[10px] uppercase font-bold">Load</span>
+                </button>
+            </div>
+
             <div className="flex-1 p-3 overflow-y-auto scrollbar-thin">
                 {/* Global Context Button */}
                 <div
@@ -160,6 +218,21 @@ const ISABrowserPanel = ({ width }) => {
                             {activeNode.name} Properties
                         </div>
                         <div className="flex-1 overflow-y-auto p-2 space-y-3">
+
+                            {/* Operation Mode Selector (Phase 13.2) */}
+                            <div className="bg-white/5 p-1.5 rounded border border-white/5">
+                                <div className="text-[9px] uppercase opacity-50 mb-1">CSG Operation</div>
+                                <select
+                                    className="w-full bg-black/50 border border-white/10 text-[10px] rounded px-1 py-0.5 outline-none font-mono"
+                                    style={{ color: theme.colors.accent.primary }}
+                                    value={activeNode.operation || 'UNION'}
+                                    onChange={(e) => updateIsaNode(activeNode.id, { operation: e.target.value })}
+                                >
+                                    <option value="UNION">UNION (Add)</option>
+                                    <option value="DIFFERENCE">DIFFERENCE (Subtract)</option>
+                                    <option value="INTERSECTION">INTERSECTION (Keep)</option>
+                                </select>
+                            </div>
 
                             {/* Inputs / Constraints */}
                             <div>

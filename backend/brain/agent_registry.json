@@ -1,0 +1,21 @@
+{
+  "agents": {
+    "nexus": {
+      "current_version": "1.0.0",
+      "history": [
+        {
+          "version": "1.0.0",
+          "type": "legacy",
+          "registered_at": "2026-01-22T22:43:30.992680",
+          "status": "active"
+        }
+      ],
+      "stats": {
+        "total_runs": 8,
+        "total_time": 0.0033872127532958984,
+        "last_run": "2026-01-22T22:56:40.257844",
+        "avg_load": 0.002849102020263672
+      }
+    }
+  }
+}

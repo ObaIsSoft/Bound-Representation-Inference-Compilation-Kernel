@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import Dict, Any, List, Optional
 from pydantic import BaseModel
 from datetime import datetime
+import time
 import numpy as np
 
 # Load environment variables FIRST before any other imports
@@ -124,6 +125,69 @@ async def get_system_status():
         "timestamp": datetime.now().isoformat()
     }
 
+import time
+
+@app.post("/api/simulation/control")
+async def control_simulation(cmd: Dict[str, Any]):
+    """
+    Controls the running VHIL simulation state.
+    """
+    command = cmd.get("command", "STOP")
+    scenario = cmd.get("scenario", "none")
+    
+    # In a real system, this would spin up a separate process or thread
+    # For now, we update the global system state (which the frontend polls via /api/system/status)
+    # We'll mock a global status dict for now since AGENTS_STATUS isn't globally defined yet
+    # In Phase 10 we'd use a robust StateManager
+    
+    status = "running" if command == "START" else "idle"
+    details = f"Scenario: {scenario}" if command == "START" else "Ready."
+    
+    return {"status": "ok", "state": {"vhil": {"status": status, "details": details}}}
+
+# --- Agent Profiles API ---
+from core.profiles import list_profiles, get_profile, create_custom_profile, get_essential_agents
+
+@app.get("/api/system/profiles")
+async def get_system_profiles():
+    """List available agent profiles."""
+    return {"profiles": list_profiles()}
+
+@app.get("/api/system/profiles/essentials")
+async def get_system_essentials():
+    """Get list of essential agents that cannot be disabled."""
+    return {"essentials": get_essential_agents()}
+
+class CreateProfileRequest(BaseModel):
+    name: str
+    agents: List[str]
+
+@app.post("/api/system/profiles/create")
+async def api_create_profile(req: CreateProfileRequest):
+    """Creates a new custom agent profile."""
+    try:
+        p_id = create_custom_profile(req.name, req.agents)
+        return {"success": True, "id": p_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/system/profiles/{profile_id}")
+async def get_system_profile(profile_id: str):
+    """Get active agents for a profile."""
+    profile = get_profile(profile_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    return profile
+
+# --- Agent Metrics ---
+@app.get("/api/agents/metrics")
+async def get_agent_metrics():
+    """Returns real-time execution metrics for all agents."""
+    from core.agent_registry import AgentVersionRegistry
+    registry = AgentVersionRegistry()
+    return {"metrics": registry.get_all_metrics()}
+
+
 # --- Recursive ISA Resolver (Phase 9) ---
 from core.hierarchical_resolver import ModularISA, HierarchicalResolver
 from core.system_registry import get_system_resolver
@@ -173,8 +237,11 @@ async def checkout_pod_path(request: CheckoutRequest):
 @app.get("/api/isa/tree")
 async def get_isa_tree():
     """
-    Returns the full Recursive ISA Hierarchy for the UI Browser.
+    Returns the full Recursive ISA Hierarchy from the Dynamic Registry.
     """
+    from core.system_registry import get_system_registry
+    registry = get_system_registry()
+    
     def serialize_pod(pod):
         return {
             "id": pod.id,
@@ -185,8 +252,27 @@ async def get_isa_tree():
         }
     
     return {
-        "tree": serialize_pod(_resolver.root)
+        "tree": serialize_pod(registry.root)
     }
+
+class CreatePodRequest(BaseModel):
+    name: str
+    parent_id: Optional[str] = None
+    constraints: Optional[Dict[str, Any]] = {}
+
+@app.post("/api/isa/create")
+async def create_isa_pod(req: CreatePodRequest):
+    """Dynamically adds a new hardware pod."""
+    from core.system_registry import get_system_registry
+    registry = get_system_registry()
+    
+    # If no parent_id provided, default to root
+    parent_id = req.parent_id
+    if not parent_id:
+        parent_id = registry.root.id
+        
+    new_pod = registry.create_pod(req.name, parent_id, req.constraints)
+    return {"status": "success", "pod_id": new_pod.id, "tree_path": f".../{req.name}"}
 
 
 @app.post("/api/components/install")
@@ -224,12 +310,24 @@ async def run_agent(name: str, payload: Dict[str, Any]):
         raise HTTPException(status_code=404, detail=f"Agent '{name}' not found.")
     
     agent = AGENTS[name]
+    
+    # Track Execution Time for Real Metrics
+    from core.agent_registry import AgentVersionRegistry
+    registry = AgentVersionRegistry()
+    
+    start_time = time.time()
     try:
         # Most base agents define run(params)
         # We assume payload is the params dict
         result = agent.run(payload)
+        
+        duration = time.time() - start_time
+        registry.record_execution(name, duration)
+        
         return {"status": "success", "agent": name, "result": result}
     except Exception as e:
+        duration = time.time() - start_time
+        registry.record_execution(name, duration) # Log even on failure
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -624,6 +722,148 @@ async def convert_mesh_to_sdf(
         # Clean up temp file
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
+
+
+# --- Project Persistence API (Phase 3) ---
+
+from managers.project_manager import ProjectManager
+project_manager = ProjectManager()
+
+class SaveProjectRequest(BaseModel):
+    data: Dict[str, Any]
+    filename: str = "save.brick"
+    branch: str = "main"
+
+@app.post("/api/project/save")
+async def save_project(request: SaveProjectRequest):
+    """Saves the current project state to a .brick file in the specified branch."""
+    try:
+        path = project_manager.save_project(request.data, request.filename, request.branch)
+        return {"success": True, "path": path}
+    except Exception as e:
+        logger.error(f"Save Failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/project/load")
+async def load_project(filename: str = "save.brick", branch: str = "main"):
+    """Loads a project from a .brick file in the specified branch."""
+    try:
+        data = project_manager.load_project(filename, branch)
+        return {"success": True, "data": data}
+    except Exception as e:
+        logger.error(f"Load Failed: {e}")
+        raise HTTPException(status_code=404, detail="Project file not found")
+
+@app.get("/api/project/list")
+async def list_projects():
+    """Lists available project files."""
+    return {"projects": project_manager.list_projects()}
+
+# --- Export API ---
+
+@app.post("/api/project/export")
+async def export_project(req: Dict[str, str]):
+    """
+    Exports project artifacts (STL, STEP, PDF).
+    """
+    fmt = req.get("format", "stl")
+    # Real implementation would run the appropriate exporter agent
+    # For now, we mimic success
+    
+    filename = f"brick_export_{int(time.time())}.{fmt}"
+    return {
+        "success": True,
+        "url": f"/exports/{filename}",
+        "size": "2.4 MB"
+    }
+
+# --- Version Control API ---
+
+@app.get("/api/version/history")
+async def get_version_history(branch: str = "main"):
+    """
+    Returns commit history and branch status.
+    """
+    commits = project_manager.get_history(branch)
+    branches = project_manager.get_branches()
+    
+    # Mark active branch
+    for b in branches:
+        b["active"] = (b["name"] == branch)
+        
+    return {
+        "current_branch": branch,
+        "branches": branches,
+        "commits": commits[:50]
+    }
+
+class CommitRequest(BaseModel):
+    message: str
+    project_data: Dict[str, Any]
+    branch: str = "main"
+
+@app.post("/api/version/commit")
+async def create_commit(req: CommitRequest):
+    """Creates a new commit (snapshot)."""
+    try:
+        result = project_manager.create_commit(req.message, req.project_data, req.branch)
+        return {"success": True, "commit": result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+class BranchRequest(BaseModel):
+    name: str
+    source: str = "main"
+
+@app.post("/api/version/branch/create")
+async def create_branch(req: BranchRequest):
+    """Creates a new branch."""
+    try:
+        result = project_manager.create_branch(req.name, req.source)
+        return {"success": True, "branch": result}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# --- Critique API (Phase 4) ---
+
+class CritiqueRequest(BaseModel):
+    geometry: Optional[List[Dict[str, Any]]] = []
+    sketch: Optional[List[Dict[str, Any]]] = []
+
+@app.post("/api/critique")
+async def critique_design(request: CritiqueRequest):
+    """
+    Runs multi-agent critique on the current design.
+    Returns: List of critique messages.
+    """
+    from agents.manufacturing_agent import ManufacturingAgent
+    from agents.physics_agent import PhysicsAgent
+    
+    critiques = []
+    
+    # 1. Manufacturing Critique (on Sketch mainly)
+    if request.sketch and "manufacturing" in AGENTS:
+        man_agent = AGENTS["manufacturing"]
+        # Ensure latest code if reloaded, or just use instance
+        # For safety/statelessness, we might want to call method directly if not in registry correctly yet
+        # But AGENTS is global. Assuming it's populated.
+        # If not, instantiate.
+        if not man_agent: man_agent = ManufacturingAgent()
+        
+        msgs = man_agent.critique_sketch(request.sketch)
+        critiques.extend(msgs)
+        
+    # 2. Physics Critique (on Geometry)
+    if request.geometry:
+         # Check if physics agent in AGENTS
+         phys_agent = AGENTS.get("physics")
+         if not phys_agent: phys_agent = PhysicsAgent()
+         
+         msgs = phys_agent.critique_design(request.geometry)
+         critiques.extend(msgs)
+         
+    return {"critiques": critiques}
 
 
 # --- Shell API ---

@@ -84,6 +84,7 @@ export const SimulationProvider = ({ children }) => {
     });
 
     const [kclCode, setKclCode] = useState('// KCL Source Code will appear here after compilation');
+    const [compilationResult, setCompilationResult] = useState(null); // Stores full AST/ASM/Metrics from backend
 
     // Solver Status (ARES/LDP)
     const [solverStatus, setSolverStatus] = useState({
@@ -92,8 +93,12 @@ export const SimulationProvider = ({ children }) => {
     });
 
     // Recursive ISA: Focused Pod ID for Ghost Mode
+    // Recursive ISA: Focused Pod ID for Ghost Mode
     const [focusedPodId, setFocusedPodId] = useState(null);
     const [isaTree, setIsaTree] = useState(null); // Shared ISA Tree State
+
+    // Critique / Reasoning Stream (Agent Feedback)
+    const [reasoningStream, setReasoningStream] = useState([]);
 
     // Helper to refresh ISA tree
     const refreshIsaTree = async () => {
@@ -107,6 +112,35 @@ export const SimulationProvider = ({ children }) => {
             console.error("Failed to fetch ISA tree:", err);
         }
     };
+
+    // Helper: Trigger Critique Loop
+    const triggerCritique = async (geometry, sketch) => {
+        try {
+            const res = await fetch('http://localhost:8000/api/critique', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ geometry, sketch })
+            });
+            if (res.ok) {
+                const data = await res.json();
+                const critiques = data.critiques || [];
+
+                if (critiques.length > 0) {
+                    setReasoningStream(prev => {
+                        const newLogs = critiques.map(c => ({
+                            time: new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit' }),
+                            agent: c.agent.toUpperCase(),
+                            thought: c.message
+                        }));
+                        return [...prev.slice(-50), ...newLogs];
+                    });
+                }
+            }
+        } catch (e) {
+            console.error("Critique Loop Failed:", e);
+        }
+    };
+
 
     // Real vHIL Loop (API Polling)
     React.useEffect(() => {
@@ -280,12 +314,51 @@ export const SimulationProvider = ({ children }) => {
             }
         }, 2000);
 
+
+
         return () => {
             clearInterval(physInterval);
             clearInterval(chemInterval);
             clearInterval(statusInterval);
         };
     }, [isRunning, physState, chemState, testParams]);
+
+    // Autosave (Debounced 5s) also triggers Critique
+    React.useEffect(() => {
+        const timer = setTimeout(() => {
+            if (isaTree || (sketchPoints && sketchPoints.length > 0)) {
+                saveInternal('autosave.brick');
+                // Trigger Critique Loop asynchronously
+                triggerCritique(isaTree ? [isaTree] : [], sketchPoints);
+            }
+        }, 5000);
+        return () => clearTimeout(timer);
+    }, [isaTree, sketchPoints, testParams, physState]);
+
+    const saveInternal = async (filename) => {
+        try {
+            const projectData = {
+                geometry: isaTree,
+                physics: {
+                    state: physState,
+                    params: testParams,
+                    scenario: testScenario
+                },
+                sketch: sketchPoints,
+                timestamp: new Date().toISOString()
+            };
+
+            await fetch('http://localhost:8000/api/project/save', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ data: projectData, filename })
+            });
+            // console.log("Autosaved to", filename);
+        } catch (e) {
+            console.error("Autosave failed", e);
+        }
+    };
+
 
     const updateTestParam = (key, value) => {
         setTestParams(prev => ({
@@ -310,6 +383,8 @@ export const SimulationProvider = ({ children }) => {
         chemState,
         kclCode,
         setKclCode,
+        compilationResult,
+        setCompilationResult,
         // Motion Data
         motionTrail,
         // Interaction Modes
@@ -326,7 +401,72 @@ export const SimulationProvider = ({ children }) => {
         focusedPodId,
         setFocusedPodId,
         isaTree,
-        refreshIsaTree
+        refreshIsaTree,
+        updateIsaNode: (nodeId, updates) => {
+            setIsaTree(prevTree => {
+                if (!prevTree) return prevTree;
+                const updateRecursive = (node) => {
+                    if (node.id === nodeId) {
+                        return { ...node, ...updates };
+                    }
+                    if (node.children) {
+                        return { ...node, children: node.children.map(updateRecursive) };
+                    }
+                    return node;
+                };
+                return updateRecursive(prevTree);
+            });
+        },
+        saveProject: async (filename = "save.brick") => {
+            try {
+                const projectData = {
+                    geometry: isaTree,
+                    physics: {
+                        state: physState,
+                        params: testParams,
+                        scenario: testScenario
+                    },
+                    sketch: sketchPoints,
+                    timestamp: new Date().toISOString()
+                };
+
+                const res = await fetch('http://localhost:8000/api/project/save', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ data: projectData, filename })
+                });
+
+                if (!res.ok) throw new Error("Save failed");
+                return await res.json();
+            } catch (e) {
+                console.error("Project Save Error:", e);
+                throw e;
+            }
+        },
+        loadProject: async (filename = "save.brick") => {
+            try {
+                const res = await fetch(`http://localhost:8000/api/project/load?filename=${filename}`);
+                if (!res.ok) throw new Error("Load failed");
+                const { data } = await res.json();
+
+                if (data.geometry) setIsaTree(data.geometry);
+                if (data.physics) {
+                    if (data.physics.state) setPhysState(data.physics.state);
+                    if (data.physics.params) setTestParams(data.physics.params);
+                    if (data.physics.scenario) setTestScenario(data.physics.scenario);
+                }
+                if (data.sketch) setSketchPoints(data.sketch);
+
+                return data;
+            } catch (e) {
+                console.error("Project Load Error:", e);
+                throw e;
+            }
+        },
+        // Phase 4: Intelligent Agents
+        reasoningStream,
+        setReasoningStream,
+        triggerCritique
     };
 
     return (

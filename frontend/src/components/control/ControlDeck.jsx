@@ -67,13 +67,16 @@ const ControlDeck = ({
     const { theme } = useTheme();
     const { aiModel, setAiModel } = useSettings();
     const { pendingPlanId, tabs, approvePlan, rejectPlan, setActiveTabId, reopenArtifact } = useDesign();
-    const { sketchMode, setSketchMode, viewMode, setViewMode } = useSimulation();
-    const [inputText, setInputText] = useState('');
+    const { sketchMode, setSketchMode, viewMode, setViewMode, reasoningStream: contextReasoningStream } = useSimulation();
+
+    // Merge props stream with context stream
+    const activeReasoningStream = [...reasoningStream, ...(contextReasoningStream || [])];
     const [showHistory, setShowHistory] = useState(false);
     const [showModelMenu, setShowModelMenu] = useState(false);
     const [showViewMenu, setShowViewMenu] = useState(false); // Phase 10
 
     // Modal State
+    const [inputText, setInputText] = useState('');
     const [modalOpen, setModalOpen] = useState(false);
     const [modalContent, setModalContent] = useState({ title: '', content: '' });
     const [textareaRows, setTextareaRows] = useState(minRows);
@@ -511,9 +514,9 @@ const ControlDeck = ({
                 )}
 
                 {/* Reasoning Stream / Intent Logs */}
-                {reasoningStream.length > 0 && (
+                {activeReasoningStream.length > 0 && (
                     <div className="space-y-1 opacity-70">
-                        {reasoningStream.map((log, i) => (
+                        {activeReasoningStream.map((log, i) => (
                             <div
                                 key={i}
                                 className="flex items-start gap-2 text-[9px] font-mono p-2 rounded"
@@ -523,7 +526,11 @@ const ControlDeck = ({
                                 }}
                             >
                                 <span style={{ color: theme.colors.accent.primary }}>{log.time}</span>
-                                <span className="font-bold" style={{ color: theme.colors.text.tertiary }}>
+                                <span className="font-bold" style={{
+                                    color: log.agent === 'MANUFACTURING' ? '#f59e0b' :
+                                        log.agent === 'PHYSICS' ? '#3b82f6' :
+                                            theme.colors.text.tertiary
+                                }}>
                                     [{log.agent}]
                                 </span>
                                 <span className="flex-1">{log.thought}</span>

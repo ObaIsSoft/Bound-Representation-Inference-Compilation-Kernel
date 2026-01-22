@@ -52,7 +52,7 @@ class MaterialAgent:
         props = {}
         found = False
         
-        # 1. Query DB
+        # 1. Query Local SQLite DB
         try:
             conn = sqlite3.connect(self.db_path)
             conn.row_factory = sqlite3.Row
@@ -65,36 +65,58 @@ class MaterialAgent:
             if row:
                 props = dict(row)
                 found = True
-                # Map DB columns to Agent Schema if names differ
-                # yield_strength is in DB
-                # melting_point is in DB
-                # density is in DB
-                
-                # Check for max temp, default to 150C if not in DB (DB doesn't have max_temp column yet in schema, using heuristic)
+                # Check for max temp, default to 150C if not in DB
                 props["max_temp"] = props.get("max_temp", 150.0) 
                 
             conn.close()
         except Exception as e:
             logger.error(f"DB Error: {e}")
             
-        # 2. Fallback if DB query failed or empty
+        # 2. Try Materials Project API / Unified DB if Local DB failed
         if not found:
-             logger.warning(f"Material '{material_name}' not found in DB. Using Generic Aluminum.")
-             props = {
-                "density": 2700,
-                "yield_strength": 276e6,
-                "melting_point": 582,
-                "max_temp": 150
-             }
+            try:
+                from materials.materials_db import MaterialsDatabase
+                mat_db = MaterialsDatabase(use_api=True)
+                # Use unified find_material to search across all sources
+                api_results = mat_db.api.find_material(material_name, source="auto")
+                
+                if api_results:
+                    api_data = api_results[0]
+                    # Map API response to internal schema
+                    props = {
+                        "name": api_data.get("name", material_name),
+                        "density": api_data.get("density", 0.0),
+                        # Elasticity might be nested or missing
+                        "yield_strength": api_data.get("elasticity", {}).get("K_VRH", 0.0) if isinstance(api_data.get("elasticity"), dict) else 0.0,
+                        # Melting point from thermo data
+                        "melting_point": api_data.get("thermo", {}).get("melting_point", 1000.0) if isinstance(api_data.get("thermo"), dict) else 1000.0,
+                    }
+                    # Derive max_temp from melting point
+                    props["max_temp"] = props["melting_point"] * 0.8
+                    found = True
+                    logger.info(f"Found {material_name} in Materials Project API")
+            except Exception as e:
+                logger.warning(f"Materials Project API query failed: {e}")
 
-        # 3. Temperature Degradation (Deep Evolution: MaterialNet)
+        # 3. If still not found, return error - NO HARDCODED FALLBACKS
+        if not found:
+            logger.error(f"Material '{material_name}' not found in DB or API. Cannot proceed.")
+            return {
+                "name": f"ERROR: {material_name} not found",
+                "properties": {},
+                "error": "Material not found in database or Materials Project API"
+            }
+
+        # 4. Temperature Degradation (Deep Evolution: MaterialNet)
         
-        T_melt = props["melting_point"]
+        # Safe access to properties
+        T_melt = props.get("melting_point", 1500.0)
+        max_temp = props.get("max_temp", 200.0)
         
         # Base Heuristic (Analytic Prior)
         heuristic_factor = 1.0
-        if temperature > props["max_temp"]:
-            excess = temperature - props["max_temp"]
+        if temperature > max_temp:
+            excess = temperature - max_temp
             heuristic_factor = max(0, 1.0 - (excess * 0.005))
             
         # Neural/Learned Correction (Learned Residual)
@@ -106,7 +128,7 @@ class MaterialAgent:
         if self.has_brain and self.brain:
             inputs = np.array([
                 temperature / 1000.0, 
-                props["yield_strength"] / 1e9,
+                props.get("yield_strength", 200e6) / 1e9,
                 0.0, # Time placeholder
                 7.0  # pH placeholder
             ])
@@ -123,9 +145,9 @@ class MaterialAgent:
         return {
             "name": material_name if found else f"Generic Aluminum (Fallback for {material_name})",
             "properties": {
-                "density": props["density"],
-                "yield_strength": props["yield_strength"] * final_factor,
-                "melting_point": props["melting_point"],
+                "density": props.get("density", 2700),
+                "yield_strength": props.get("yield_strength", 200e6) * final_factor,
+                "melting_point": props.get("melting_point", 1500.0),
                 "is_melted": temperature >= T_melt,
                 "strength_factor": round(final_factor, 3),
                 "degradation_model": "Deep Hybrid (Linear Prior + MaterialNet)" if self.has_brain else "Heuristic (Fallback)",

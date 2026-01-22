@@ -28,6 +28,21 @@ class ManufacturingAgent:
         except ImportError:
             from backend.materials.materials_db import MaterialsDatabase
         self.api = MaterialsDatabase()
+        
+        # Initialize Deep Evolution Surrogate
+        try:
+            from backend.models.manufacturing_surrogate import ManufacturingSurrogate
+            self.surrogate = ManufacturingSurrogate()
+            self.has_surrogate = True
+        except ImportError:
+            try:
+                from models.manufacturing_surrogate import ManufacturingSurrogate
+                self.surrogate = ManufacturingSurrogate()
+                self.has_surrogate = True
+            except ImportError:
+                self.surrogate = None
+                self.has_surrogate = False
+                print("ManufacturingSurrogate not found.")
 
     def _get_material_data(self, material_name: str) -> Dict[str, Any]:
         """Fetch material costing data from DB."""
@@ -247,3 +262,109 @@ class ManufacturingAgent:
             domain="TRIBOLOGY",
             params=params
         )
+
+    def critique_sketch(self, sketch_points: List[Dict[str, float]]) -> List[Dict[str, str]]:
+        """
+        Critique the user's sketch strokes for manufacturability.
+        Rules:
+        1. Small Radius: If curves are too tight for standard CNC tools.
+        2. Thin Walls: (Heuristic from proximity of points) - Logic for later.
+        
+        Args:
+            sketch_points: List of vectors {x, y, z, ...}
+            
+        Returns:
+            List of critique messages {level: 'INFO|WARN|ERR', message: '...'}
+        """
+        critiques = []
+        
+        # 1. Curvature / Radius Analysis
+        # Simplest heuristic: Check distance between consecutive points if they represent a curve.
+        # If we have 3 points A, B, C, we can est curvature.
+        # But `sketch_points` here might be raw strokes.
+        # Assuming sketch_points contains 'radius' if it's a capsule/tube stroke.
+        
+        # Check explicit radius if available (Capsule Sketching)
+        min_cnc_radius = 1.0 # mm (Standard smallest tool 2mm dia)
+        
+        # If sketch is just raw points, we can't easily do radius without fitting.
+        # But if the 'sketch' passed here is actually the 'geometry_sketch' (Capsules), we can check 'radius'.
+        
+        for i, point in enumerate(sketch_points):
+            # Check for 'radius' property (Capsule/Tube sketches)
+            r = point.get("radius")
+            
+            # If r is None, maybe it's in the param dict?
+            if r is None and "params" in point:
+                 r = point.get("params", {}).get("radius")
+                 
+            if r is not None:
+                # Convert to mm (assuming system units are meters if small, or check convention)
+                # Convention: System is usually Meters. 1mm = 0.001m.
+                # If r > 0.5 (500mm), it's probably meters. If r=1.0, maybe mm?
+                # Let's assume input is standard meters.
+                r_mm = r * 1000.0
+                
+                if r_mm < min_cnc_radius:
+                    critiques.append({
+                        "level": "WARN",
+                        "agent": "Manufacturing",
+                        "message": f"Radius {r_mm:.2f}mm is too small for standard CNC. Increase to >{min_cnc_radius}mm?"
+                    })
+                    
+            # 2. Neural Defect Prediction (Deep Evolution)
+            if self.has_surrogate:
+                # Heuristic Features extraction
+                # Ideally we'd scan the whole stroke. For now, use the point radius/position.
+                # Feature Vec: [Radius, Aspect(dummy), Complexity(dummy), Undercuts(dummy)]
+                if r is not None:
+                     r_mm = r * 1000.0
+                     # Predict Probability
+                     prob = self.surrogate.predict_defect_probability(r_mm, 2.0, 10.0, 0.0)
+                     if prob > 0.7:
+                         critiques.append({
+                             "level": "WARN",
+                             "agent": "Manufacturing (Neural)",
+                             "message": f"Neural Predictor detects high defect probability ({prob:.2f}) for this geometry."
+                         })
+
+                    
+        return critiques
+
+    def predict_defects(self, geometry_features: List[float]) -> float:
+        """
+        Predict defect probability using learned surrogate.
+        Args:
+            geometry_features: [Radius(mm), AspectRatio, Complexity, Undercuts]
+        """
+        if not self.has_surrogate:
+            return 0.0
+        return self.surrogate.predict_defect_probability(*geometry_features)
+
+    def evolve(self, training_data: List[Any]) -> Dict[str, Any]:
+        """
+        Deep Evolution Trigger.
+        Train the surrogate on real/simulated defect outcomes.
+        Args:
+            training_data: List of (features, label) tuples.
+        """
+        if not self.has_surrogate:
+            return {"status": "error", "message": "No surrogate"}
+            
+        import numpy as np
+        total_loss = 0
+        count = 0
+        
+        for x, y in training_data:
+            loss = self.surrogate.train_step(np.array(x), np.array(y))
+            total_loss += loss
+            count += 1
+            
+        self.surrogate.save()
+        return {
+            "status": "evolved",
+            "avg_loss": total_loss / max(1, count),
+            "epochs": self.surrogate.trained_epochs
+        }
+
+

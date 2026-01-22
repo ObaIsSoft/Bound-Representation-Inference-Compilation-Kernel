@@ -2,22 +2,111 @@ import React, { useState } from 'react';
 import { GitBranch, GitCommit, GitMerge, Clock, User } from 'lucide-react';
 import PanelHeader from '../shared/PanelHeader';
 import { useTheme } from '../../contexts/ThemeContext';
+import { useSimulation } from '../../contexts/SimulationContext';
 
 const ForkPanel = ({ width }) => {
     const { theme } = useTheme();
+    const simulation = useSimulation();
 
-    const [commits] = useState([
-        { hash: '9a2f3b1', message: 'Updated shroud diameter to 7.62m', author: 'AERO_PHYSICS', time: '2m ago', branch: 'main' },
-        { hash: '7c4e8d2', message: 'Added thermal analysis constraints', author: 'PROP_THERMAL', time: '15m ago', branch: 'main' },
-        { hash: '5f1a9c3', message: 'Optimized propulsion module', author: 'USER', time: '1h ago', branch: 'main' },
-        { hash: '2d6b4e7', message: 'Initial project structure', author: 'USER', time: '3h ago', branch: 'main' }
-    ]);
+    // Safely extract design state (with fallbacks for undefined)
 
-    const [branches] = useState([
-        { name: 'main', commits: 12, active: true },
-        { name: 'feature/aero-optimization', commits: 3, active: false },
-        { name: 'experimental/new-kernel', commits: 7, active: false }
-    ]);
+    // Safely extract design state (with fallbacks for undefined)
+    const isaTree = simulation?.isaTree || null;
+    const geometryTree = simulation?.geometryTree || [];
+    const sketchPoints = simulation?.sketchPoints || [];
+
+    const [commits, setCommits] = useState([]);
+    const [branches, setBranches] = useState([]);
+    const [currentBranch, setCurrentBranch] = useState("main");
+
+    // Fetch Version History
+    const fetchHistory = React.useCallback(async () => {
+        try {
+            const res = await fetch(`http://localhost:8000/api/version/history?branch=${currentBranch}`);
+            const data = await res.json();
+            if (data.commits) setCommits(data.commits);
+            if (data.branches) setBranches(data.branches);
+        } catch (e) {
+            console.error("Failed to fetch version history:", e);
+            setCommits([]);
+        }
+    }, [currentBranch]);
+
+    React.useEffect(() => {
+        fetchHistory();
+        const interval = setInterval(fetchHistory, 5000);
+        return () => clearInterval(interval);
+    }, [fetchHistory]);
+
+    const handleCommit = async () => {
+        const message = prompt("Enter commit message:", "Checkpoint");
+        if (!message) return;
+
+        try {
+            // Capture REAL design state from SimulationContext
+            const projectSnapshot = {
+                manifest: {
+                    author: "User",
+                    timestamp: new Date().toISOString(),
+                    branch: currentBranch
+                },
+                isa_tree: isaTree,
+                geometry: geometryTree,
+                sketch: sketchPoints
+            };
+
+            const res = await fetch('http://localhost:8000/api/version/commit', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    message: message,
+                    project_data: projectSnapshot,
+                    branch: currentBranch
+                })
+            });
+
+            const data = await res.json();
+            if (data.success) {
+                fetchHistory();
+                // Also trigger a save to the main project file
+                await fetch('http://localhost:8000/api/project/save', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        data: projectSnapshot,
+                        filename: `autosave_${currentBranch}.brick`,
+                        branch: currentBranch
+                    })
+                });
+            }
+        } catch (e) {
+            alert("Commit failed: " + e.message);
+        }
+    };
+
+    const handleCreateBranch = async () => {
+        const name = prompt("New branch name:", `feat-${Math.floor(Math.random() * 1000)}`);
+        if (!name) return;
+
+        try {
+            const res = await fetch('http://localhost:8000/api/version/branch/create', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    name: name,
+                    source: currentBranch
+                })
+            });
+            const data = await res.json();
+            if (data.success) {
+                alert(`Branch '${name}' created! Folder: backend/projects/${name}/`);
+                setCurrentBranch(name); // Auto-switch
+                fetchHistory();
+            }
+        } catch (e) {
+            alert("Create Branch failed: " + e.message);
+        }
+    };
 
     if (width <= 0) return null;
 
@@ -38,26 +127,30 @@ const ForkPanel = ({ width }) => {
                         Current Branch
                     </span>
                     <span className="text-[10px] font-mono font-bold" style={{ color: theme.colors.accent.primary }}>
-                        main
+                        {currentBranch}
                     </span>
                 </div>
                 <div className="flex gap-2">
                     <button
-                        className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded text-[9px] font-mono font-bold uppercase"
+                        onClick={handleCommit}
+                        className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded text-[9px] font-mono font-bold uppercase hover:brightness-110 active:scale-95 transition-all"
                         style={{
                             background: `linear-gradient(to right, ${theme.colors.accent.primary}, ${theme.colors.accent.secondary})`,
-                            color: theme.colors.bg.primary
+                            color: theme.colors.bg.primary,
+                            boxShadow: `0 0 10px ${theme.colors.accent.primary}40`
                         }}
                     >
                         <GitCommit size={12} /> Commit
                     </button>
                     <button
-                        className="px-3 py-1.5 rounded text-[9px] font-mono uppercase"
+                        className="px-3 py-1.5 rounded text-[9px] font-mono uppercase hover:bg-white/5 transition-colors"
                         style={{
                             backgroundColor: theme.colors.bg.tertiary,
                             border: `1px solid ${theme.colors.border.primary}`,
                             color: theme.colors.text.tertiary
                         }}
+                        onClick={handleCreateBranch}
+                        title="New Branch"
                     >
                         <GitMerge size={12} />
                     </button>
@@ -73,14 +166,15 @@ const ForkPanel = ({ width }) => {
                         {branches.map((branch, i) => (
                             <div
                                 key={i}
-                                className="p-2 rounded flex items-center justify-between cursor-pointer"
+                                className="p-2 rounded flex items-center justify-between cursor-pointer hover:bg-white/5 transition-colors"
                                 style={{
-                                    backgroundColor: branch.active ? theme.colors.accent.primary + '1A' : theme.colors.bg.primary,
-                                    border: `1px solid ${branch.active ? theme.colors.accent.primary + '33' : theme.colors.border.primary}`
+                                    backgroundColor: branch.name === currentBranch ? theme.colors.accent.primary + '1A' : theme.colors.bg.primary,
+                                    border: `1px solid ${branch.name === currentBranch ? theme.colors.accent.primary + '33' : theme.colors.border.primary}`
                                 }}
+                                onClick={() => setCurrentBranch(branch.name)}
                             >
                                 <div className="flex items-center gap-2">
-                                    <GitBranch size={10} style={{ color: branch.active ? theme.colors.accent.primary : theme.colors.text.muted }} />
+                                    <GitBranch size={10} style={{ color: branch.name === currentBranch ? theme.colors.accent.primary : theme.colors.text.muted }} />
                                     <span className="text-[10px] font-mono" style={{ color: theme.colors.text.primary }}>
                                         {branch.name}
                                     </span>
@@ -101,7 +195,7 @@ const ForkPanel = ({ width }) => {
                         {commits.map((commit, i) => (
                             <div
                                 key={i}
-                                className="p-2 rounded"
+                                className="p-2 rounded group hover:bg-white/5 transition-colors cursor-pointer"
                                 style={{
                                     backgroundColor: theme.colors.bg.primary,
                                     border: `1px solid ${theme.colors.border.primary}`
@@ -142,7 +236,7 @@ const ForkPanel = ({ width }) => {
                     color: theme.colors.text.muted
                 }}
             >
-                Last sync: 30s ago
+                Last sync: Just now
             </div>
         </aside>
     );

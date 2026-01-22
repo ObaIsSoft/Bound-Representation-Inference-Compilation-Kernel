@@ -142,6 +142,9 @@ const SDFKernel = ({
         uThermalTemp: { value: 20.0 }, // Default room temp
         uThermalEnabled: { value: false },
 
+        // Phase 2: Stress Visuals
+        uStressLevel: { value: 0.0 },
+        uMaxDeflection: { value: 0.0 },
 
         // Single Mesh Fallback (Wrapped in atlas logic or legacy)
         uMeshBounds: { value: [new THREE.Vector3(0, 0, 0), new THREE.Vector3(1, 1, 1)] },
@@ -207,6 +210,43 @@ const SDFKernel = ({
             // Note: The specific texture loading effect below also sets it to true, so we need to sync.
         }
     }, [viewModeInt, baseShape, baseDims, baseColor, metalness, roughness, clipPlane, clipOffset, clipEnabled, theme, meshRenderingMode]);
+
+    // Phase 2: Update Stress Uniforms from Physics Data
+    useEffect(() => {
+        if (!materialRef.current) return;
+
+        // Extract Safety Factor / Stress Intesity
+        // Default to safe (0.0)
+        let stressLevel = 0.0;
+        let deflection = 0.0;
+
+        if (physicsData) {
+            // Check for structural report (Phase 14 format)
+            const structural = physicsData.structural || physicsData.sub_agent_reports?.structural;
+
+            if (structural) {
+                // Safety Factor: < 1.0 is bad. 
+                // Map SF to 0..1 range. 
+                // SF = 1.0 -> Stress = 1.0
+                // SF = 2.0 -> Stress = 0.5
+                // SF = 100 -> Stress = 0.01
+                const sf = structural.safety_factor_yield || 100.0;
+                stressLevel = Math.min(2.0, 1.0 / Math.max(0.1, sf));
+
+                deflection = structural.max_deflection_m || 0.0;
+            }
+        }
+
+        // Inject into shader via specialized uniforms or reuse existing slots if needed.
+        // We added uStressLevel to shader in previous step.
+        if (materialRef.current.uniforms.uStressLevel) {
+            materialRef.current.uniforms.uStressLevel.value = stressLevel;
+        }
+        if (materialRef.current.uniforms.uMaxDeflection) {
+            materialRef.current.uniforms.uMaxDeflection.value = deflection;
+        }
+
+    }, [physicsData]);
 
     // Animate time, resolution, and camera position per frame
     useFrame((state) => {

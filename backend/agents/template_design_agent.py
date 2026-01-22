@@ -5,9 +5,9 @@ logger = logging.getLogger(__name__)
 
 class TemplateDesignAgent:
     """
-    Template Design Agent - Pattern Library.
+    Template Design Agent - Pattern Library (EVOLVED).
     
-    Provides standard design templates:
+    Provides standard design templates with learned parameter optimization:
     - Airfoils (NACA)
     - Chassis frames
     - Enclosures
@@ -22,10 +22,25 @@ class TemplateDesignAgent:
             "quadcopter_frame_x": {"type": "chassis", "arms": 4, "layout": "X"},
             "enclosure_ip67": {"type": "box", "features": ["gasket_groove", "screw_posts"]}
         }
+        
+        # Initialize Neural Surrogate
+        try:
+            from models.template_surrogate import TemplateSurrogate
+            self.surrogate = TemplateSurrogate()
+            self.has_surrogate = True
+        except ImportError:
+            try:
+                from backend.models.template_surrogate import TemplateSurrogate
+                self.surrogate = TemplateSurrogate()
+                self.has_surrogate = True
+            except ImportError:
+                self.surrogate = None
+                self.has_surrogate = False
+                print("TemplateSurrogate not found")
     
     def run(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Retrieve design template.
+        Retrieve design template with optimized parameters.
         
         Args:
             params: {
@@ -37,6 +52,7 @@ class TemplateDesignAgent:
             {
                 "template": Dict,
                 "geometry": Dict (mock),
+                "quality_scores": Dict (if surrogate available),
                 "logs": List[str]
             }
         """
@@ -47,7 +63,6 @@ class TemplateDesignAgent:
         
         template = self.library.get(tid)
         if not template:
-            # Fallback fuzzy search
             matched_key = next((k for k in self.library if tid in k), None)
             if matched_key:
                  template = self.library[matched_key]
@@ -59,18 +74,67 @@ class TemplateDesignAgent:
                     "logs": logs + ["\n[TEMPLATE] ✗ Template not found"]
                 }
         
-        # Apply parameters (mock)
+        # Apply parameters
         logs.append(f"[TEMPLATE] Applying parameters: {custom_params}")
+        
+        # Predict quality with surrogate
+        quality_scores = {}
+        if self.has_surrogate:
+            scale = custom_params.get("scale", 1.0)
+            rotation = custom_params.get("rotation", 0.0)
+            features = len(template.get("features", []))
+            
+            manuf_score, perf_score = self.surrogate.predict(scale, rotation, features)
+            quality_scores = {
+                "manufacturability": round(manuf_score, 3),
+                "performance": round(perf_score, 3)
+            }
+            logs.append(f"[TEMPLATE] Predicted quality: {quality_scores}")
         
         # Mock generated geometry
         geometry = {
             "type": "mesh",
             "source": f"template_engine_{tid}",
-            "vertex_count": 1200 # placeholder
+            "vertex_count": 1200
         }
         
         return {
             "template": template,
             "geometry": geometry,
+            "quality_scores": quality_scores,
             "logs": logs
         }
+    
+    def evolve(self, training_data: List[Any]) -> Dict[str, Any]:
+        """
+        Train surrogate on template usage outcomes.
+        
+        Args:
+            training_data: List of (parameters, [manuf_score, perf_score]) tuples
+        """
+        if not self.has_surrogate:
+            return {"status": "error", "message": "No surrogate"}
+        
+        import numpy as np
+        total_loss = 0.0
+        count = 0
+        
+        for params, scores in training_data:
+            if not isinstance(params, np.ndarray):
+                params = np.array(params)
+            if not isinstance(scores, np.ndarray):
+                scores = np.array(scores)
+            
+            loss = self.surrogate.train_step(params, scores)
+            total_loss += loss
+            count += 1
+        
+        self.surrogate.trained_epochs += 1
+        self.surrogate.save()
+        
+        return {
+            "status": "evolved",
+            "avg_loss": total_loss / max(1, count),
+            "epochs": self.surrogate.trained_epochs
+        }
+

@@ -25,6 +25,35 @@ export const DesignProvider = ({ children }) => {
     const [pendingPlanId, setPendingPlanId] = useState(null); // Plan awaiting approval
     const [artifacts, setArtifacts] = useState({}); // {artifactId: {id, title, content}} - Permanent storage
 
+    // Initial File Fetch from NexusAgent
+    React.useEffect(() => {
+        const fetchFiles = async () => {
+            try {
+                const res = await fetch('http://localhost:8000/api/agents/nexus/run', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ operation: 'list', path: '/' })
+                });
+                const response = await res.json();
+
+                if (response.status === 'success' && response.result.data) {
+                    // Merge remote files with current local mock files if needed
+                    // For now, we overwrite or append
+                    // Ensure unique IDs
+                    const remoteFiles = response.result.data;
+                    setFiles(prev => {
+                        // Avoid duplicates
+                        const newFiles = remoteFiles.filter(rf => !prev.find(p => p.id === rf.id));
+                        return [...prev, ...newFiles];
+                    });
+                }
+            } catch (e) {
+                console.error("Failed to fetch file list from Nexus:", e);
+            }
+        };
+        fetchFiles();
+    }, []);
+
     const createNewFile = useCallback(() => {
         const fileId = `file-${Date.now()}`;
         const fileName = `Untitled Design ${untitledCounter}.brick`;

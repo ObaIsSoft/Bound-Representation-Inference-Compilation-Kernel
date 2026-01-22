@@ -55,12 +55,15 @@ const SimulationBay = ({ activeActivity }) => {
     const [physicsResult, setPhysicsResult] = useState(null);
     const { physState, motionTrail, metrics } = useSimulation();
 
-    // Combine live simulation data
-    const livePhysicsData = {
-        state: physState,
-        motionTrail: motionTrail,
-        metrics: metrics
-    };
+    // Combine live simulation data with static analysis results
+    const combinedPhysicsData = useMemo(() => {
+        return {
+            state: physState,
+            motionTrail: motionTrail,
+            metrics: metrics,
+            ...(physicsResult || {}) // Merge static analysis (structural, etc)
+        };
+    }, [physState, motionTrail, metrics, physicsResult]);
 
     // Simply use all modes always. 
     // Restriction logic was preventing users from inspecting static models.
@@ -97,7 +100,7 @@ const SimulationBay = ({ activeActivity }) => {
                     <UnifiedSDFRenderer
                         design={activeTab}
                         viewMode={viewMode}
-                        physicsData={livePhysicsData || physicsResult}
+                        physicsData={combinedPhysicsData}
                     />
                 )}
 

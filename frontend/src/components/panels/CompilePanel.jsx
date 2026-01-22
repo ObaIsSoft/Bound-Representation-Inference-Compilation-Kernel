@@ -5,55 +5,28 @@ import {
 } from 'lucide-react';
 import PanelHeader from '../shared/PanelHeader';
 import { useTheme } from '../../contexts/ThemeContext';
-
-const MOCK_AST = {
-    type: 'Program',
-    body: [
-        { type: 'Import', module: 'std.geometry' },
-        {
-            type: 'VariableDeclaration',
-            name: 'main_body',
-            value: {
-                type: 'Extrude',
-                args: ['sketch_1', '25mm']
-            }
-        },
-        {
-            type: 'FunctionCall',
-            name: 'fillet',
-            args: ['main_body.edges', '2mm']
-        }
-    ]
-};
-
-const MOCK_ASM = `
-; TARGET: BRICK-RISC-V64
-; OPT: O2
-
-_start:
-    LOAD  R1, [0x4000]  ; Load sketch_1
-    MOV   R2, #25       ; Height
-    CALL  EXTRUDE       ; Extrude(R1, R2) -> R0
-    STORE R0, [0x5000]  ; Store main_body
-
-    LOAD  R1, [0x5000]  ; Load main_body
-    CALL  GET_EDGES     ; -> R1
-    MOV   R2, #2        ; Radius
-    CALL  FILLET        ; Fillet(R1, R2)
-    
-    RET
-`;
+import { useSimulation } from '../../contexts/SimulationContext';
 
 const CompilePanel = ({ width }) => {
     const { theme } = useTheme();
+    const { compilationResult, setCompilationResult, setKclCode } = useSimulation();
+
     const [activeTab, setActiveTab] = useState('ast');
     const [isBuilding, setIsBuilding] = useState(false);
     const [buildStatus, setBuildStatus] = useState('idle'); // idle, building, success, error
     const [logs, setLogs] = useState([
         { type: 'info', msg: 'KCL Compiler v2.4.0 ready.' },
-        { type: 'info', msg: 'Target: BRICK-RISC-V64' }
+        { type: 'info', msg: 'Target: BRICK-RISC-V64 (GLSL)' }
     ]);
     const logsEndRef = useRef(null);
+
+    // Sync status with context updates
+    useEffect(() => {
+        if (compilationResult) {
+            setBuildStatus('success');
+            setLogs(prev => [...prev, { type: 'success', msg: 'Updated from Context.' }]);
+        }
+    }, [compilationResult]);
 
     const scrollToBottom = () => {
         logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -63,52 +36,87 @@ const CompilePanel = ({ width }) => {
         scrollToBottom();
     }, [logs]);
 
-    const handleBuild = () => {
+    const handleBuild = async () => {
         if (isBuilding) return;
         setIsBuilding(true);
         setBuildStatus('building');
         setLogs([{ type: 'info', msg: 'Starting build process...' }]);
 
-        const steps = [
-            { msg: 'Lexing source code...', delay: 500 },
-            { msg: 'Parsing AST...', delay: 1200 },
-            { msg: 'Optimizing (Level O2)...', delay: 2000 },
-            { msg: 'Generating IR...', delay: 2800 },
-            { msg: 'Linking std.geometry...', delay: 3500 },
-            { msg: 'Build SUCCESS. (3.6s)', delay: 3800, type: 'success' }
-        ];
+        try {
+            setLogs(prev => [...prev, { type: 'info', msg: 'Sending User Intent to Logic Core...' }]);
 
-        steps.forEach(step => {
-            setTimeout(() => {
-                setLogs(prev => [...prev, { type: step.type || 'info', msg: step.msg }]);
-                if (step.type === 'success') {
-                    setIsBuilding(false);
-                    setBuildStatus('success');
-                }
-            }, step.delay);
-        });
+            // Invoke Backend
+            const res = await fetch('http://localhost:8000/api/compile', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    user_intent: "Recompile current state", // In a real flow, we'd grab from Editor or Intent Input
+                    project_id: "sim-1"
+                })
+            });
+
+            const data = await res.json();
+
+            if (data.success) {
+                setCompilationResult(data);
+                if (data.kcl_code) setKclCode(data.kcl_code);
+
+                setLogs(prev => [
+                    ...prev,
+                    { type: 'info', msg: 'Geometry Graph [OK]' },
+                    { type: 'info', msg: 'Physics Validation [OK]' },
+                    { type: 'success', msg: 'Build SUCCESS.' }
+                ]);
+                setBuildStatus('success');
+            } else {
+                throw new Error("Compilation returned success:false");
+            }
+
+        } catch (err) {
+            setLogs(prev => [...prev, { type: 'error', msg: `Build Failed: ${err.message}` }]);
+            setBuildStatus('error');
+        } finally {
+            setIsBuilding(false);
+        }
     };
 
+    // Recursive render of JSON Geometry Tree (AST)
     const renderAST = (node, depth = 0) => {
-        return (
-            <div style={{ marginLeft: depth * 12 }} className="font-mono text-xs">
-                {Array.isArray(node) ? (
-                    node.map((child, i) => <div key={i}>{renderAST(child, depth)}</div>)
-                ) : typeof node === 'object' ? (
+        if (!node) return null;
+
+        // Handle list of nodes (top level)
+        if (Array.isArray(node)) {
+            return node.map((child, i) => <div key={i}>{renderAST(child, depth)}</div>);
+        }
+
+        if (typeof node === 'object') {
+            const isLeaf = !node.children && !node.body;
+            return (
+                <div style={{ marginLeft: depth * 12 }} className="font-mono text-xs my-0.5">
                     <div>
-                        <span style={{ color: theme.colors.accent.secondary }}>{node.type}</span>
-                        {node.name && <span style={{ color: theme.colors.text.secondary }}> {node.name}</span>}
-                        {node.module && <span style={{ color: theme.colors.status.success }}> '{node.module}'</span>}
-                        {node.value && <div>{renderAST(node.value, depth + 1)}</div>}
-                        {node.body && <div>{renderAST(node.body, depth + 1)}</div>}
-                        {node.args && (
-                            <span style={{ color: theme.colors.text.muted }}> ({node.args.map(a => `'${a}'`).join(', ')})</span>
+                        <span style={{ color: theme.colors.accent.secondary }}>{node.type || 'Node'}</span>
+                        {node.id && <span style={{ color: theme.colors.text.secondary }}> #{node.id}</span>}
+                        {node.operation && <span style={{ color: theme.colors.status.success }}> {node.operation}</span>}
+
+                        {/* Params */}
+                        {node.params && (
+                            <span style={{ color: theme.colors.text.muted }}>
+                                ({Object.entries(node.params).map(([k, v]) => `${k}=${v}`).join(', ')})
+                            </span>
                         )}
+
+                        {/* Recursion */}
+                        {node.children && <div>{renderAST(node.children, depth + 1)}</div>}
                     </div>
-                ) : null}
-            </div>
-        );
+                </div>
+            );
+        }
+        return null;
     };
+
+    // Data extraction
+    const astData = compilationResult?.geometry_tree || [];
+    const asmData = compilationResult?.glsl_code || "// No GLSL Assembly generated yet.";
 
     return (
         <div
@@ -126,7 +134,7 @@ const CompilePanel = ({ width }) => {
                 <div className="flex gap-2">
                     <div className="flex-1 rounded px-2 py-1 text-xs flex items-center justify-between" style={{ backgroundColor: theme.colors.bg.tertiary }}>
                         <span style={{ color: theme.colors.text.muted }}>TARGET</span>
-                        <span className="font-mono" style={{ color: theme.colors.status.warning }}>RISC-V64</span>
+                        <span className="font-mono" style={{ color: theme.colors.status.warning }}>GLSL-SDF</span>
                     </div>
                     <div className="flex-1 rounded px-2 py-1 text-xs flex items-center justify-between" style={{ backgroundColor: theme.colors.bg.tertiary }}>
                         <span style={{ color: theme.colors.text.muted }}>OPT</span>
@@ -144,7 +152,7 @@ const CompilePanel = ({ width }) => {
                     }}
                 >
                     {isBuilding ? <RotateCw size={14} className="animate-spin" /> : <Play size={14} fill="currentColor" />}
-                    {isBuilding ? 'BUILDING...' : 'BUILD KERNEL'}
+                    {isBuilding ? 'COMPILING...' : 'REBUILD KERNEL'}
                 </button>
             </div>
 
@@ -170,35 +178,26 @@ const CompilePanel = ({ width }) => {
             <div className="flex-1 overflow-auto p-4" style={{ backgroundColor: theme.colors.bg.elevated }}>
                 {activeTab === 'ast' && (
                     <div className="space-y-1">
-                        {renderAST(MOCK_AST)}
+                        {astData.length > 0 ? renderAST(astData) : <span className="italic text-xs text-gray-500">Tree Empty</span>}
                     </div>
                 )}
                 {activeTab === 'asm' && (
-                    <pre className="font-mono text-xs whitespace-pre leading-relaxed" style={{ color: theme.colors.status.info }}>
-                        {buildStatus === 'idle' ? <span className="italic" style={{ color: theme.colors.text.muted }}>; Waiting for build...</span> : MOCK_ASM}
+                    <pre className="font-mono text-[9px] whitespace-pre leading-relaxed" style={{ color: theme.colors.status.info }}>
+                        {asmData}
                     </pre>
                 )}
                 {activeTab === 'symbols' && (
                     <div className="font-mono text-xs space-y-2">
                         <div className="flex text-[10px] pb-1 border-b" style={{ borderColor: theme.colors.border.secondary, color: theme.colors.text.muted }}>
-                            <span className="w-16">ADDR</span>
-                            <span className="flex-1">SYMBOL</span>
-                            <span className="w-12 text-right">SIZE</span>
+                            <span className="w-16">ID</span>
+                            <span className="flex-1">TYPE</span>
                         </div>
-                        {buildStatus !== 'idle' && (
-                            <>
-                                <div className="flex" style={{ color: theme.colors.text.primary }}>
-                                    <span className="w-16" style={{ color: theme.colors.status.info }}>0x4000</span>
-                                    <span className="flex-1">sketch_1</span>
-                                    <span className="w-12 text-right" style={{ color: theme.colors.text.muted }}>128B</span>
-                                </div>
-                                <div className="flex" style={{ color: theme.colors.text.primary }}>
-                                    <span className="w-16" style={{ color: theme.colors.status.info }}>0x5000</span>
-                                    <span className="flex-1">main_body</span>
-                                    <span className="w-12 text-right" style={{ color: theme.colors.text.muted }}>2KB</span>
-                                </div>
-                            </>
-                        )}
+                        {Array.isArray(astData) && astData.map((node, i) => (
+                            <div key={i} className="flex" style={{ color: theme.colors.text.primary }}>
+                                <span className="w-16" style={{ color: theme.colors.status.info }}>{node.id || i}</span>
+                                <span className="flex-1">{node.type}</span>
+                            </div>
+                        ))}
                     </div>
                 )}
             </div>

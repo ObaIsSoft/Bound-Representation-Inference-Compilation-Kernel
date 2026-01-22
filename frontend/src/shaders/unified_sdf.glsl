@@ -610,11 +610,54 @@ vec3 solidShading() {
 }
 
 // Mode 7: Stress/Flow visualization
-// Mode 7: Stress Analysis (Red/Blue gradient)
+// Mode 7: Stress Analysis (Cantilever Model)
+uniform float uStressLevel; // 0.0 = Safe, 1.0 = Yield
+uniform float uMaxDeflection;
+
 vec3 stressShading(vec3 pos, vec3 normal) {
-     float bondStress = abs(sin(pos.x * 10.0 + pos.y * 5.0));
-     // Red = High Stress, Blue = Low
-     return mix(vec3(0.1, 0.1, 0.9), vec3(0.9, 0.1, 0.1), bondStress);
+     // Cantilever Physics:
+     // Moment M = F * (L - x). Stress is max at anchor (x=0).
+     // We assume anchor is at min X or 0.
+     // Let's assume object is roughly centered or normalized.
+     
+     // Normalize X relative to bounding box
+     float xNorm = clamp((pos.x + uBaseDims.x * 0.5) / uBaseDims.x, 0.0, 1.0);
+     
+     // Stress Profile: Linear decrease from root (0) to tip (1)
+     float stressProfile = 1.0 - xNorm; 
+     
+     // Modulation by global stress level (Safety Factor inverted)
+     // If uStressLevel is low (Safe), colors are cool.
+     // If uStressLevel is high (Fail), colors get hot.
+     
+     float finalStress = stressProfile * uStressLevel;
+     
+     // Color Map: Blue (0) -> Green -> Yellow -> Red (1)
+     vec3 cBlue = vec3(0.0, 0.2, 1.0);
+     vec3 cGreen = vec3(0.0, 1.0, 0.2);
+     vec3 cYellow = vec3(1.0, 1.0, 0.0);
+     vec3 cRed = vec3(1.0, 0.0, 0.0);
+     
+     vec3 color;
+     if (finalStress < 0.33) {
+         color = mix(cBlue, cGreen, finalStress * 3.0);
+     } else if (finalStress < 0.66) {
+         color = mix(cGreen, cYellow, (finalStress - 0.33) * 3.0);
+     } else {
+         color = mix(cYellow, cRed, (finalStress - 0.66) * 3.0);
+     }
+     
+     // Add oscillating warning if yielding
+     if (uStressLevel > 0.95) {
+         float flash = sin(uTime * 10.0) * 0.5 + 0.5;
+         color = mix(color, vec3(1.0, 1.0, 1.0), flash * 0.5);
+     }
+     
+     // Grid/Isolines to show deformation (fake)
+     float iso = sin(pos.x * 20.0) * sin(pos.y * 20.0);
+     color *= (0.8 + 0.2 * smoothstep(0.9, 0.95, iso));
+     
+     return color;
 }
 
 // Mode 11: Flow Dynamics (Streamlines)

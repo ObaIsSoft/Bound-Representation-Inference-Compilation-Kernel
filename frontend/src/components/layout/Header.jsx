@@ -29,10 +29,11 @@ const Header = ({ isRunning }) => {
                         style={{
                             background: `linear-gradient(to bottom right, ${theme.colors.accent.primary}, ${theme.colors.accent.secondary})`,
                             color: theme.colors.bg.primary,
-                            boxShadow: `0 0 10px ${theme.colors.accent.glow}`
+                            boxShadow: `0 0 10px ${theme.colors.accent.glow}`,
+                            fontSize: '14px'
                         }}
                     >
-                        B
+                        🧱
                     </div>
                     <h1
                         className="text-sm font-black italic tracking-tighter ml-1 font-mono uppercase"

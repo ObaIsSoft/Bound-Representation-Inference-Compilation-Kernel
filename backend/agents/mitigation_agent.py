@@ -14,6 +14,15 @@ class MitigationAgent:
     
     def __init__(self):
         self.name = "MitigationAgent"
+        
+        # Tier 5: Failure Surrogate
+        try:
+            from backend.models.mitigation_surrogate import FailureSurrogate
+            self.surrogate = FailureSurrogate()
+            self.use_surrogate = True
+        except ImportError:
+            self.surrogate = None
+            self.use_surrogate = False
     
     def run(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -43,6 +52,14 @@ class MitigationAgent:
                  fixes.append({"description": f"Investigate: {error}", "priority": "low"})
         
         logs.append(f"[MITIGATION] Generated {len(fixes)} quantitative fixes")
+        
+        # Tier 5: Neural Risk Assessment
+        if self.use_surrogate and self.surrogate:
+            risk_fixes = self._analyze_neural_risk(physics_data)
+            if risk_fixes:
+                fixes.extend(risk_fixes)
+                logs.append(f"[MITIGATION] Neural Surrogate added {len(risk_fixes)} risk-based fixes")
+                
         return {"fixes": fixes, "logs": logs}
 
     def _calculate_stress_fix(self, error_msg: str, physics_data: Dict) -> Dict:
@@ -87,6 +104,42 @@ class MitigationAgent:
             "technical_basis": "Buckling is invalid; Moment of Inertia (I) scales with r^4",
             "priority": "critical"
         }
+
+    def _analyze_neural_risk(self, physics_data: Dict) -> List[Dict]:
+        """
+        Use FailureSurrogate to detect hidden risks (fatigue, creep) 
+        missed by simple limit checks.
+        """
+        fixes = []
+        
+        # Extract features
+        max_stress = float(physics_data.get("max_stress_mpa", 0.0))
+        yield_str = float(physics_data.get("yield_strength_mpa", 1.0))
+        stress_ratio = max_stress / max(0.1, yield_str)
+        
+        temp_c = float(physics_data.get("temperature_c", 25.0))
+        cycles = float(physics_data.get("cycles", 1e4))
+        corrosion = float(physics_data.get("corrosion_index", 0.0))
+        
+        # Predict Probability
+        try:
+            prob = self.surrogate.predict_risk(stress_ratio, temp_c, cycles, corrosion)
+            
+            RISK_THRESHOLD = 0.05 # 5% probability
+            
+            if prob > RISK_THRESHOLD:
+                fixes.append({
+                    "type": "reliability",
+                    "description": f"High Failure Probability ({prob:.1%}) detected by Neural Net",
+                    "action": "Reduce Operating Temp or Increase Area",
+                    "technical_basis": f"Combined Risk: StressRatio={stress_ratio:.2f}, Cycles={cycles:.0e}, Temp={temp_c}C",
+                    "priority": "high",
+                    "source": "surrogate"
+                })
+        except Exception as e:
+            logger.warning(f"Risk prediction failed: {e}")
+            
+        return fixes
 
     def verify_critical_dimensions(self, verification_plan: Dict[str, Any]) -> Dict[str, Any]:
         """

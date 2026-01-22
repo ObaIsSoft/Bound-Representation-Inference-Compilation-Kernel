@@ -24,6 +24,22 @@ class ChemistryAgent:
         except ImportError:
             self.oracle = None
             self.has_oracle = False
+            
+        # Initialize Neural Brain (Tier 3.5 Deep Evolution)
+        try:
+            try:
+                from backend.models.chemistry_surrogate import ChemistrySurrogate
+            except ImportError:
+                 from ...models.chemistry_surrogate import ChemistrySurrogate
+            
+            self.brain = ChemistrySurrogate(input_size=4, hidden_size=16, output_size=1)
+            self.model_path = "data/chemistry_surrogate.weights.json"
+            self.brain.load(self.model_path)
+            self.has_brain = True
+        except ImportError as e:
+            print(f"ChemistrySurrogate not found: {e}")
+            self.has_brain = False
+            self.brain = None
 
     def run(self, materials: List[str], environment_type: str) -> Dict[str, Any]:
         """
@@ -119,9 +135,29 @@ class ChemistryAgent:
              # Default fallback if DB empty
              params = {"base_rate_mm_year": 0.05}
 
-        base_rate = params.get("base_rate_mm_year", 0.05)
+        # --- Deep Evolution: Neural Kinetics ---
+        # Learned factor modulates the base rate
+        learned_factor = 1.0
         
-        # pH Sensitivity
+        # Base Heuristic (JSON) - Legacy Support acting as Prior
+        json_factor = self._get_learned_parameter(mat_family, "corrosion_rate_factor", 1.0)
+        
+        if self.has_brain and self.brain:
+            # Neural Inference
+            # Inputs: [Temp, pH, Humidity, MaterialBaseFactor]
+            # We treat json_factor as the 'Material Factor' input to the net
+            learned_factor = self.brain.predict_rate_factor(
+                temp=temperature,
+                ph=env_ph,
+                humidity=humidity,
+                mat_factor=json_factor
+            )
+        else:
+            learned_factor = json_factor
+        
+        base_rate = params.get("base_rate_mm_year", 0.05) * learned_factor
+        
+        # pH Sensitivity (Heuristic) - Can be learned, but keeping as prior
         ph_sens = params.get("ph_sensitivity", 0.0)
         if ph_sens > 0 and env_ph < 7:
             base_rate *= (7 - env_ph) * ph_sens
@@ -160,9 +196,31 @@ class ChemistryAgent:
             "metrics": {
                 "rate_mm_y": base_rate * temp_factor * humidity, # Equivalent yearly rate
                 "ph_effect": env_ph,
-                "material_family": mat_family
+                "material_family": mat_family,
+                "neural_factor": learned_factor
             }
         }
+
+    def evolve(self, training_data: list):
+        """
+        Deep Evolution Trigger.
+        Called by ChemistryCritic to train the Neural Kinetics model.
+        Args:
+             training_data: List of (input, target) pairs
+        """
+        if not self.has_brain or not self.brain or not training_data:
+            return {"status": "error", "message": "No brain or data"}
+            
+        import numpy as np
+        total_loss = 0
+        for x, y in training_data:
+            loss = self.brain.train_step(np.array(x), np.array(y))
+            total_loss += loss
+            
+        avg_loss = total_loss / len(training_data)
+        self.brain.save(self.model_path)
+        
+        return {"status": "evolved", "avg_loss": avg_loss, "epochs": self.brain.trained_epochs}
 
     def calculate_reactive_surface(self, geometry_history: List[Dict[str, Any]], stock_dims: List[float]) -> float:
         """
@@ -252,3 +310,36 @@ class ChemistryAgent:
             domain=domain,
             params=params
         )
+
+    def _get_learned_parameter(self, mat_family: str, param_key: str, default: float) -> float:
+        """Self-Evolution Interface."""
+        import json
+        import os
+        path = "data/chemistry_agent_weights.json"
+        if not os.path.exists(path): return default
+        try:
+            with open(path, 'r') as f: 
+                d = json.load(f)
+                val = d.get(mat_family, {}).get(param_key, default)
+                logger = logging.getLogger(__name__)
+                # logger.info(f"[DEBUG] Loading {mat_family}.{param_key} from {path} -> {val}")
+                return val
+        except: return default
+
+    def update_learned_parameters(self, mat_family: str, updates: Dict[str, float]):
+        """Called by ChemistryCritic."""
+        import json
+        import os
+        path = "data/chemistry_agent_weights.json"
+        data = {}
+        if os.path.exists(path):
+            try: 
+                with open(path, 'r') as f: 
+                    data = json.load(f)
+            except: 
+                pass
+            
+        if mat_family not in data: data[mat_family] = {}
+        data[mat_family].update(updates)
+        
+        with open(path, 'w') as f: json.dump(data, f, indent=2)

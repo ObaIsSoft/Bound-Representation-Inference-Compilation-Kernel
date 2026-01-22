@@ -20,7 +20,7 @@ class ThermodynamicsAdapter:
         self.solar_constant = 1361.0 # W/m^2 at 1 AU
         self.AU = 1.496e11 # meters
         
-    def run_simulation(self, params: dict) -> dict:
+    def run_simulation(self, params: dict, query: str = None) -> dict:
         """
         Run Thermodynamics Calculation.
         Params:

@@ -1,9 +1,18 @@
 import React from 'react';
-import { Check, Cpu } from 'lucide-react';
+import { Check, Cpu, ShieldCheck, Network } from 'lucide-react';
 import { useTheme } from '../../contexts/ThemeContext';
+import { useSimulation } from '../../contexts/SimulationContext';
 
 const Header = ({ isRunning }) => {
     const { theme } = useTheme();
+    const { solverStatus } = useSimulation();
+
+    // Helper for status color
+    const getStatusColor = (status, defaultColor) => {
+        if (status === 'OK' || status === 'CONVERGED') return theme.colors.status.success || '#10b981';
+        if (status === 'OFFLINE' || status === 'ERROR') return theme.colors.status.error || '#ef4444';
+        return defaultColor;
+    };
 
     return (
         <header
@@ -33,11 +42,44 @@ const Header = ({ isRunning }) => {
                     </h1>
                 </div>
                 <div className="h-4 w-px" style={{ backgroundColor: theme.colors.border.primary }} />
+
+                {/* Logic-First Status Indicators */}
+                <div className="flex gap-3 ml-2">
+                    {/* ARES Solver Status */}
+                    <div
+                        className="flex items-center gap-1.5 px-2 py-1 rounded border hidden sm:flex"
+                        style={{
+                            backgroundColor: theme.colors.bg.secondary,
+                            borderColor: theme.colors.border.primary
+                        }}
+                    >
+                        <ShieldCheck size={12} style={{ color: getStatusColor(solverStatus?.ares, theme.colors.text.muted) }} />
+                        <span className="text-[9px] font-mono font-bold" style={{ color: theme.colors.text.primary }}>
+                            ARES: {solverStatus?.ares || 'INIT'}
+                        </span>
+                    </div>
+
+                    {/* LDP Status */}
+                    <div
+                        className="flex items-center gap-1.5 px-2 py-1 rounded border hidden sm:flex"
+                        style={{
+                            backgroundColor: theme.colors.bg.secondary,
+                            borderColor: theme.colors.border.primary
+                        }}
+                    >
+                        <Network size={12} style={{ color: solverStatus?.ldp === 'CONVERGED' ? '#3b82f6' : theme.colors.text.muted }} />
+                        <span className="text-[9px] font-mono font-bold" style={{ color: theme.colors.text.primary }}>
+                            LDP: {solverStatus?.ldp || 'IDLE'}
+                        </span>
+                    </div>
+                </div>
+
                 <div className="text-[10px] font-mono uppercase flex gap-4 items-center" style={{ color: theme.colors.text.muted }}>
-                    <span className="flex items-center gap-1" style={{ color: theme.colors.status.success }}>
+                    {/* Legacy Indicator (Keep or Remove? Keeping for now but de-emphasized) */}
+                    {/*  <span className="flex items-center gap-1" style={{ color: theme.colors.status.success }}>
                         <Check size={10} /> KERNEL_OK
-                    </span>
-                    <span className="hidden sm:inline">SHA: 0X9A2F...3B12</span>
+                    </span> */}
+                    <span className="hidden md:inline opacity-50">SHA: 0X9A2F...3B12</span>
                 </div>
             </div>
             <div className="flex items-center gap-4 sm:gap-6 text-[10px] font-mono">

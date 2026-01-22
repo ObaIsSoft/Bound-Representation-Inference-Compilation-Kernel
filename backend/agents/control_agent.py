@@ -17,118 +17,166 @@ class ControlAgent:
     def run(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """
         Synthesize Control Law (LQR or RL).
-        
-        Modes:
-        - "LQR": Analytic Gains (Default)
-        - "RL": Load Pre-trained CEM Policy (Linear Weights)
         """
-        mode = params.get("control_mode", "LQR")
+        mode = params.get("control_mode", "RL") # Default to RL now
         logger.info(f"{self.name} synthesizing controller (Mode={mode})...")
         
-        if mode == "RL":
-            import os
-            import pickle
-            import numpy as np
-            
-            if os.path.exists(self.rl_policy_path):
-                try:
-                    with open(self.rl_policy_path, 'rb') as f:
-                        weights_flat = pickle.load(f)
-                        
-                    # Reconstruct Policy for verification (simplified metadata)
-                    # We assume fixed dimensions for the hover task: 4 obs -> 1 act
-                    obs_dim = 4
-                    act_dim = 1
-                    
-                    return {
-                        "status": "success",
-                        "method": "RL_CEM_Evolutionary",
-                        "policy_path": self.rl_policy_path,
-                        "policy_type": "Linear (Tanh)",
-                        "policy_weights_shape": f"{act_dim}x{obs_dim}",
-                        "logs": [f"CEM Policy loaded successfully. Ready for inference."]
-                    }
-                except Exception as e:
-                    logger.error(f"Failed to load policy: {e}")
-                    mode = "LQR"
-            else:
-                logger.warning(f"RL Policy not found at {self.rl_policy_path}. Falling back to LQR.")
-                mode = "LQR" # Fallback
-                
-        # 1. Physics Inputs (The "Plant")
-        # Default to small drone inertia if missing
-        J_vec = params.get("inertia_tensor", [0.005, 0.005, 0.01]) 
+        # 1. System Identification (SysID) - Online Adaptation
+        # Estimate disturbances based on previous state history (mocked here)
+        history = params.get("flight_history", [])
+        disturbances = self._estimate_disturbance(history)
         
-        # 2. Performance Inputs (The "Intent")
-        # Q: How much do we hate error? (High = Aggressive)
-        # R: How much do we hate using fuel/volts? (High = Conservative)
+        if mode == "RL":
+            try:
+                # Load Inference Engine
+                policy = self._load_policy()
+                if not policy:
+                    raise FileNotFoundError("No active policy found.")
+                
+                # Construct Observation Vector [State, Target, Disturbance]
+                # Simplified 12-D vector: [Pos(3), Vel(3), Target(3), Dist(3)]
+                state_vec = params.get("state_vec", [0]*6)
+                target_vec = params.get("target_vec", [0]*3)
+                obs = state_vec + target_vec + disturbances
+                
+                # Forward Pass
+                action = policy.predict(obs)
+                
+                return {
+                    "status": "success",
+                    "method": "RL_PPO_Adaptive",
+                    "control_signal": action,
+                    "estimated_disturbance": disturbances,
+                    "policy_version": policy.version,
+                    "logs": [f"Inference: PPO Policy v{policy.version}", f"Est. Disturbance: {disturbances}"]
+                }
+                
+            except Exception as e:
+                logger.warning(f"RL Inference failed ({e}). Falling back to LQR.")
+                mode = "LQR" # Fallback
+                return {"status": "error", "message": f"RL Failed: {str(e)}", "method": "RL->LQR_Fallback"}
+
+        if mode == "LQR":
+            return self._run_lqr(params, disturbances)
+            
+        return {"status": "error", "message": "Unknown control mode"}
+
+    def _estimate_disturbance(self, history: List[Dict]) -> List[float]:
+        """
+        SysID: Estimate unmodeled forces (wind, payload shift) from flight data.
+        d_hat = m*a_measured - (u_thrust + g)
+        """
+        if len(history) < 2:
+            return [0.0, 0.0, 0.0]
+            
+        # Mock calculation: In production this filters the IMU stream
+        # returning a 3D force vector [Fx, Fy, Fz]
+        last_error = history[-1].get("error", 0.0)
+        # Adaptive: larger error implies larger unmodeled force
+        d_mag = last_error * 0.1 
+        return [d_mag, d_mag * 0.5, 0.0]
+
+    def _load_policy(self):
+        """Load weights from Pickle (Legacy CEM) or JSON (PPO)."""
+        import json
+        import os
+        import pickle
+        import numpy as np
+        
+        # 1. Try Pickle (Real Trained Policy) first
+        pkl_path = "backend/data/rl_control_policy/cem_policy_v1.pkl"
+        # Fix path for relative execution
+        if not os.path.exists(pkl_path):
+            pkl_path = "data/rl_control_policy/cem_policy_v1.pkl"
+            
+        if os.path.exists(pkl_path):
+             try:
+                with open(pkl_path, 'rb') as f:
+                    # Generic load - flat parameter vector from CEM
+                    params = pickle.load(f)
+                    
+                    # Wrap in Linear Policy adapter that matches train_rl.py structure
+                    class CEMPolicyWrapper:
+                        def __init__(self, flat_params, obs_dim=12, act_dim=4):
+                            self.version = "CEM-v1 (Pickle)"
+                            
+                            # Reconstruct weights/bias from flat vector
+                            # Param count = obs*act + act
+                            expected = obs_dim * act_dim + act_dim
+                            
+                            if len(flat_params) != expected:
+                                # Fallback for mismatch (e.g. if training env dims differed)
+                                # Try to deduce
+                                pass
+                                
+                            split = obs_dim * act_dim
+                            self.weights = flat_params[:split].reshape(act_dim, obs_dim)
+                            self.bias = flat_params[split:]
+                            
+                        def predict(self, obs):
+                            # Tanh Linear Policy: u = (tanh(Wx + b) + 1) / 2
+                            x = np.array(obs)
+                            logit = np.dot(self.weights, x) + self.bias
+                            action = (np.tanh(logit) + 1.0) / 2.0
+                            return action.tolist()
+                                
+                    # Note: We need to know dims. 
+                    # BrickEnv (Hover) typically has Obs=12, Act=4 (Motor Thrusts)
+                    return CEMPolicyWrapper(params, obs_dim=12, act_dim=4)
+             except Exception as e:
+                 logger.warning(f"Found pickle but failed to load: {e}")
+
+        # 2. Fallback to JSON (Mock PPO)
+        path = "data/rl_control_policy/ppo_policy_v2.json"
+        if not os.path.exists(path):
+            return None
+            
+        class NumpyMLP:
+            # ... (Existing JSON MLP Class)
+            def __init__(self, weights):
+                self.weights = weights
+                self.version = weights.get("version", "1.0")
+                self.l1_w = np.array(weights["layer1_w"])
+                self.l1_b = np.array(weights["layer1_b"])
+                self.l2_w = np.array(weights["layer2_w"])
+                self.l2_b = np.array(weights["layer2_b"])
+                
+            def predict(self, obs):
+                x = np.array(obs)
+                # Reshape if needed or assume flat
+                h1 = np.maximum(0, np.dot(x, self.l1_w) + self.l1_b)
+                out = np.dot(h1, self.l2_w) + self.l2_b
+                return out.tolist()
+
+        try:
+            with open(path, 'r') as f:
+                data = json.load(f)
+                return NumpyMLP(data)
+        except Exception:
+            return None
+
+    def _run_lqr(self, params: Dict, disturbances: List[float]) -> Dict:
+        """Legacy LQR Logic (Refactored)"""
+        # ... (Existing LQR logic, injecting disturbances into FeedForward if needed)
+        J_vec = params.get("inertia_tensor", [0.005, 0.005, 0.01])
         q_pos = params.get("q_error_cost", 100.0)
         r_control = params.get("r_effort_cost", 1.0)
         
-        # 3. LQR Synthesis (Analytic Solution for Double Integrator)
-        # System: J * theta'' = u
-        # State: x = [theta, theta']
-        # For a simple diagonal inertia, we decouple axes (Roll, Pitch, Yaw).
-        
         gains = {}
         axes = ["roll", "pitch", "yaw"]
-        
-        logs = [f"Inertia J: {J_vec} kg·m²", f"Costs Q={q_pos}, R={r_control}"]
-        
         for i, axis in enumerate(axes):
             J = J_vec[i]
-            if J <= 0: J = 0.001 # Protect div by zero
+            kp = math.sqrt(q_pos / r_control)
+            kd = math.sqrt(2.0 * J * kp)
             
-            # Analytic LQR for 1/J s^2 plant
-            # kp = sqrt(Q/R)
-            # kd = sqrt(2*sqrt(Q/R) + q_vel/R) -- assuming q_vel=0 for now results in:
-            # Damping ratio zeta = 0.707 (optimal butterworth) typically implied by standard forms
+            # Feedforward term to counteract disturbance
+            u_ff = -1.0 * disturbances[i] # Simple cancellation
             
-            # Let's use the explicit textbook analytic result for x = [pos, vel]
-            # Cost = integral(q*pos^2 + r*u^2)
-            # We normalize by inertia so u_accel = u_torque / J
-            # But here R is on torque.
+            gains[axis] = {"kp": kp, "kd": kd, "u_ff": u_ff}
             
-            # Resulting Gains:
-            kp = math.sqrt(q_pos / r_control) # Independent of Inertia in 'accel' domain, but dependent in 'torque' domain
-            # Wait, u = -Kx. u is torque.
-            # Plant: theta'' = (1/J) * u
-            # This makes the "effective" B matrix differ.
-            
-            # Correct Analytic derivation:
-            # kp = sqrt(Q/R)
-            # kd = sqrt(2 * J * sqrt(Q/R)) 
-            # ... Checking Dimensionality ... 
-            # kp units: Nm/rad. Q units: 1/rad^2? R units: 1/(Nm)^2? 
-            # Let's assume standard Bryson's rule:
-            # Q = 1/max_error^2, R = 1/max_torque^2
-            
-            # Simplified LQR approximation for Kp, Kd:
-            # Natural Frequency wn = (Q/R)^(1/4) / sqrt(J) ?? No.
-            
-            # Let's stick to the Pole Placement result derived from Q/R ratio which sets bandwidth:
-            # Bandwidth (rad/s) ~ sqrt(kp_normalized)
-            
-            # Approach:
-            # 1. Optimal Natural Frequency wn = sqrt(sqrt(Q/R) / J) is commonly cited for 1/s^2 system?
-            # Let's do:
-            # kp_torque = sqrt(Q/R)  <-- This implies Torque is proportional to error, heavily.
-            # kd_torque = sqrt(2 * J * kp_torque) <-- Critical damping-ish relationship
-            
-            # Revised for robustness:
-            kp_val = math.sqrt(q_pos / r_control)
-            kd_val = math.sqrt(2.0 * J * kp_val)
-            
-            gains[axis] = {
-                "kp": round(kp_val, 4),
-                "kd": round(kd_val, 4),
-                "ki": 0.0 # LQR doesn't give KI natively (needs integral state)
-            }
-            logs.append(f"{axis.upper()}: Kp={kp_val:.2f}, Kd={kd_val:.2f} (J={J})")
-
         return {
-            "status": "success",
-            "method": "LQR_Analytic_Double_Integrator",
-            "gain_matrix": gains,
-            "logs": logs
+            "status": "success", 
+            "method": "LQR_Analytic", 
+            "gains": gains,
+            "disturbance_compensation": disturbances
         }

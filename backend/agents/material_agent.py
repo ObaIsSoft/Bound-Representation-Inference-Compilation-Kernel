@@ -20,6 +20,25 @@ class MaterialAgent:
             self.physics_oracle = None
             self.chemistry_oracle = None
             self.has_oracles = False
+            
+        # Initialize Neural Brain (Tier 3.5 Deep Evolution)
+        try:
+            # Try absolute import first (standard for run from root)
+            try:
+                from backend.models.material_net import MaterialNet
+            except ImportError:
+                # Fallback to relative import (if run as module)
+                from ...models.material_net import MaterialNet
+                
+            self.brain = MaterialNet(input_size=4, hidden_size=16, output_size=2)
+            self.model_path = "data/material_net.weights.json"
+            self.brain.load(self.model_path)
+            self.has_brain = True
+        except ImportError as e:
+            self.has_brain = False
+            print(f"MaterialNet not found: {e}")
+            # Ensure self.brain exists to avoid AttributeError in run() even if it is None
+            self.brain = None
     
     def run(self, material_name: str, temperature: float = 20.0) -> Dict[str, Any]:
         """
@@ -68,24 +87,83 @@ class MaterialAgent:
                 "max_temp": 150
              }
 
-        # 3. Temperature Degradation
-        T_melt = props["melting_point"]
-        strength_factor = 1.0
+        # 3. Temperature Degradation (Deep Evolution: MaterialNet)
         
+        T_melt = props["melting_point"]
+        
+        # Base Heuristic (Analytic Prior)
+        heuristic_factor = 1.0
         if temperature > props["max_temp"]:
             excess = temperature - props["max_temp"]
-            strength_factor = max(0, 1.0 - (excess * 0.005))
+            heuristic_factor = max(0, 1.0 - (excess * 0.005))
             
+        # Neural/Learned Correction (Learned Residual)
+        # Input Features: [Temperature/1000, YieldStrength/1e9, Time(unused), pH(unused)]
+        # Normalized inputs for better NN performance
+        import numpy as np
+        
+        correction = 0.0
+        if self.has_brain and self.brain:
+            inputs = np.array([
+                temperature / 1000.0, 
+                props["yield_strength"] / 1e9,
+                0.0, # Time placeholder
+                7.0  # pH placeholder
+            ])
+            
+            # Neural Inference
+            # Output [0] is correction to strength_factor
+            nn_output = self.brain.forward(inputs).flatten()
+            correction = float(nn_output[0])
+        
+        # Hybrid Fusion: Prediction = Heuristic + NeuralResidual
+        # We clamp the result between 0 and 1
+        final_factor = max(0.0, min(1.0, heuristic_factor + correction))
+        
         return {
             "name": material_name if found else f"Generic Aluminum (Fallback for {material_name})",
             "properties": {
                 "density": props["density"],
-                "yield_strength": props["yield_strength"] * strength_factor,
+                "yield_strength": props["yield_strength"] * final_factor,
                 "melting_point": props["melting_point"],
                 "is_melted": temperature >= T_melt,
-                "strength_factor": round(strength_factor, 2)
+                "strength_factor": round(final_factor, 3),
+                "degradation_model": "Deep Hybrid (Linear Prior + MaterialNet)" if self.has_brain else "Heuristic (Fallback)",
+                "neural_correction": round(correction, 4)
             }
         }
+
+    def evolve(self, training_data: list):
+        """
+        Deep Evolution Trigger.
+        Called by MaterialCritic to train the neural brain.
+        Args:
+            training_data: List of tuples (input_vector, target_output_vector)
+        """
+        if not training_data: return
+        
+        import numpy as np
+        
+        total_loss = 0
+        for x, y in training_data:
+            loss = self.brain.train_step(np.array(x), np.array(y))
+            total_loss += loss
+            
+        avg_loss = total_loss / len(training_data)
+        
+        # Auto-save weights
+        self.brain.save(self.model_path)
+        
+        return {"status": "evolved", "avg_loss": avg_loss, "epochs": self.brain.trained_epochs}
+
+    def _get_learned_parameter(self, mat_name: str, param_key: str, default: float) -> float:
+        """Legacy Scalar Tuning (Deprecated by MaterialNet)""" 
+        return default
+            
+    def update_learned_parameters(self, mat_name: str, updates: Dict[str, float]):
+        """Legacy Scalar Update (Deprecated)"""
+        pass
+
 
     def calculate_exact_mass_sdf(self, material_name: str, stock_dims: list, toolpaths: list, precision: int = 1000) -> Dict[str, Any]:
         """

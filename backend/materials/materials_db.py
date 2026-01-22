@@ -12,8 +12,11 @@ from .materials_api import UnifiedMaterialsAPI
 try:
     from database.supabase_client import SupabaseClientWrapper
 except ImportError:
-    # Fallback to relative import if running as module
-    from ...database.supabase_client import SupabaseClientWrapper
+    try:
+        from backend.database.supabase_client import SupabaseClientWrapper
+    except ImportError:
+        # Fallback to relative import if running as module
+        from ...database.supabase_client import SupabaseClientWrapper
 
 logger = logging.getLogger(__name__)
 

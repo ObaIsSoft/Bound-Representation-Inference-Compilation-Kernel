@@ -54,9 +54,38 @@ class GeometryAgent:
              # Merge into params if passed separately, ensuring logic below sees it
              params["ldp_instructions"] = ldp_instructions
         
-        # 1. Determine Generation Mode
+        # 1. Recursive ISA Scope Resolution
+        # If running in a focused pod, pull its constraints (Source of Truth)
+        pod_id = params.get("pod_id")
+        if pod_id:
+            try:
+                from core.system_registry import get_system_resolver
+                resolver = get_system_resolver()
+                
+                # Helper to find pod by ID (TODO: Add get_pod_by_id to Resolver)
+                def find_pod(root, target_id):
+                    if root.id == target_id: return root
+                    for sub in root.sub_pods.values():
+                        f = find_pod(sub, target_id)
+                        if f: return f
+                    return None
+                
+                pod = find_pod(resolver.root, pod_id)
+                if pod:
+                    logger.info(f"GeometryAgent: SCOPED EXECUTION -> {pod.name}")
+                    # Merge constraints into params (High Priority)
+                    # This allows the Pod's state to drive the geometry
+                    params.update(pod.constraints)
+                    
+                    # Also set a context flag
+                    params["context_name"] = pod.name
+                    
+            except ImportError:
+                 logger.warning("System Registry not available for Scoped Geometry.")
+
+        # 2. Determine Generation Mode
         mode = "parametric" # Default
-        if "generative" in intent.lower() or not params:
+        if "generative" in intent.lower() or (not params and not pod_id):
             mode = "generative"
             # If no params provided at all, we might switch to a generative stub
             # OR we populate default params based on regime to avoid "magic numbers" in code logic
@@ -223,16 +252,75 @@ class GeometryAgent:
             logger.warning(f"Fast Boolean Failed: {e}. Switching to SDF Fallback.")
             
         # 2. SDF Fallback (VMK Logic)
-        return self._sdf_boolean(mesh_a, mesh_b, operation)
+        # 2. SDF Fallback (VMK Logic)
+        settings = self._load_kernel_settings()
+        resolution = settings.get("sdf_resolution", 64)
+        return self._sdf_boolean(mesh_a, mesh_b, operation, resolution)
 
-    def _sdf_boolean(self, mesh_a, mesh_b, operation: str) -> Any:
+    def get_composite_sdf(self, geometry_tree: List[Dict[str, Any]]) -> Any:
+        """
+        Returns a callable SDF function `f(points) -> distances` 
+        representing the composite geometry tree.
+        Used for Marching Cubes export.
+        """
+        import numpy as np
+        from utils.sdf_mesher import sdf_box, sdf_sphere
+        
+        # Helper: Resolve params
+        def resolve_dims(part):
+            p = part.get("params", {})
+            ptype = part.get("type", "box")
+            
+            if ptype == "box":
+                # Convert to half-extents
+                l = p.get("length", 1.0)
+                w = p.get("width", 1.0)
+                h = p.get("height", 1.0)
+                return np.array([l/2, w/2, h/2])
+            elif ptype == "sphere":
+                return p.get("radius", 1.0)
+            return np.array([0.5, 0.5, 0.5])
+
+        # Closure for the composite function
+        def composite_func(points):
+            # Start with "empty" space (infinite distance)
+            d_min = np.full(points.shape[0], 1e9)
+            
+            for part in geometry_tree:
+                ptype = part.get("type", "box")
+                dims = resolve_dims(part)
+                
+                # Assume origin-centered for now (TODO: Apply transforms)
+                # In real Composite SDF, we'd subtract center from points
+                center = np.array(part.get("transform", {}).get("translate", [0,0,0]))
+                p_local = points - center
+                
+                if ptype == "box" or ptype == "plate":
+                    d = sdf_box(p_local, dims)
+                elif ptype == "sphere":
+                    d = sdf_sphere(p_local, dims)
+                else:
+                    d = sdf_box(p_local, np.array([0.5, 0.5, 0.5])) # Fallback
+                
+                # Apply Boolean Operation
+                op = part.get("operation", "UNION").upper()
+                
+                if op == "UNION":
+                    d_min = np.minimum(d_min, d)
+                elif op == "DIFFERENCE" or op == "SUBTRACT":
+                    d_min = np.maximum(d_min, -d)
+                elif op == "INTERSECTION":
+                    d_min = np.maximum(d_min, d)
+                else:
+                    d_min = np.minimum(d_min, d) # Default to Union
+                
+            return d_min
+            
+        return composite_func
+
+    def _sdf_boolean(self, mesh_a, mesh_b, operation: str, res: int = 64) -> Any:
         """
         SDF-based Boolean.
-        1. Define combined bounds.
-        2. Generate Grid points.
-        3. Compute SDF A and SDF B (slow but robust).
-        4. Combine values.
-        5. Reconstruct (Marching Cubes).
         """
         import trimesh
         from skimage import measure
@@ -240,11 +328,9 @@ class GeometryAgent:
         
         # Combined bounds
         bounds = np.vstack((mesh_a.bounds, mesh_b.bounds))
-        min_p = np.min(bounds, axis=0) - 2.0 # Padding
+        min_p = np.min(bounds, axis=0) - 2.0
         max_p = np.max(bounds, axis=0) + 2.0
         
-        # Grid Resolution (Fixed for MVP, adaptive in future)
-        res = 64
         x = np.linspace(min_p[0], max_p[0], res)
         y = np.linspace(min_p[1], max_p[1], res)
         z = np.linspace(min_p[2], max_p[2], res)
@@ -258,16 +344,11 @@ class GeometryAgent:
         if not mesh_b.is_watertight: trimesh.repair.fill_holes(mesh_b)
 
         # Compute Signed Distance (Negative inside)
-        # trimesh.proximity.signed_distance returns positive OUTSIDE?
-        # Let's verify standard Trimesh convention. Usually: negative inside.
         sdf_a_flat = trimesh.proximity.signed_distance(mesh_a, pts)
         sdf_b_flat = trimesh.proximity.signed_distance(mesh_b, pts)
         
-        # Combine
-        # Diff: A - B => Intersection(A, Not B) => max(sdf_a, -sdf_b)
-        
         op_upper = operation.upper()
-        sdf_comb = sdf_a_flat # Default to A if fail
+        sdf_comb = sdf_a_flat 
         
         if op_upper == "DIFFERENCE":
              sdf_comb = np.maximum(sdf_a_flat, -sdf_b_flat)
@@ -300,15 +381,58 @@ class GeometryAgent:
             logger.error(f"SDF Reconstruction Failed: {e}")
             return None
 
+    def _load_kernel_settings(self) -> Dict:
+        import json
+        path = "data/geometry_agent_weights.json"
+        if not os.path.exists(path): return {"sdf_resolution": 64}
+        try:
+            with open(path, 'r') as f: return json.load(f)
+        except: return {"sdf_resolution": 64}
+
+    def update_kernel_settings(self, action: str):
+        """Evolve kernel settings based on critic feedback."""
+        settings = self._load_kernel_settings()
+        res = settings.get("sdf_resolution", 64)
+        
+        if action == "INCREASE_RESOLUTION":
+            res = min(256, int(res * 1.5))
+            logger.info(f"GeometryAgent: Increasing SDF Resolution to {res} (Quality Boost)")
+        elif action == "DECREASE_RESOLUTION":
+            res = max(32, int(res * 0.8))
+            logger.info(f"GeometryAgent: Decreasing SDF Resolution to {res} (Speed Boost)")
+            
+        settings["sdf_resolution"] = res
+        
+        import json
+        with open("data/geometry_agent_weights.json", 'w') as f:
+            json.dump(settings, f, indent=2)
+
 
     # --- Regime-Aware Sizing ---
 
     def _estimate_geometry_tree(self, regime: str, params: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
-        Estimates component tree based on physics/regime.
+        Estimates component tree based on physics/regime OR explicit constraints.
         """
         tree = []
+        name = params.get("context_name", "main_body")
         
+        # 1. Explicit Constraints (Recursive ISA Priority)
+        # If the pod has explicit geometry vars, use them directly.
+        if "length" in params and "width" in params and "height" in params:
+             tree.append({
+                "id": f"{name}_geometry",
+                "type": "box",
+                "params": {
+                    "length": float(params["length"]), 
+                    "width": float(params["width"]), 
+                    "height": float(params["height"])
+                },
+                "mass_kg": float(params.get("mass_budget", 1.0))
+            })
+             return tree
+        
+        # 2. Heuristics (Fallback)
         if regime == "AERIAL":
             # Generic Physics-based sizing for Aerial Vehicles
             # Volume based on Energy Density + Payload

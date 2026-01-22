@@ -1,7 +1,7 @@
 import React from 'react';
 import {
     Search, Package, Play, Layers, Code2, Wrench,
-    GitBranch, Download, FileText, Settings, Cpu
+    GitBranch, Download, FileText, Settings, Cpu, Server
 } from 'lucide-react';
 import { ACTIVITY_BAR_WIDTH } from '../../utils/constants';
 import { useTheme } from '../../contexts/ThemeContext';
@@ -15,6 +15,7 @@ const ActivityBar = ({ activeTab, setActiveTab }) => {
         { id: 'components', icon: Cpu, label: 'Universal Catalog' },
         { id: 'run', icon: Play, label: 'Run and Debug' },
         { id: 'agents', icon: Layers, label: 'Agent Pods' },
+        { id: 'isa', icon: Server, label: 'Recursive ISA Structure' }, // Phase 9
         { id: 'compile', icon: Code2, label: 'Compile ISA' },
         { id: 'mfg', icon: Wrench, label: 'Manufacturing' },
         { id: 'fork', icon: GitBranch, label: 'Version Control (Fork)' },

@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
     History, MessageSquarePlus, X, Send, Loader2, Undo2, Trash2,
-    SlidersHorizontal, ShieldCheck, Sparkles, ChevronDown
+    SlidersHorizontal, ShieldCheck, Sparkles, ChevronDown, Pencil
 } from 'lucide-react';
 import PanelHeader from '../shared/PanelHeader';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useSettings } from '../../contexts/SettingsContext';
 import { useDesign } from '../../contexts/DesignContext';
+import { useSimulation } from '../../contexts/SimulationContext';
 
 const Modal = ({ isOpen, onClose, title, content }) => {
     if (!isOpen) return null;
@@ -66,9 +67,11 @@ const ControlDeck = ({
     const { theme } = useTheme();
     const { aiModel, setAiModel } = useSettings();
     const { pendingPlanId, tabs, approvePlan, rejectPlan, setActiveTabId, reopenArtifact } = useDesign();
+    const { sketchMode, setSketchMode, viewMode, setViewMode } = useSimulation();
     const [inputText, setInputText] = useState('');
     const [showHistory, setShowHistory] = useState(false);
     const [showModelMenu, setShowModelMenu] = useState(false);
+    const [showViewMenu, setShowViewMenu] = useState(false); // Phase 10
 
     // Modal State
     const [modalOpen, setModalOpen] = useState(false);
@@ -619,6 +622,26 @@ const ControlDeck = ({
 
                     {/* Nested Status & Controls Row (Bottom Left of Input) */}
                     <div className="absolute bottom-2.5 left-3 flex items-center gap-3 opacity-60 group-hover:opacity-100 transition-opacity">
+
+                        {/* Sketch Mode Toggle */}
+                        <button
+                            onClick={() => setSketchMode(!sketchMode)}
+                            className={`flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-wider transition-all border px-1.5 py-0.5 rounded cursor-pointer ${sketchMode ? 'bg-opacity-20 border-opacity-50' : 'bg-transparent border-transparent opacity-60 hover:opacity-100'}`}
+                            style={{
+                                color: sketchMode ? theme.colors.accent.primary : theme.colors.text.tertiary,
+                                backgroundColor: sketchMode ? theme.colors.accent.primary + '1A' : 'transparent',
+                                borderColor: sketchMode ? theme.colors.accent.primary : 'transparent'
+                            }}
+                            title="Toggle Semantic Sketch Mode"
+                        >
+                            <Pencil size={11} className={sketchMode ? "animate-pulse" : ""} />
+                            <span>Draw</span>
+                        </button>
+
+                        {/* Divider */}
+                        <div className="h-2 w-px bg-current opacity-20" />
+
+
 
                         {/* Formal Verification Indicator (Tiny) */}
                         <div

@@ -20,7 +20,7 @@ const ALL_VIEW_MODES = [
     { id: 'realistic', label: 'Realistic', icon: Eye, category: 'standard' },
     { id: 'matte', label: 'Matte', icon: Droplet, category: 'standard' },
     { id: 'wireframe', label: 'Wireframe', icon: Grid, category: 'standard' },
-    { id: 'heatmap', label: 'Heatmap', icon: Activity, category: 'standard' },
+    { id: 'thermal', label: 'Thermal', icon: Activity, category: 'standard' }, // Phase 10: Renamed from 'heatmap'
     { id: 'hyperrealism', label: 'Hyperrealism', icon: Sun, category: 'standard' },
     { id: 'solid', label: 'Solid', icon: Square, category: 'standard' },
     { id: 'interior', label: 'Interior', icon: BoxSelect, category: 'standard' },

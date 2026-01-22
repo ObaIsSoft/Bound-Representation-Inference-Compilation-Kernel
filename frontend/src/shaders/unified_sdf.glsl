@@ -9,7 +9,7 @@
  * 1 = Wireframe (edge detection)
  * 2 = X-Ray (rim transparency)
  * 3 = Matte (diffuse only)
- * 4 = Heatmap (temperature/stress gradient)
+ * 4 = Thermal (temperature heatmap: blue=cold, red=hot)
  * 5 = Cutaway (cross-section with interior)
  * 6 = Solid (flat unlit color)
  * 7 = Stress/Flow (physics overlay arrows)
@@ -33,6 +33,11 @@ uniform float uClipEnabled;
 uniform vec3 uBaseColor;
 uniform float uMetalness;
 uniform float uRoughness;
+
+// Phase 10: Thermal Data
+uniform float uThermalTemp; // Temperature in Celsius
+uniform bool uThermalEnabled;
+
 
 // Geometry State
 uniform int uBaseShape;      // 0=Empty, 1=Box, 2=Sphere, 3=Cylinder
@@ -99,6 +104,25 @@ struct ComponentSDF {
 #define MAX_COMPONENTS 16 // WebGL Loop Limit Safe
 uniform ComponentSDF uComponents[MAX_COMPONENTS];
 uniform int uAtlasComponentCount; // Number of active components
+
+// Semantic Sketch Primitives
+struct SDFPrimitive {
+    int type; // 0=None, 1=Capsule
+    vec3 p0;
+    vec3 p1;
+    float radius;
+    float blendStrength;
+};
+#define MAX_PRIMITIVES 16
+uniform SDFPrimitive uPrimitives[MAX_PRIMITIVES];
+uniform int uPrimitiveCount; // Number of active primitives
+
+// Light Pen Sketching (Subtractive)
+uniform vec3 uSketchPoints[128]; // Increased from 32
+uniform int uSketchCount;
+
+
+
 
 // Helper for soft min (optional, but nice for intersections)
 float smin(float a, float b, float k) {
@@ -175,6 +199,13 @@ float sampleMeshSDF(vec3 p) {
 // SCENE MAP
 // ============================================
 
+// Analytic Primitives
+float sdCapsule( vec3 p, vec3 a, vec3 b, float r ) {
+    vec3 pa = p - a, ba = b - a;
+    float h = clamp( dot(pa,ba)/dot(ba,ba), 0.0, 1.0 );
+    return length( pa - ba*h ) - r;
+}
+
 float map(vec3 p) {
     float d = 100.0;
     
@@ -193,6 +224,30 @@ float map(vec3 p) {
     if (uMeshSDFEnabled) {
         float d_mesh = sampleMeshSDF(p);
         d = min(d, d_mesh); // Union: take minimum distance
+    }
+
+    // Blend Semantic Sketches (Proposed)
+    for(int i=0; i<MAX_PRIMITIVES; i++) {
+        if (i >= uPrimitiveCount) break;
+        if (uPrimitives[i].type == 1) { // Capsule
+            float d_prim = sdCapsule(p, uPrimitives[i].p0, uPrimitives[i].p1, uPrimitives[i].radius);
+            // Smooth Union
+            d = smin(d, d_prim, uPrimitives[i].blendStrength > 0.0 ? uPrimitives[i].blendStrength : 0.1);
+        }
+    }
+    
+    // Light Pen Subtractive Sketching
+    for(int i=0; i<127; i++) { // 128 points max
+        if (i >= uSketchCount - 1) break;
+        
+        vec3 p0 = uSketchPoints[i];
+        vec3 p1 = uSketchPoints[i+1];
+        
+        // 5cm cut radius
+        float d_stroke = sdCapsule(p, p0, p1, 0.05);
+        
+        // Subtraction: max(d, -shape)
+        d = max(d, -d_stroke);
     }
     
     // Clip Plane (cutaway or interior mode)
@@ -318,6 +373,45 @@ vec3 getBackground(vec3 rd) {
         }
     }
     return bg;
+}
+
+// ============================================
+// THERMAL VIEW HELPER (Phase 10)
+// ============================================
+
+vec3 getThermalColor(float temp) {
+    // Temperature to color mapping (Celsius)
+    // < 30°C  = Blue (Cool/Safe)
+    // 50°C    = Cyan
+    // 100°C   = Green → Yellow
+    // 200°C   = Orange
+    // 500°C+  = Red → White (Critical)
+    
+    if (temp < 30.0) {
+        // Blue zone (0-30°C)
+        float t = temp / 30.0;
+        return mix(vec3(0.0, 0.0, 0.8), vec3(0.0, 0.5, 1.0), t);
+    } else if (temp < 60.0) {
+        // Cyan to Green (30-60°C)
+        float t = (temp - 30.0) / 30.0;
+        return mix(vec3(0.0, 0.5, 1.0), vec3(0.0, 1.0, 0.5), t);
+    } else if (temp < 100.0) {
+        // Green to Yellow (60-100°C)
+        float t = (temp - 60.0) / 40.0;
+        return mix(vec3(0.0, 1.0, 0.5), vec3(1.0, 1.0, 0.0), t);
+    } else if (temp < 200.0) {
+        // Yellow to Orange (100-200°C)
+        float t = (temp - 100.0) / 100.0;
+        return mix(vec3(1.0, 1.0, 0.0), vec3(1.0, 0.5, 0.0), t);
+    } else if (temp < 500.0) {
+        // Orange to Red (200-500°C)
+        float t = (temp - 200.0) / 300.0;
+        return mix(vec3(1.0, 0.5, 0.0), vec3(1.0, 0.0, 0.0), t);
+    } else {
+        // Red to White (500°C+)  - Extreme heat
+        float t = clamp((temp - 500.0) / 500.0, 0.0, 1.0);
+        return mix(vec3(1.0, 0.0, 0.0), vec3(1.0, 1.0, 1.0), t);
+    }
 }
 
 // ============================================
@@ -659,7 +753,13 @@ void main() {
             } else if (uViewMode == 3) {
                 color = matteShading(p, n);
             } else if (uViewMode == 4) {
-                color = heatmapShading(p, n);
+                // Thermal View (Phase 10)
+                if (uThermalEnabled) {
+                    color = getThermalColor(uThermalTemp);
+                } else {
+                    // Fallback to generic gradient if no data
+                    color = heatmapShading(p, n);
+                }
             } else if (uViewMode == 5) {
                 color = cutawayShading(p, n, viewDir);
             } else if (uViewMode == 6) {

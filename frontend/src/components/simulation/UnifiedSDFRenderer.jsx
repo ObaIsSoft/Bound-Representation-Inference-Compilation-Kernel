@@ -5,6 +5,11 @@ import * as THREE from 'three';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useSettings } from '../../contexts/SettingsContext';
 import { StandardMeshPreview } from './StandardMeshPreview';
+import { NeuralSDF } from './NeuralSDF';
+import { StrokeCapture } from './StrokeCapture'; // New
+import { RegionSelector } from './RegionSelector'; // Phase 8.4
+import { RegionInteraction } from './RegionInteraction'; // Phase 8.5
+import { useSimulation } from '../../contexts/SimulationContext';
 // import PhysicsOverlays from './PhysicsOverlays'; // Disabled temporarily
 
 // Import shaders as raw strings (Vite handles this with ?raw)
@@ -27,7 +32,7 @@ export const VIEW_MODES = {
     WIREFRAME: 1,
     XRAY: 2,
     MATTE: 3,
-    HEATMAP: 4,
+    THERMAL: 4,  // Renamed from HEATMAP (Phase 10)
     CUTAWAY: 5,
     SOLID: 6,
     STRESS: 7,
@@ -43,7 +48,7 @@ const MODE_MAP = {
     'wireframe': VIEW_MODES.WIREFRAME,
     'xray': VIEW_MODES.XRAY,
     'matte': VIEW_MODES.MATTE,
-    'heatmap': VIEW_MODES.HEATMAP,
+    'thermal': VIEW_MODES.THERMAL,  // Renamed from 'heatmap'
     'cutaway': VIEW_MODES.CUTAWAY,
     'solid': VIEW_MODES.SOLID,
     'stress': VIEW_MODES.STRESS,
@@ -53,7 +58,6 @@ const MODE_MAP = {
     'hyperrealism': VIEW_MODES.REALISTIC,
     'micro': VIEW_MODES.REALISTIC,
     'micro_wgsl': VIEW_MODES.REALISTIC,
-    'thermal': VIEW_MODES.HEATMAP,
     'flow': VIEW_MODES.FLOW
 };
 
@@ -72,7 +76,8 @@ const SDFKernel = ({
     onShaderError = null,
     theme = 'dark', // Default prop
     meshRenderingMode = 'sdf', // 'sdf' or 'preview'
-    design = null // [FIX] Added missing prop
+    design = null, // [FIX] Added missing prop
+    sketchPoints = [] // Phase 9.3: Light Pen data
 }) => {
     const meshRef = useRef();
     const materialRef = useRef();
@@ -117,6 +122,27 @@ const SDFKernel = ({
             }))
         },
 
+        // Phase 9.3: Semantic Sketch Primitives
+        uPrimitiveCount: { value: 0 },
+        uPrimitives: {
+            value: new Array(16).fill(0).map(() => ({
+                type: 0,
+                p0: new THREE.Vector3(),
+                p1: new THREE.Vector3(),
+                radius: 0.1,
+                blendStrength: 0.2
+            }))
+        },
+
+        // Phase 9.3: Light Pen Sketching
+        uSketchCount: { value: 0 },
+        uSketchPoints: { value: new Array(128).fill(0).map(() => new THREE.Vector3()) },
+
+        // Phase 10: Thermal Data
+        uThermalTemp: { value: 20.0 }, // Default room temp
+        uThermalEnabled: { value: false },
+
+
         // Single Mesh Fallback (Wrapped in atlas logic or legacy)
         uMeshBounds: { value: [new THREE.Vector3(0, 0, 0), new THREE.Vector3(1, 1, 1)] },
         uMeshSDF_min: { value: 0.0 },
@@ -144,6 +170,9 @@ const SDFKernel = ({
             materialRef.current.uniforms.uClipPlane.value.set(...clipPlane);
             materialRef.current.uniforms.uClipOffset.value = clipOffset;
             materialRef.current.uniforms.uClipEnabled.value = clipEnabled ? 1.0 : 0.0;
+
+            // Debug logging for view mode changes
+            console.log('[VIEW MODE]', viewMode, '→', viewModeInt, 'Thermal?', viewMode === 'thermal');
 
             // Dynamic Theme Integration
             if (theme && theme.colors) {
@@ -185,6 +214,16 @@ const SDFKernel = ({
             materialRef.current.uniforms.uTime.value = state.clock.elapsedTime;
             materialRef.current.uniforms.uResolution.value.set(size.width, size.height);
             materialRef.current.uniforms.uCameraPos.value.copy(state.camera.position);
+
+            // Phase 9.3: Sync Sketch Points
+            if (sketchPoints && sketchPoints.length > 0) {
+                materialRef.current.uniforms.uSketchCount.value = Math.min(sketchPoints.length, 128);
+                sketchPoints.forEach((pt, i) => {
+                    if (i < 128) materialRef.current.uniforms.uSketchPoints.value[i].copy(pt);
+                });
+            } else {
+                materialRef.current.uniforms.uSketchCount.value = 0;
+            }
         }
     });
 
@@ -297,7 +336,30 @@ const SDFKernel = ({
         } catch (error) {
             console.error('[MeshSDF] Failed to load texture:', error);
         }
+
+
+
     }, [design?.mesh_sdf_data, design?.sdf_resolution, design?.sdf_bounds, design?.sdf_range, meshRenderingMode]);
+
+    // Phase 9.3: Update Primitives Uniforms
+    useEffect(() => {
+        if (!materialRef.current || !design?.primitives) return;
+
+        const prims = design.primitives;
+        materialRef.current.uniforms.uPrimitiveCount.value = prims.length;
+
+        prims.forEach((p, i) => {
+            if (i >= 16) return;
+            const uPrim = materialRef.current.uniforms.uPrimitives.value[i];
+
+            uPrim.type = p.type === 'capsule' ? 1 : 0; // 1 = Capsule
+            if (p.start) uPrim.p0.set(...p.start);
+            if (p.end) uPrim.p1.set(...p.end);
+            uPrim.radius = p.radius || 0.1;
+            uPrim.blendStrength = p.blend || 0.2;
+        });
+
+    }, [design?.primitives]);
 
 
     // WebGL 2 detection and error handling
@@ -325,6 +387,34 @@ const SDFKernel = ({
         };
     }, [gl]);
 
+    // Phase 10: Update Thermal Data from Physics Report
+    useEffect(() => {
+        if (!materialRef.current) return;
+
+        // MOCK DATA FOR TESTING (Phase 10 verification)
+        // TODO: Replace with real data from design.physics_report
+        const useMockData = false;
+
+        if (useMockData) {
+            // Simulate hot component (200°C) for testing
+            materialRef.current.uniforms.uThermalTemp.value = 200.0;
+            materialRef.current.uniforms.uThermalEnabled.value = true;
+            console.log('[THERMAL] Mock data: 200°C');
+        } else {
+            // Check if design has thermal data from PhysicsAgent sub_agent_reports
+            const thermalData = design?.physics_report?.sub_agent_reports?.thermal;
+
+            if (thermalData && thermalData.equilibrium_temp_c !== undefined) {
+                materialRef.current.uniforms.uThermalTemp.value = thermalData.equilibrium_temp_c;
+                materialRef.current.uniforms.uThermalEnabled.value = true;
+            } else {
+                // No thermal data available, fall back to default
+                materialRef.current.uniforms.uThermalTemp.value = 20.0;
+                materialRef.current.uniforms.uThermalEnabled.value = false;
+            }
+        }
+    }, [design?.physics_report]);
+
     return (
         <mesh ref={meshRef} frustumCulled={false}>
             <planeGeometry args={[2, 2]} />
@@ -341,6 +431,31 @@ const SDFKernel = ({
     );
 };
 
+// Recursive ISA: Ghost Mesh for Context Visualization
+// Renders a low-opacity wireframe or bounding box to represent
+// the "Parent Assembly" when we are focused on a specific "Pod".
+const GhostMesh = ({ baseDims, theme, parentDims }) => {
+    // Default to a reasonable scale if no parent context is provided
+    const dims = parentDims || [baseDims[0] * 2, baseDims[1] * 2, baseDims[2] * 2];
+
+    return (
+        <group>
+            {/* Context Bounding Box (Ghost) */}
+            <mesh>
+                <boxGeometry args={dims} />
+                <meshBasicMaterial
+                    color={theme?.colors?.text?.muted || '#555'}
+                    wireframe
+                    transparent
+                    opacity={0.05} // Lower opacity to be less obtrusive
+                />
+            </mesh>
+            {/* GridHelper Removed to reduce clutter */}
+        </group>
+    );
+};
+
+
 // Main exported component with Canvas wrapper
 const UnifiedSDFRenderer = ({
     design = null,
@@ -352,8 +467,44 @@ const UnifiedSDFRenderer = ({
 }) => {
     const { theme, currentTheme } = useTheme();
     const { meshRenderingMode } = useSettings();
+    const { sketchMode, sketchPoints, focusedPodId, isaTree } = useSimulation();
     const controlsRef = useRef();
     const cameraStateRef = useRef({ position: [4, 3, 4], target: [0, 0, 0] });
+
+    // Helper: Find parent of focused pod to get dimensions
+    const getParentDims = () => {
+        if (!focusedPodId || !isaTree) return null;
+
+        const findParent = (node, targetId) => {
+            if (!node.children) return null;
+            for (let child of node.children) {
+                if (child.id === targetId) return node;
+                const found = findParent(child, targetId);
+                if (found) return found;
+            }
+            return null;
+        };
+
+        const parent = findParent(isaTree, focusedPodId);
+        if (parent && parent.constraints) {
+            // Heuristic to extract dimensions from constraints
+            // e.g. length/width/height or radius
+            const c = parent.constraints;
+            const l = c.length || c.length_m || 1.0;
+            const w = c.width || c.width_m || c.radius || 1.0;
+            const h = c.height || c.height_m || c.radius || 1.0;
+            return [Number(w), Number(h), Number(l)];
+            // Note: Mapping depends on axis orientation, assuming Y-up (h)
+        }
+        return null;
+    };
+
+    const parentDims = getParentDims();
+
+
+    // Phase 8.4: Region Selection State
+    const [showRegionSelector, setShowRegionSelector] = React.useState(false);
+    const [selectedRegion, setSelectedRegion] = React.useState(null);
 
     // Extract geometry from design
     const geometryState = useMemo(() => {
@@ -417,6 +568,31 @@ const UnifiedSDFRenderer = ({
         console.error('[UnifiedSDFRenderer] Shader compilation error:', error);
     }, []);
 
+    // Phase 8.4: Show Region Selector on Micro-Machining Mode Entry
+    React.useEffect(() => {
+        const isMicroMode = viewMode === 'micro' || viewMode === 'micro_wgsl';
+
+        // Reset when leaving only
+        if (!isMicroMode) {
+            setSelectedRegion(null);
+        } else {
+            // Show selector if not selected
+            setShowRegionSelector(!selectedRegion);
+        }
+    }, [viewMode, selectedRegion]);
+    const handleRegionSelected = React.useCallback((region) => {
+        console.log('[MicroMachining] Region selected:', region);
+        setSelectedRegion(region);
+        setShowRegionSelector(false);
+        // TODO: Trigger API call to train neural network for this region
+    }, []);
+
+    const handleRegionCancel = React.useCallback(() => {
+        console.log('[MicroMachining] Region selection cancelled');
+        setShowRegionSelector(false);
+        // TODO: Exit Micro-Machining mode or show alternate message
+    }, []);
+
     return (
         <div className={`w-full h-full ${className}`} style={style}>
             <Canvas
@@ -432,6 +608,7 @@ const UnifiedSDFRenderer = ({
                     const info = gl.getContext().getParameter(gl.getContext().VERSION);
                     console.log('[UnifiedSDFRenderer] WebGL:', info);
                 }}
+                frameloop={(viewMode === 'micro' || viewMode === 'micro_wgsl') ? 'demand' : 'always'}
             >
                 <PerspectiveCamera
                     makeDefault
@@ -444,7 +621,20 @@ const UnifiedSDFRenderer = ({
                     dampingFactor={0.05}
                     target={cameraStateRef.current.target}
                     onEnd={handleCameraChange}
+                    enabled={!sketchMode} // Disable rotation when drawing
                 />
+
+                {/* 0. Sketch Layer */}
+                <StrokeCapture enabled={sketchMode} />
+
+                {/* 0.5 Region Selection Layer */}
+                {showRegionSelector && (
+                    <RegionInteraction
+                        enabled={showRegionSelector}
+                        onRegionSelected={handleRegionSelected}
+                        baseDims={geometryState.baseDims}
+                    />
+                )}
 
                 {/* 1. SDF Background & Kernel (Always rendered for background/grid) */}
                 <SDFKernel
@@ -462,6 +652,7 @@ const UnifiedSDFRenderer = ({
                     theme={theme}
                     meshRenderingMode={meshRenderingMode}
                     design={design} // [FIX] Passing design prop
+                    sketchPoints={sketchPoints} // Phase 9.3
                 />
 
                 {/* 2. Preview Mode Overlays (Standard Mesh Rasterization) */}
@@ -473,6 +664,21 @@ const UnifiedSDFRenderer = ({
                     />
                 )}
 
+                {/* 3. Neural SDF Mode (Micro-Machining) */}
+                {(viewMode === 'micro' || viewMode === 'micro_wgsl') && selectedRegion && (
+                    <NeuralSDF design={design} region={selectedRegion} />
+                )}
+
+                {/* 4. Recursive ISA: Ghost Mode (Context Awareness) */}
+                {/* If a pod is focused, we render the 'rest of the world' as a ghost */}
+                {focusedPodId && (
+                    <GhostMesh
+                        baseDims={geometryState.baseDims}
+                        theme={theme}
+                    />
+                )}
+
+
                 {/* PhysicsOverlays disabled temporarily - will fix later
                 <PhysicsOverlays
                     viewMode={viewMode}
@@ -481,6 +687,14 @@ const UnifiedSDFRenderer = ({
                 />
                 */}
             </Canvas>
+
+            {/* 4. Region Selector Overlay (Outside Canvas) */}
+            {showRegionSelector && (
+                <RegionSelector
+                    onRegionSelected={handleRegionSelected}
+                    onCancel={handleRegionCancel}
+                />
+            )}
         </div>
     );
 };

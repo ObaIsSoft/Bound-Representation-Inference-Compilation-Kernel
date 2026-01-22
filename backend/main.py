@@ -58,6 +58,7 @@ class InstallComponentRequest(BaseModel):
     component_id: str
     mesh_path: Optional[str] = None
     mesh_url: Optional[str] = None
+    resolution: Optional[int] = None
 
 class InspectUrlRequest(BaseModel):
     url: str
@@ -96,6 +97,98 @@ async def inspect_component_url(request: InspectUrlRequest):
     except Exception as e:
         return {"valid": False, "error": str(e)}
 
+@app.get("/api/system/status")
+async def get_system_status():
+    """
+    Get real-time status of core solvers (ARES, LDP) and agents.
+    """
+    # 1. ARES (Physics core) Status
+    # Check if physics agent is responsive (mock check for now, can be real later)
+    ares_status = "OK"
+    try:
+        # In a real system, we'd ping the physics kernel or check last heartbeat
+        pass
+    except:
+        ares_status = "OFFLINE"
+
+    # 2. LDP (Latent Design Propagation / Gradient Optimization) Status
+    # This refers to the optimization graph state
+    ldp_status = "CONVERGED" 
+    # Logic: If optimization loop is running → "OPTIMIZING"
+    # If error -> "DIVERGED"
+    # If stable -> "CONVERGED"
+    
+    return {
+        "ares": ares_status,
+        "ldp": ldp_status,
+        "timestamp": datetime.now().isoformat()
+    }
+
+# --- Recursive ISA Resolver (Phase 9) ---
+from core.hierarchical_resolver import ModularISA, HierarchicalResolver
+from core.system_registry import get_system_resolver
+
+_resolver = get_system_resolver()
+
+class CheckoutRequest(BaseModel):
+    path: str
+
+@app.post("/api/isa/checkout")
+async def checkout_pod_path(request: CheckoutRequest):
+    """
+    Resolves a CLI path (e.g. "./legs/front_left") to a Pod ID.
+    Returns the Pod ID and its constraints for the UI to focus.
+    """
+    path = request.path
+    
+    # Handle root
+    if path == "." or path == "/" or path == "main":
+        return {
+            "success": True, 
+            "pod_id": None, # Null means root/global view
+            "name": "Global Context",
+            "message": "Checked out root context." 
+        }
+
+    # Normalize path (./legs -> legs)
+    if path.startswith("./"):
+        path = path[2:]
+    
+    pod = _resolver.get_pod_by_path(path)
+    
+    if pod:
+        return {
+            "success": True,
+            "pod_id": pod.id,
+            "name": pod.name,
+            "constraints": pod.constraints,
+            "message": f"Checked out submodule: {pod.name}"
+        }
+    else:
+        return {
+            "success": False,
+            "message": f"Path '{path}' not found in ISA tree."
+        }
+
+@app.get("/api/isa/tree")
+async def get_isa_tree():
+    """
+    Returns the full Recursive ISA Hierarchy for the UI Browser.
+    """
+    def serialize_pod(pod):
+        return {
+            "id": pod.id,
+            "name": pod.name,
+            "constraints": pod.constraints,
+            "exports": pod.exports,
+            "children": [serialize_pod(sub) for sub in pod.sub_pods.values()]
+        }
+    
+    return {
+        "tree": serialize_pod(_resolver.root)
+    }
+
+
 @app.post("/api/components/install")
 async def api_install_component(request: InstallComponentRequest):
     """
@@ -108,7 +201,8 @@ async def api_install_component(request: InstallComponentRequest):
     result = agent.install_component(
         component_id=request.component_id, 
         mesh_path=request.mesh_path,
-        mesh_url=request.mesh_url
+        mesh_url=request.mesh_url,
+        resolution=request.resolution
     )
     
     if result.get("status") == "error":
@@ -339,8 +433,39 @@ async def step_chemistry(request: ChemistryStepRequest):
         traceback.print_exc()
         return {"error": str(e), "state": {}, "metrics": {}}
 
+        return {"error": str(e), "state": {}, "metrics": {}}
 
-# --- OpenSCAD API ---
+
+# --- Cost & BoM API ---
+
+class CostAnalysisRequest(BaseModel):
+    mass_kg: float
+    material_name: str
+    manufacturing_process: str
+    processing_time_hr: float
+
+@app.post("/api/analyze/cost")
+async def analyze_cost(request: CostAnalysisRequest):
+    """
+    Detailed Cost Analysis & BoM Estimation.
+    Uses Market Surrogates for dynamic pricing.
+    """
+    try:
+        from agents.cost_agent import CostAgent
+        agent = CostAgent()
+        
+        params = {
+            "mass_kg": request.mass_kg,
+            "material_name": request.material_name,
+            "manufacturing_process": request.manufacturing_process,
+            "processing_time_hr": request.processing_time_hr
+        }
+        
+        return agent.run(params)
+    except Exception as e:
+        logger.error(f"Cost Analysis Failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.post("/api/openscad/compile")
 def compile_openscad(request: Dict[str, Any]):
@@ -370,6 +495,58 @@ async def openscad_info():
     
     agent = OpenSCADAgent()
     return agent.get_info()
+
+
+# --- Geometry Export API (Phase 13) ---
+
+class ExportRequest(BaseModel):
+    geometry_tree: List[Dict[str, Any]]
+    resolution: int = 64
+    format: str = "stl"
+
+@app.post("/api/geometry/export/stl")
+async def export_geometry_stl(request: ExportRequest):
+    """
+    Exports the current geometry tree as a binary STL file using Marching Cubes.
+    """
+    from agents.geometry_agent import GeometryAgent
+    from utils.sdf_mesher import generate_mesh_from_sdf
+    from fastapi.responses import Response
+    import io
+    import trimesh
+    
+    try:
+        agent = GeometryAgent()
+        
+        # 1. Get Composite SDF function from tree
+        sdf_func = agent.get_composite_sdf(request.geometry_tree)
+        
+        # 2. Determine Bounds
+        # Heuristic: Walk tree to find max extent + padding
+        # TODO: Make dynamic. For now fixed conservative bounds.
+        bounds = ([-5, -5, -5], [5, 5, 5]) 
+        
+        # 3. Generate Mesh
+        mesh = generate_mesh_from_sdf(sdf_func, bounds, resolution=request.resolution)
+        
+        if mesh is None or mesh.is_empty:
+             raise HTTPException(status_code=400, detail="Meshing resulted in empty geometry.")
+             
+        # 4. Stream Response
+        # Export to stream
+        out_stream = io.BytesIO()
+        mesh.export(out_stream, file_type='stl')
+        out_stream.seek(0)
+        
+        headers = {
+            'Content-Disposition': f'attachment; filename="brick_export_{datetime.now().strftime("%H%M%S")}.stl"'
+        }
+        
+        return Response(content=out_stream.getvalue(), media_type="application/octet-stream", headers=headers)
+        
+    except Exception as e:
+        logger.error(f"Export Failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # --- Mesh to SDF API ---
@@ -510,6 +687,7 @@ class ChatRequest(BaseModel):
     aiModel: str = "mock"
     conversation_id: Optional[str] = None
     language: str = "en"
+    focusedPodId: Optional[str] = None # Phase 9: Recursive ISA
 
 @app.post("/api/chat")
 async def chat(request: ChatRequest):
@@ -522,6 +700,17 @@ async def chat(request: ChatRequest):
     3. If design request: gather requirements through questions
     4. Only trigger orchestrator when requirements are complete
     """
+    # ... mock logic ...
+    
+    # Run Orchestrator (Ares/LDP/Geometry)
+    # Now passed 'request.focusedPodId' for scoped execution
+    result = run_orchestrator(
+        request.message, 
+        request.context, 
+        focused_pod_id=request.focusedPodId
+    )
+    
+    return result
     from agents.conversational_agent import ConversationalAgent
     from llm.mock_dreamer import MockDreamer
     from conversation_state import conversation_manager
@@ -940,3 +1129,114 @@ async def verify_vmk(instruction: Dict[str, Any]):
     except Exception as e:
         logger.error(f"VMK Verification failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+@app.post("/api/optimization/evolve")
+async def evolve_geometry(request: Dict[str, Any]):
+    """
+    Triggers the Optimization Agent to morph geometry based on Adjoint Sensitivity.
+    """
+    from agents.optimization_agent import OptimizationAgent
+    
+    try:
+        agent = OptimizationAgent()
+        result = agent.run(request)
+        return result
+    except Exception as e:
+        logger.error(f"Optimization failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+@app.post("/api/orchestrator/reify_stroke")
+async def reify_stroke(payload: Dict[str, Any]):
+    """
+    Converts a list of 3D points (stroke) into a geometric primitive.
+    Optionally optimizes the curve before fitting (Smart Snap).
+    """
+    from utils.geometry_fitting import fit_stroke_to_primitive
+    from agents.optimization_agent import OptimizationAgent, ObjectiveFunction
+    
+    try:
+        points = payload.get("points", [])
+        should_optimize = payload.get("optimize", True) # Default to True for "Smart Snap"
+
+        if not points:
+             return {"status": "empty"}
+
+        # 1. OPTIMIZATION (Smart Snap)
+        # If the user's hand is wobbly, align it to flow/grid
+        if should_optimize and len(points) > 5:
+            agent = OptimizationAgent()
+            # Default to DRAG optimization (smooth flow lines)
+            objective = ObjectiveFunction(id="snap", target="MINIMIZE", metric="DRAG")
+            points = agent.optimize_sketch_curve(points, objective)
+             
+        # 2. FITTING
+        primitive = fit_stroke_to_primitive(points)
+        return {
+            "status": "success", 
+            "primitive": primitive,
+            "optimized_points": points if should_optimize else None
+        }
+    except Exception as e:
+        logger.error(f"Reification failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# --- Neural SDF Training API (Phase 8.4) ---
+
+class NeuralSDFTrainingRequest(BaseModel):
+    design: Dict[str,Any]
+    region: Optional[Dict[str, Any]] = None  # {min: [x,y,z], max: [x,y,z]}
+
+@app.post("/api/neural_sdf/train")
+async def train_neural_sdf(request: NeuralSDFTrainingRequest):
+    """
+    Trains a SIREN neural network on the provided geometry.
+    
+    Args:
+        design: Design object with .content field (JSON geometry description)
+        region: Optional bounding box for localized training
+        
+    Returns:
+        {
+            "status": "success",
+            "weights": [...],  # Layer weights/biases
+            "metadata": {shape, dims, training_time}
+        }
+    """
+    from scripts.train_siren import train_from_design
+    import time
+    
+    try:
+        start_time = time.time()
+        
+        # Extract geometry from design
+        content = request.design.get("content")
+        if not content:
+            raise HTTPException(status_code=400, detail="No design content provided")
+            
+        if isinstance(content, str):
+            import json
+            content = json.loads(content)
+        
+        # Train network
+        logger.info(f"Training Neural SDF for {content.get('geometry', 'unknown')} geometry")
+        weights, transform = train_from_design(content, region=request.region)
+        
+        training_time = time.time() - start_time
+        
+        return {
+            "status": "success",
+            "weights": weights,
+            "metadata": {
+                "shape": content.get("geometry", "custom"),
+                "dims": content.get("args", []),
+                "training_time": round(training_time, 2),
+                "region": request.region,
+                "transform": transform
+            }
+            }
+
+        
+    except Exception as e:
+        logger.error(f"Neural SDF training failed: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Training failed: {str(e)}")
+

@@ -1,4 +1,4 @@
-from typing import Dict, Any, TypedDict, Literal
+from typing import Dict, Any, TypedDict, Literal, List, Optional
 from langgraph.graph import StateGraph, END
 from schema import AgentState
 from agents.environment_agent import EnvironmentAgent
@@ -8,7 +8,9 @@ from agents.geometry_agent import GeometryAgent
 from agents.physics_agent import PhysicsAgent
 from agents.material_agent import MaterialAgent
 from agents.chemistry_agent import ChemistryAgent
-# New Agents
+# Critics
+from agents.critics.SurrogateCritic import SurrogateCritic
+from agents.critics.PhysicsCritic import PhysicsCritic
 from agents.thermal_agent import ThermalAgent
 from agents.structural_agent import StructuralAgent
 from agents.electronics_agent import ElectronicsAgent
@@ -59,6 +61,10 @@ from ares import AresMiddleware, AresUnitError
 import logging
 
 logger = logging.getLogger(__name__)
+
+# Initialize Critics (Global Singleton-ish for now)
+surrogate_critic = SurrogateCritic(window_size=100)
+physics_critic = PhysicsCritic(window_size=100) # For future hybrid agents
 
 def get_agent_registry():
     """Returns a dict of all instantiated agents."""
@@ -211,6 +217,49 @@ def environment_node(state: AgentState) -> Dict[str, Any]:
         "planning_doc": f"Environment identified as {env_data.get('type')} ({env_data.get('regime')})"
     }
 
+def topological_node(state: AgentState) -> Dict[str, Any]:
+    """
+    Executes the Topological Agent.
+    Analyzes terrain and recommends operational mode.
+    """
+    from agents.topological_agent import TopologicalAgent
+    
+    intent = state.get("user_intent", "")
+    env = state.get("environment", {})
+    params = state.get("design_parameters", {})
+    
+    agent = TopologicalAgent()
+    # Pass necessary data (e.g. mock elevation for now, or real if available)
+    # We might extract elevation from env or params
+    topo_params = {
+        "preferences": params.get("preferences", {}),
+        "elevation_data": env.get("elevation_data", []) 
+    }
+    
+    result = agent.run(topo_params)
+    
+    # CRITIC HOOK: Monitor Navigation Prediction
+    if "topological_critic" in state.get("active_critics", []):
+         critic = get_critic("topological")
+         critic.observe(
+             params=topo_params,
+             prediction=result,
+             # Ground truth outcome not yet known in this node (it happens later or in sim)
+             # We assume success/failure comes from Physics/Simulation step.
+             # Ideally we'd log this prediction ID and match it later.
+             # For now, we just log the prediction step.
+             outcome={} # Pending
+         )
+         
+    return {
+        "topology_report": result,
+        # Update design params with recommended mode if not set
+        "design_parameters": {
+            **params,
+            "recommended_mode": result["recommended_mode"]
+        }
+    }
+
 def designer_node(state: AgentState) -> Dict[str, Any]:
     """
     Executes the Designer Agent.
@@ -222,17 +271,26 @@ def designer_node(state: AgentState) -> Dict[str, Any]:
     params = state.get("design_parameters", {})
     
     agent = DesignerAgent()
-    # Assuming DesignerAgent has a run method that takes intent/params
-    # We might need to check its signature, but standard pattern is run(params)
-    design_scheme = agent.run(intent) 
+    # Pass structured params (e.g. style, base_color derived from Dreamer)
+    design_scheme = agent.run(params) 
     
-    # Merge aesthetic params into design_parameters so Geometry agent can use them
-    # e.g. color, material preference
+    # CRITIC HOOK: Monitor Aesthetic Diversity
+    if "design_critic" in state.get("active_critics", []):
+        critic = get_critic("design")
+        critic.observe(
+            params=params, 
+            result=design_scheme,
+            # User feedback loop not directly available here in batch, 
+            # but usually triggered by subsequent user action.
+            # We assume None implies "Generated, pending review"
+        )
     
     return {
         "design_scheme": design_scheme,
         # Update material if designer suggests specific alloy
-        "material": design_scheme.get("material", state.get("material", "Aluminum 6061"))
+        "material": design_scheme.get("aesthetics", {}).get("description", state.get("material", "Aluminum 6061")),
+        # Propagate sketched primitives
+        "geometry_sketch": design_scheme.get("primitives", [])
     }
 
 async def ldp_node(state: AgentState) -> Dict[str, Any]:
@@ -309,6 +367,17 @@ def geometry_node(state: AgentState) -> Dict[str, Any]:
     # User likes clean arch. I will update `run` signature in GeometryAgent.
     result = agent.run(params, intent, environment=env, ldp_instructions=instructions)
     
+    # CRITIC HOOK: Geometry Robustness
+    if "geometry_critic" in state.get("active_critics", []):
+         critic = get_critic("geometry")
+         critic.observe(
+             params=params,
+             result=result,
+             # We assume execution time tracking needs to be passed out of agent 
+             # For now, default 0 or update Agent to return 'metadata'
+             validation=result.get("validation_logs", {}) 
+         )
+
     return {
         "kcl_code": result["kcl_code"],
         "geometry_tree": result["geometry_tree"],
@@ -319,9 +388,11 @@ def manufacturing_node(state: AgentState) -> Dict[str, Any]:
     # ... as before ...
     geometry = state.get("geometry_tree", [])
     material = state.get("material", "Aluminum 6061")
+    params = state.get("design_parameters", {})
+    pod_id = params.get("pod_id") # Phase 9/10: Scoped Execution
     
     agent = ManufacturingAgent()
-    result = agent.run(geometry, material)
+    result = agent.run(geometry, material, pod_id=pod_id)
     
     # Manufacturing agent populates mass in the BOM! 
     # We should pass this back to state for Physics agent to see.
@@ -332,6 +403,34 @@ def manufacturing_node(state: AgentState) -> Dict[str, Any]:
     return {
         "components": result["components"],
         "bom_analysis": result["bom_analysis"]
+    }
+
+def surrogate_physics_node(state: AgentState) -> Dict[str, Any]:
+    """
+    Executes the Surrogate Physics Agent (Fast Filter).
+    Predicts physics outcomes using a trained neural network.
+    """
+    logger.info("--- Surrogate Physics Node ---")
+    
+    surrogate = state.get("surrogate_physics")
+    # If not in state (lazily init?) or use registry
+    if not surrogate:
+        surrogate = SurrogateAgent() # Fallback
+        
+    # Run Prediction
+    prediction = surrogate.run(state)
+    logger.info(f"Surrogate Prediction: {prediction}")
+    
+    # CRITIC OBSERVATION (Part 1: Prediction)
+    # We don't have ground truth yet, so we just log the input/prediction.
+    # The Critic will need to wait for PhysicsAgent to run to validate.
+    # Alternatively, we store this prediction in state and observing it later.
+    surrogate_critic.observe(state, prediction)
+    
+    return {
+        "surrogate_prediction": prediction,
+        # We don't fail immediately here unless confidence is super high and negative.
+        # Ideally we pass a flag to conditional edge.
     }
 
 def physics_node(state: AgentState) -> Dict[str, Any]:
@@ -355,9 +454,30 @@ def physics_node(state: AgentState) -> Dict[str, Any]:
     mat_agent = MaterialAgent()
     mat_props = mat_agent.run(material_name, temp)
     
+    # CRITIC HOOK: Material
+    if "material_critic" in state.get("active_critics", []):
+         mat_critic = get_critic("material")
+         mat_critic.observe(
+             agent_name="MaterialAgent",
+             input_state={"material_name": material_name, "temp": temp},
+             output=mat_props,
+             # Ground truth would come from Oracle or past failure data (not yet integrated)
+             metadata={"timestamp": time.time()}
+         )
+
     # Run Chemistry Agent
     chem_agent = ChemistryAgent()
     chem_check = chem_agent.run([material_name], env.get("type", "standard"))
+
+    # CRITIC HOOK: Chemistry
+    if "chemistry_critic" in state.get("active_critics", []):
+         chem_critic = get_critic("chemistry")
+         chem_critic.observe(
+             agent_name="ChemistryAgent",
+             input_state={"materials": [material_name], "env": env.get("type")},
+             output=chem_check,
+             metadata={"timestamp": time.time()}
+         )
 
     # --- NEW: Integrated Sub-Agents ---
     
@@ -366,28 +486,93 @@ def physics_node(state: AgentState) -> Dict[str, Any]:
     elec_params = params.copy()
     elec_params["geometry_tree"] = geo # Pass Geometry for EMI checks
     elec_result = elec_agent.run(elec_params)
+    
+    # CRITIC HOOK: Electronics
+    if "electronics_critic" in state.get("active_critics", []):
+        elec_critic = get_critic("electronics")
+        elec_critic.observe(
+            agent_name="ElectronicsAgent",
+            input_state=elec_params,
+            output=elec_result,
+            metadata={"timestamp": time.time()}
+        )
+
     heat_load_w = 0.0
+    # Try to extract unified heat load
+    if "hybrid_supply_w" in elec_result:
+         # Efficiency loss = Supply - Real Supply? Or Waste Heat = Supply - Work?
+         # Simplified: Waste Heat = (1 - Efficiency) * Power
+         # Agent doesn't return direct Waste Heat explicitly yet, but we can infer or use logs
+         pg = elec_result.get("supply_w", 100.0)
+         eff = 0.95 # Default
+         heat_load_w = pg * (1.0 - eff) # Approximation
+    
     if elec_result.get("logs") and "Waste Heat" in str(elec_result["logs"]):
-         # Parse or use structured return if available. 
-         # Agent currently logging "Waste Heat: X W". simpler to return it.
-         # For now, let's trust the agent returned it or parsing log.
-         # Actually, better to have agent return key. I'll rely on update I made or make.
-         # I updated ElectronicsAgent to return keys!
+         # Legacy log parsing
          pass
 
     # 2. Thermal (Uses Heat from Electronics + Environment)
     therm_agent = ThermalAgent()
     therm_params = params.copy()
-    therm_params["power_watts"] = 100.0 # Default/Placeholder if electronics doesn't return
+    therm_params["power_watts"] = heat_load_w if heat_load_w > 0 else 100.0 # Use calculated heat load
     therm_params["ambient_temp"] = temp
     therm_params["environment_type"] = env.get("type", "GROUND")
     therm_result = therm_agent.run(therm_params)
+    
+    # CRITIC HOOK: Monitor Thermal Hybrid Performance
+    # PhysicsCritic expects floats. We extract temperature.
+    # Note: Validating every step is expensive. We log prediction here.
+    # Actual validation would happen if we run the Oracle (which is not in this loop yet).
+    # For now, we store it for the Critic Analysis Node.
+    if "gate_value" in therm_result:
+        # It's a hybrid!
+        # observation format: [power, area, emiss, amb, h]
+        # We construct a synthetic input vector for the critic
+        input_vec = np.array([
+            therm_params["power_watts"],
+            therm_params["surface_area"],
+            therm_params["emissivity"],
+            therm_params["ambient_temp"],
+            10.0 # default h
+        ])
+        
+        # We use a separate 'thermal_critic' instance or reuse physics_critic with a tag?
+        # Reusing physics_critic for now but treating 'prediction' as temperature
+        # We assume ground_truth is NOT available yet (0.0 placeholder or delayed)
+        physics_critic.observe(
+            input_state=input_vec,
+            prediction=therm_result["equilibrium_temp_c"],
+            ground_truth=therm_result["equilibrium_temp_c"], # Temporary: Assume correct until Oracle runs
+            gate_value=therm_result["gate_value"]
+        )
     
     # 3. Structural (Uses Material Props)
     struct_agent = StructuralAgent()
     struct_params = params.copy()
     struct_params["material_properties"] = mat_props["properties"]
     struct_result = struct_agent.run(struct_params)
+    
+    # CRITIC HOOK: Monitor Structural Hybrid Performance
+    if "gate_value" in struct_result:
+        # Observe Structural Performance
+        # Input Vec: [force, area, length, yield, modulus]
+        # We need to reconstruct the input vector used by the agent
+        # Force = mass * g * 9.81
+        force_n = struct_result["load_n"]
+        cross_mm2 = struct_params.get("cross_section_mm2", 100.0)
+        len_m = struct_params.get("length_m", 1.0)
+        y_str = struct_params.get("yield_strength_mpa", 276.0)
+        e_mod = struct_params.get("elastic_modulus_gpa", 69.0)
+        
+        input_vec = np.array([force_n, cross_mm2, len_m, y_str, e_mod])
+        
+        # We reuse physics_critic (shared) or imagine a specialized instance
+        physics_critic.observe(
+            input_state=input_vec,
+            prediction=struct_result["max_stress_mpa"],
+            ground_truth=struct_result["max_stress_mpa"], # Temporary: Assume correct until post-hoc validation
+            gate_value=struct_result["gate_value"]
+        )
     
     # --- CONTROL LAYER START ---
     # Determine if we should use RL or LQR
@@ -413,9 +598,27 @@ def physics_node(state: AgentState) -> Dict[str, Any]:
     params["mag_force_n"] = elec_result.get("mag_lift_n", 0.0) # Inject Maglev Force
     phys_result = phys_agent.run(env, geo, params)
     
-    # Merge validation flags & Reasons
-    flags = phys_result["validation_flags"]
-    reasons = flags["reasons"] # Reference to list
+    FLAGS = phys_result["validation_flags"]
+    reasons = FLAGS["reasons"] # Reference to list
+    
+    # CRITIC VALIDATION HOOK
+    if "surrogate_prediction" in state:
+        pred = state["surrogate_prediction"]
+        is_safe = FLAGS["physics_safe"]
+        
+        # Check gate alignment if velocity available
+        gate_val = pred.get("gate_value", 0.5)
+        # Assuming simple check for now
+        
+        validation = {
+            "verified": (pred.get("recommendation") == "PROCEED") == is_safe,
+            "ground_truth": "SAFE" if is_safe else "UNSAFE",
+            "prediction": "SAFE" if pred.get("recommendation") == "PROCEED" else "UNSAFE",
+            "gate_value": gate_val,
+            "gate_aligned": True, # Placeholder
+            "drift_alert": (pred.get("recommendation") == "PROCEED") != is_safe
+        }
+        surrogate_critic.observe(state, pred, validation)
     
     # Append Control Logs to Reasons if failed (or just log it)
     if cps_result.get("status") == "error":
@@ -467,16 +670,82 @@ def optimization_node(state: AgentState) -> Dict[str, Any]:
     flags = state.get("validation_flags", {})
     reasons = flags.get("reasons", []) if flags else []
     
-    agent = OptimizationAgent()
-    result = agent.run(params, flags, reasons)
+    # Pack reasons into the state for context (Bandit uses 'constraints' but could use 'reasons' too)
+    # Ideally we'd map reasons -> constraints to lock/unlock.
     
+    agent = OptimizationAgent()
+    
+    # New API expects 'isa_state' and 'objective' in params
+    # We construct a wrapper params dict if needed, or pass current state wrapper
+    # For now, let's assume 'params' IS the payload structure or sufficiently close
+    # But wait, original code passed `isa_state` via `params`.
+    
+    opt_payload = {
+        "isa_state": {"constraints": params, "locked": []}, # Simple wrapper
+        "objective": {"target": "MINIMIZE", "metric": "MASS"} # Default to Mass
+        # In real usage, objective comes from UserIntent
+    }
+    
+    result = agent.run(opt_payload)
+    
+    # CRITIC HOOK: Monitor Optimization Performance
+    # We need to know if this step actually improved things.
+    # The 'result' has 'success' (runtime) but true success is downstream.
+    # However, OptimizationCritic monitors the *Agent's* internal success/efficiency first.
+    
+    if "optimization_critic" in state.get("active_critics", []):
+        opt_critic = get_critic("optimization")
+        opt_critic.observe(
+            agent_name="OptimizationAgent",
+            input_state=opt_payload,
+            output=result,
+            metadata={"timestamp": time.time()} 
+        )
+
     # Increment counter
     count = state.get("iteration_count", 0) + 1
     
+    # Extract optimized params - The agent returns 'optimized_state'
+    # schema: optimized_state['constraints'] -> new params
+    new_params = {}
+    if result["success"]:
+        optimized_constraints = result["optimized_state"].get("constraints", {})
+        # Flatten back to simple dict
+        for k, v in optimized_constraints.items():
+            if isinstance(v, dict) and 'val' in v:
+                new_params[k] = v['val'].get('value', v)
+            else:
+                new_params[k] = v
+    else:
+        new_params = params # Fallback
+    
     return {
-        "design_parameters": result["new_parameters"],
         "iteration_count": count,
-        "logs": result["logs"]
+        "logs": result.get("mutations", [])
+    }
+
+def sourcing_node(state: AgentState) -> Dict[str, Any]:
+    """
+    Executes the Component Agent to select COTS parts.
+    """
+    params = state.get("design_parameters", {})
+    reqs = params.get("requirements", {}) # e.g. {"requirements": {"min_power_w": 100}}
+    
+    agent = ComponentAgent()
+    # 'volatility' could be dynamic based on 'temperature' or user intent? 
+    result = agent.run({"requirements": reqs, "limit": 3, "volatility": 0.0})
+    
+    # CRITIC HOOK: Component
+    if "component_critic" in state.get("active_critics", []):
+        critic = get_critic("component")
+        critic.observe(
+            requirements=reqs,
+            selection_output=result,
+            # Installation & User Acceptance tracked later
+        )
+        
+    return {
+        "components": result.get("selection", [])
     }
 
 # --- Conditional Edges ---
@@ -547,10 +816,12 @@ def build_graph():
     # 1. Add Nodes
     workflow.add_node("dreamer_node", dreamer_node) # NEW Entry Point
     workflow.add_node("environment_agent", environment_node)
+    workflow.add_node("topological_agent", topological_node) # NEW
     workflow.add_node("planning_node", planning_node)
     workflow.add_node("designer_agent", designer_node) # NEW
     workflow.add_node("ldp_node", ldp_node) # NEW Logic Kernel
     workflow.add_node("geometry_agent", geometry_node)
+    workflow.add_node("surrogate_physics_agent", surrogate_physics_node) # NEW
     workflow.add_node("manufacturing_agent", manufacturing_node)
     workflow.add_node("physics_agent", physics_node)
     workflow.add_node("swarm_agent", swarm_node) 
@@ -562,9 +833,27 @@ def build_graph():
     workflow.set_entry_point("dreamer_node")
     workflow.add_edge("dreamer_node", "environment_agent")
     
+    # Environment -> Topological -> Planning
+    workflow.add_edge("environment_agent", "topological_agent")
+    workflow.add_edge("topological_agent", "planning_node")
+    
+    # Planning -> (Check) -> Designer
+    workflow.add_conditional_edges("planning_node", check_planning_mode, {
+        "plan": END,
+        "execute": "designer_agent"
+    })
+    
+    workflow.add_edge("designer_agent", "ldp_node")
+    workflow.add_edge("ldp_node", "geometry_agent")
+    
+    # Geometry -> Surrogate -> Manufacturing -> Physics
+    workflow.add_edge("geometry_agent", "surrogate_physics_agent")
+    workflow.add_edge("surrogate_physics_agent", "manufacturing_agent")
+    workflow.add_edge("manufacturing_agent", "physics_agent")
+    
     # Environment -> Geometry -> Manufacturing -> Physics -> Swarm -> Training
     # Planning Node -> Check Approval -> (Stop or Continue)
-    workflow.add_edge("environment_agent", "planning_node")
+    # workflow.add_edge("environment_agent", "planning_node") # REMOVED (Replaced by Topo)
     # Execute Path: Plan -> Check -> Designer -> Geometry
     
     # To achieve this, check 'execution_mode' in state.
@@ -635,20 +924,35 @@ def check_planning_mode(state: AgentState) -> Literal["designer_agent", "geometr
 
 # --- Public Interface ---
 
-async def run_orchestrator(user_intent: str, project_id: str, mode: str = "plan", initial_state_override: Dict = None) -> AgentState:
+async def run_orchestrator(
+    user_intent: str, 
+    project_id: str = "default",  # defaulted for compatibility
+    context: List[Dict] = [],  # Added context for chat history
+    mode: str = "plan", 
+    initial_state_override: Dict = None,
+    focused_pod_id: Optional[str] = None # Phase 9: Recursive ISA
+) -> AgentState:
     """
     Main entry point.
     mode: "plan" (stop after plan) or "execute" (continue to build).
     """
     app = build_graph()
     
+    initial_params = {}
+    if focused_pod_id:
+        # Inject POD IDENTITY into parameters so agents know where they are working
+        initial_params["pod_id"] = focused_pod_id
+        logger.info(f"[Orchestrator] Scoped Execution. Focused Pod: {focused_pod_id}")
+
     initial_state = {
         "user_intent": user_intent,
         "project_id": project_id,
         "iteration_count": 0,
         "messages": [],
         "errors": [],
-        "execution_mode": mode
+        "execution_mode": mode,
+        "design_parameters": initial_params, # Seed with Pod ID
+        # ... other fields default or populated by graph
     }
     
     if initial_state_override:

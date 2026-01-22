@@ -2,8 +2,15 @@
 from typing import Dict, Any, List, Optional
 import logging
 import json
-from database.supabase_client import SupabaseClientWrapper
-from models.component import Component, ComponentInstance
+try:
+    from database.supabase_client import SupabaseClientWrapper
+except ImportError:
+    from backend.database.supabase_client import SupabaseClientWrapper
+
+try:
+    from models.component import Component, ComponentInstance
+except ImportError:
+    from backend.models.component import Component, ComponentInstance
 
 logger = logging.getLogger(__name__)
 
@@ -53,25 +60,72 @@ class ComponentAgent:
         valid_matches = []
         for comp_model in candidates:
             # Instantiate with 0 volatility for filtering (Nominal values)
-            # We filter on nominal, but return stochastic instances if requested?
-            # Usually we filter on nominal to ensure fit.
             nominal_instance = comp_model.instantiate(volatility=0.0)
             
             if self._satisfies_requirements(nominal_instance, requirements):
-                # If valid, create the final instance (potentially stochastic)
+                # If valid, create the final instance
                 final_instance = comp_model.instantiate(volatility=volatility)
                 valid_matches.append(final_instance)
         
-        # 3. Sort / Rank? (Simple truncation for now)
+        # 3. Sort by Learned Preferences (RL)
+        # Score = Preference Weight (stats)
+        preferences = self._load_preferences()
+        
+        def get_score(instance):
+            # Default score 1.0. Higher is better.
+            # Look up by ID, Category, or Source? ID is most specific.
+            pid = instance.catalog_id
+            return preferences.get(pid, 1.0)
+            
+        valid_matches.sort(key=get_score, reverse=True)
+        
         selection = valid_matches[:limit]
         
-        logs.append(f"[COMPONENT] Selected {len(selection)} components.")
+        logs.append(f"[COMPONENT] Selected {len(selection)} components (Sorted by Preference).")
         
         return {
             "selection": [self._serialize_instance(inst) for inst in selection],
             "count": len(selection),
             "logs": logs
         }
+
+    def _load_preferences(self) -> Dict[str, float]:
+        """Load learned component preference weights."""
+        import json
+        import os
+        path = "data/component_agent_weights.json"
+        if not os.path.exists(path): return {}
+        try:
+            with open(path, 'r') as f: return json.load(f)
+        except: return {}
+
+    def update_preferences(self, component_id: str, reward_signal: float):
+        """
+        Reinforcement Learning Update.
+        reward_signal: +1.0 (Good), -1.0 (Bad/Reject), -5.0 (Critical Fail)
+        """
+        import json
+        import os
+        path = "data/component_agent_weights.json"
+        
+        prefs = {}
+        if os.path.exists(path):
+            try: 
+                with open(path, 'r') as f: 
+                    prefs = json.load(f)
+            except: 
+                pass
+            
+        current = prefs.get(component_id, 1.0)
+        # Simple update rule: New = Old + alpha * Reward
+        # Alpha = 0.1
+        new_score = current + (0.1 * reward_signal)
+        prefs[component_id] = max(0.1, new_score) # Clamp min score
+        
+        try:
+            with open(path, 'w') as f: json.dump(prefs, f, indent=2)
+        except Exception as e:
+            logger.error(f"Failed to save preferences: {e}")
 
     def _fetch_candidates(self, category: Optional[str]) -> List[Component]:
         """Fetch raw rows from Supabase and convert to Component models."""
@@ -145,7 +199,7 @@ class ComponentAgent:
             "geometry_def": instance.geometry_def
         }
 
-    def install_component(self, component_id: str, mesh_path: str = None, mesh_url: str = None) -> Dict[str, Any]:
+    def install_component(self, component_id: str, mesh_path: str = None, mesh_url: str = None, resolution: int = None) -> Dict[str, Any]:
         """
         Installs a component by converting its mesh to an SDF texture.
         Supports local paths or remote URLs.
@@ -153,7 +207,10 @@ class ComponentAgent:
         Args:
             component_id: ID of the component to install
             mesh_path: Optional path to local mesh file.
+            component_id: ID of the component to install
+            mesh_path: Optional path to local mesh file.
             mesh_url: Optional URL to download mesh from.
+            resolution: Optional explicit resolution (overrides adaptive).
             
         Returns:
             Dict containing metadata and SDF paths.
@@ -212,7 +269,7 @@ class ComponentAgent:
         try:
             bridge = MeshSDFBridge()
             # Use Atlas Baker for everything to standardize the output format (Manifest + Texture)
-            result = bridge.bake_scene_to_atlas(mesh_path)
+            result = bridge.bake_scene_to_atlas(mesh_path, resolution=resolution or 64)
             
             # Clean up temp file
             if temp_file and os.path.exists(temp_file.name):

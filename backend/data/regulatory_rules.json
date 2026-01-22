@@ -1,0 +1,58 @@
+{
+    "AERIAL": [
+        {
+            "id": "FAA_PART_107_WEIGHT",
+            "logic": {
+                "<=": [
+                    {
+                        "var": "mass_kg"
+                    },
+                    25.0
+                ]
+            },
+            "violation_msg": "Exceeds FAA Part 107 max weight (25kg)"
+        },
+        {
+            "id": "FAA_NIGHT_LIGHTS",
+            "logic": {
+                "or": [
+                    {
+                        "!": {
+                            "var": "is_night_operation"
+                        }
+                    },
+                    {
+                        "and": [
+                            {
+                                "var": "has_anti_collision_lights"
+                            },
+                            {
+                                ">=": [
+                                    {
+                                        "var": "light_visibility_miles"
+                                    },
+                                    3.0
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            },
+            "violation_msg": "Night cooling operation requires anti-collision lights visible for 3 miles"
+        }
+    ],
+    "MEDICAL": [
+        {
+            "id": "ISO_10993_BIOCOMPAT",
+            "logic": {
+                "==": [
+                    {
+                        "var": "is_biocompatible"
+                    },
+                    true
+                ]
+            },
+            "violation_msg": "Material must be ISO 10993 certified for medical use"
+        }
+    ]
+}

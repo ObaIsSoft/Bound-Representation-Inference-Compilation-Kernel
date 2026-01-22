@@ -37,19 +37,29 @@ class DesignerAgent:
         logs = [f"[DESIGNER] Generating palette for style: {style}"]
         
         if style == "industrial" and not base_color_hex:
-             # Fallback to classic DB/industrial logic if strictly requested
              return self._run_classic_mode(params)
         
-        # 1. Procedural Color Generation
+        # 1. Procedural Color Generation (Learned Bias)
         if not base_color_hex:
-            # Generate a random base color if none provided
-            # Bias towards nice saturation/value (avoid mud)
-            h = random.random()
+            # Load preferences
+            prefs = self._load_preferences()
+            preferred_hues = prefs.get("hues", []) # List of (hue, weight)
+            
+            # Epsilon-Greedy: 20% random exploration, 80% exploitation of top hues
+            if random.random() < 0.2 or not preferred_hues:
+                h = random.random()
+                logs.append("[DESIGNER] Exploration Mode (Random Hue)")
+            else:
+                # Weighted choice
+                hues, weights = zip(*preferred_hues)
+                h = random.choices(hues, weights=weights, k=1)[0]
+                # Add small jitter
+                h = (h + random.uniform(-0.05, 0.05)) % 1.0
+                logs.append(f"[DESIGNER] Exploitation Mode (Learned Hue {h:.2f})")
+
             s = random.uniform(0.5, 0.9)
             v = random.uniform(0.6, 0.95)
-            # base_color_rgb = colorsys.hsv_to_rgb(h, s, v)
             base_color_hex = self._hsv_to_hex(h, s, v)
-            logs.append(f"[DESIGNER] Generated base color: {base_color_hex}")
         else:
             h, s, v = self._hex_to_hsv(base_color_hex)
 
@@ -74,8 +84,38 @@ class DesignerAgent:
         return {
             "status": "success",
             "aesthetics": selected,
+            "primitives": self._generate_primitives(style, harmony), # New Capability
             "logs": logs
         }
+        
+    def _generate_primitives(self, style: str, harmony: str) -> List[Dict]:
+        """
+        Generates optional semantic sketch primitives based on style.
+        Allows the agent to 'draw' initial concepts.
+        """
+        primitives = []
+        
+        # Example: If style is "organic", add some fluid capsules
+        if "organic" in style or "bio" in style:
+            primitives.append({
+                "type": "capsule",
+                "start": [-0.5, 0, 0],
+                "end": [0.5, 0.5, 0],
+                "radius": 0.2,
+                "blend": 0.3
+            })
+            
+        # Example: If style is "constructivist", add structural beams
+        if "constructivist" in style:
+             primitives.append({
+                "type": "capsule",
+                "start": [-1, 0, 0],
+                "end": [1, 0, 0],
+                "radius": 0.05,
+                "blend": 0.01
+            })
+            
+        return primitives
         
     def _generate_harmony(self, h, s, v, type="complementary") -> Dict:
         """Generate color harmony."""
@@ -142,3 +182,52 @@ class DesignerAgent:
             "aesthetics": {"primary": "#333", "accent": "#f00", "finish": "classic"},
             "logs": ["[DESIGNER] Used fallback industrial mode"]
         }
+
+    def _load_preferences(self) -> Dict:
+        """Load learned design preferences."""
+        import json
+        import os
+        path = "data/designer_agent_weights.json"
+        if not os.path.exists(path): return {}
+        try:
+            with open(path, 'r') as f: return json.load(f)
+        except: return {}
+
+    def update_preferences(self, successful_hue: float):
+        """Reinforce a successful design choice."""
+        import json
+        import os
+        path = "data/designer_agent_weights.json"
+        
+        prefs = {}
+        if os.path.exists(path):
+            try: 
+                with open(path, 'r') as f: 
+                    prefs = json.load(f)
+            except: 
+                pass
+            
+        current_hues = prefs.get("hues", [])
+        
+        # Crude "clustering" update: If close to existing hue, boost weight. Else add new.
+        found = False
+        new_hues = []
+        for h, w in current_hues:
+            if abs(h - successful_hue) < 0.1: # Similarity threshold
+                new_hues.append([h, w + 1.0]) # Boost weight
+                found = True
+            else:
+                new_hues.append([h, w])
+        
+        if not found:
+            new_hues.append([successful_hue, 1.0])
+            
+        # Limit memory size
+        if len(new_hues) > 20:
+             # Keep top 20 by weight
+             new_hues.sort(key=lambda x: x[1], reverse=True)
+             new_hues = new_hues[:20]
+             
+        prefs["hues"] = new_hues
+        
+        with open(path, 'w') as f: json.dump(prefs, f, indent=2)

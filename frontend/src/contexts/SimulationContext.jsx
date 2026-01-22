@@ -24,6 +24,11 @@ export const SimulationProvider = ({ children }) => {
     // 'hydrodynamics' = Underwater/Marine Environment
     const [testScenario, setTestScenario] = useState('none');
 
+    // Interaction Modes
+    const [sketchMode, setSketchMode] = useState(false); // Phase 9.3
+    const [viewMode, setViewMode] = useState('realistic'); // Phase 10: thermal/stress views
+    const [sketchPoints, setSketchPoints] = useState([]); // Array of Vectors
+
     // Environmental Parameters (Test Inputs)
     const [testParams, setTestParams] = useState({
         temperature: 20,      // Celsius
@@ -80,12 +85,40 @@ export const SimulationProvider = ({ children }) => {
 
     const [kclCode, setKclCode] = useState('// KCL Source Code will appear here after compilation');
 
+    // Solver Status (ARES/LDP)
+    const [solverStatus, setSolverStatus] = useState({
+        ares: 'INIT',
+        ldp: 'IDLE'
+    });
+
+    // Recursive ISA: Focused Pod ID for Ghost Mode
+    const [focusedPodId, setFocusedPodId] = useState(null);
+    const [isaTree, setIsaTree] = useState(null); // Shared ISA Tree State
+
+    // Helper to refresh ISA tree
+    const refreshIsaTree = async () => {
+        try {
+            const res = await fetch('http://localhost:8000/api/isa/tree');
+            if (res.ok) {
+                const data = await res.json();
+                setIsaTree(data.tree);
+            }
+        } catch (err) {
+            console.error("Failed to fetch ISA tree:", err);
+        }
+    };
+
     // Real vHIL Loop (API Polling)
     React.useEffect(() => {
+        // Initial Fetch
+        refreshIsaTree();
+
         if (!isRunning) return;
 
         // Physics Loop (200ms instead of 100ms to prevent browser resource exhaustion)
         const physInterval = setInterval(async () => {
+            // ... (rest of physics loop)
+
             try {
                 // Build environment config based on active scenario
                 let environment = {
@@ -231,9 +264,26 @@ export const SimulationProvider = ({ children }) => {
             }
         }, 500);
 
+        // System Status Polling (2s)
+        const statusInterval = setInterval(async () => {
+            try {
+                const res = await fetch('http://localhost:8000/api/system/status');
+                if (res.ok) {
+                    const data = await res.json();
+                    setSolverStatus({
+                        ares: data.ares,
+                        ldp: data.ldp
+                    });
+                }
+            } catch (err) {
+                // Silent fail for status checks
+            }
+        }, 2000);
+
         return () => {
             clearInterval(physInterval);
             clearInterval(chemInterval);
+            clearInterval(statusInterval);
         };
     }, [isRunning, physState, chemState, testParams]);
 
@@ -261,7 +311,22 @@ export const SimulationProvider = ({ children }) => {
         kclCode,
         setKclCode,
         // Motion Data
-        motionTrail
+        motionTrail,
+        // Interaction Modes
+        sketchMode,
+        setSketchMode,
+        viewMode,
+        setViewMode,
+        sketchPoints,
+        sketchPoints,
+        setSketchPoints,
+        // System Status
+        solverStatus,
+        // Recursive ISA
+        focusedPodId,
+        setFocusedPodId,
+        isaTree,
+        refreshIsaTree
     };
 
     return (

@@ -167,19 +167,57 @@ class TopologicalAgent:
             return 0.95 - (roughness * 0.2)  # Slight penalty for turbulence
         
         elif mode == "GROUND":
+            # Load Learned Weights
+            weights = self._load_weights()
+            w_slope = weights.get("slope_penalty", 0.6)
+            w_rough = weights.get("roughness_penalty", 0.4)
+            
             # Ground mode heavily dependent on terrain
             slope_penalty = min(slope / 45.0, 1.0)  # 45° = impassable
             rough_penalty = roughness
             
-            traversability = 1.0 - (slope_penalty * 0.6 + rough_penalty * 0.4)
+            # Weighted penalty
+            total_penalty = (slope_penalty * w_slope) + (rough_penalty * w_rough)
+            
+            traversability = 1.0 - total_penalty
             return max(0.0, min(1.0, traversability))
         
         elif mode == "MARINE":
             # Marine mode depends on water depth and currents
             return 0.85  # Placeholder
+
+    def _load_weights(self) -> Dict:
+        import json
+        import os
+        path = "data/topological_agent_weights.json"
+        if not os.path.exists(path): return {"slope_penalty": 0.6, "roughness_penalty": 0.4}
+        try:
+            with open(path, 'r') as f: return json.load(f)
+        except: return {"slope_penalty": 0.6, "roughness_penalty": 0.4}
+
+    def update_weights(self, action: str):
+        """Evolve weights based on critic feedback."""
+        weights = self._load_weights()
+        w_slope = weights.get("slope_penalty", 0.6)
         
-        else:
-            return 0.5  # Unknown mode
+        if action == "INCREASE_PENALTY":
+            # Agent was Overconfident -> Make it stricter
+            w_slope = min(2.0, w_slope * 1.2)
+            logger.info(f"TopologicalAgent: Increasing Slope Penalty to {w_slope:.2f} (Safety Boost)")
+            
+        elif action == "DECREASE_PENALTY":
+            # Agent was Conservative -> Relax
+            w_slope = max(0.1, w_slope * 0.8)
+            logger.info(f"TopologicalAgent: Decreasing Slope Penalty to {w_slope:.2f} (Performance Boost)")
+            
+        weights["slope_penalty"] = w_slope
+        # Could also update roughness, keeping simple single-parameter tuning for now.
+        
+        import json
+        with open("data/topological_agent_weights.json", 'w') as f:
+            json.dump(weights, f, indent=2)
+        
+
     
     def _detect_hazards(self, slope: float, roughness: float, terrain: str) -> List[str]:
         """Detect potential hazards in terrain."""

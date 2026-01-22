@@ -19,6 +19,7 @@ import ManufacturingPanel from './components/panels/ManufacturingPanel';
 import ForkPanel from './components/panels/ForkPanel';
 import ExportPanel from './components/panels/ExportPanel';
 import { ACTIVITY_BAR_WIDTH, DEFAULT_PANEL_SIZES } from './utils/constants';
+import ISABrowserPanel from './components/panels/ISABrowserPanel';
 import { useTheme } from './contexts/ThemeContext';
 import { useSettings } from './contexts/SettingsContext';
 import { useDesign } from './contexts/DesignContext';
@@ -28,7 +29,7 @@ export default function App() {
     const { theme } = useTheme();
     const { fontSize, aiModel } = useSettings();
     const { isEditorVisible, createArtifactTab, setPendingPlanId } = useDesign();
-    const { isRunning, setIsRunning, metrics, setKclCode } = useSimulation();
+    const { isRunning, setIsRunning, metrics, setKclCode, setFocusedPodId, focusedPodId } = useSimulation(); // Phase 9: Added focusedPodId
     const [activeActivity, setActiveActivity] = useState('design');
     const [activeTab, setActiveTab] = useState('terminal');
 
@@ -119,7 +120,8 @@ export default function App() {
                 body: JSON.stringify({
                     message: text,
                     context: currentSession.messages.map(m => ({ role: m.role, text: m.text })),
-                    aiModel: aiModel // Pass selected model (mock, ollama, etc.)
+                    aiModel: aiModel, // Pass selected model (mock, ollama, etc.)
+                    focusedPodId: focusedPodId // Phase 9: Recursive ISA Context
                 })
             });
 
@@ -312,8 +314,37 @@ export default function App() {
             }
             // --- REMOTE BACKEND SHELL ---
             else if (cmd === 'brick') {
+                // Handle brick checkout (Phase 9)
+                if (args[0] === 'checkout') {
+                    const path = args[1] || ".";
+
+                    try {
+                        const res = await fetch('http://localhost:8000/api/isa/checkout', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ path })
+                        });
+                        const data = await res.json();
+
+                        if (data.success) {
+                            setFocusedPodId(data.pod_id); // Update Simulator Context
+                            response = {
+                                type: 'sys',
+                                text: [
+                                    data.message,
+                                    data.pod_id ? `Scope: ${data.name} [ID: ${data.pod_id.substring(0, 8)}]` : 'Scope: Global',
+                                    data.pod_id ? `Constraints: ${JSON.stringify(data.constraints)}` : ''
+                                ].filter(Boolean).join('\n')
+                            };
+                        } else {
+                            response = { type: 'err', text: `Checkout Failed: ${data.message}` };
+                        }
+                    } catch (err) {
+                        response = { type: 'err', text: `Connection Error: ${err.message}` };
+                    }
+                }
                 // Handle brick compile and verify specially - redirect to PVC tab
-                if (args[0] === 'help') {
+                else if (args[0] === 'help') {
                     response = {
                         type: 'res',
                         text: [
@@ -475,6 +506,10 @@ export default function App() {
         }
     };
 
+
+
+    // ...
+
     // Render left panel based on active activity
     const renderLeftPanel = () => {
         switch (activeActivity) {
@@ -496,6 +531,8 @@ export default function App() {
                 return <ForkPanel width={leftWidth} />;
             case 'export':
                 return <ExportPanel width={leftWidth} />;
+            case 'isa': // Phase 9: Hardware ISA Browser
+                return <ISABrowserPanel width={leftWidth} />;
             default:
                 return <DesignLibrary width={leftWidth} />;
         }

@@ -66,9 +66,10 @@ class ManufacturingAgent:
             
         return 0.001 # Fallback volume
 
-    def run(self, geometry_tree: List[Dict[str, Any]], material: str) -> Dict[str, Any]:
+    def run(self, geometry_tree: List[Dict[str, Any]], material: str, pod_id: str = None) -> Dict[str, Any]:
         """
         Analyze geometry and material to produce manufacturing data.
+        If pod_id is provided, aggregates BOM from sub-assemblies (Recursive ISA).
         """
         mat_data = self._get_material_data(material)
         density = mat_data["density"]
@@ -79,54 +80,90 @@ class ManufacturingAgent:
         total_mass = 0.0
         bom_items = []
         
-        if not geometry_tree:
-             return {
-                "components": [],
-                "bom_analysis": {
-                    "total_cost": 0,
-                    "currency": "USD",
-                    "lead_time_days": 0,
-                    "manufacturability_score": 0.0
-                }
-            }
+        # 1. Local Geometry Analysis
+        if geometry_tree:
+            for i, part in enumerate(geometry_tree):
+                # Mass Calculation
+                if "mass_kg" in part:
+                    mass = part["mass_kg"]
+                else:
+                    vol = self._calculate_volume(part)
+                    mass = vol * density
+                
+                # Cost Calculation
+                material_cost = mass * base_cost
+                est_hours = mass * self.MACHINING_TIME_PER_KG_HOUR * machining_factor
+                machining_cost = (self.HOURLY_MACHINING_RATE_USD * est_hours) + self.SETUP_COST_USD
+                
+                part_total = material_cost + machining_cost
+                
+                total_mass += mass
+                total_cost += part_total
+                
+                bom_items.append({
+                    "id": part.get("id", f"part-{i+1}"),
+                    "name": part.get("type", "Component").title(),
+                    "material": material,
+                    "process": "CNC Milling" if machining_factor > 1 else "Injection Molding",
+                    "mass_kg": round(mass, 3),
+                    "cost": round(part_total, 2),
+                    "type": "part"
+                })
 
-        for i, part in enumerate(geometry_tree):
-            # 1. Mass Calculation
-            # If Geometry Agent already provided mass, use it. Else calculate.
-            if "mass_kg" in part:
-                mass = part["mass_kg"]
-            else:
-                vol = self._calculate_volume(part)
-                mass = vol * density
-            
-            # 2. Cost Calculation
-            material_cost = mass * base_cost
-            
-            # Machining Cost = (Rate * Time) + Setup
-            # Time = Mass * Factor (Heuristic)
-            est_hours = mass * self.MACHINING_TIME_PER_KG_HOUR * machining_factor
-            machining_cost = (self.HOURLY_MACHINING_RATE_USD * est_hours) + self.SETUP_COST_USD
-            
-            part_total = material_cost + machining_cost
-            
-            total_mass += mass
-            total_cost += part_total
-            
-            bom_items.append({
-                "id": part.get("id", f"part-{i+1}"),
-                "name": part.get("type", "Component").title(),
-                "material": material,
-                "process": "CNC Milling" if machining_factor > 1 else "Injection Molding",
-                "mass_kg": round(mass, 3),
-                "cost": round(part_total, 2)
-            })
-            
+        # 2. Recursive Sub-Assembly Aggregation
+        if pod_id:
+            try:
+                from core.system_registry import get_system_resolver
+                resolver = get_system_resolver()
+                # Simple BFS/DFS to find pod
+                def find_pod(root, target_id):
+                    if root.id == target_id: return root
+                    for sub in root.sub_pods.values():
+                        f = find_pod(sub, target_id)
+                        if f: return f
+                    return None
+                
+                current_pod = find_pod(resolver.root, pod_id)
+                
+                if current_pod:
+                    for sub_key, sub_pod in current_pod.sub_pods.items():
+                        # We treat sub-pods as "Assemblies" in the BOM
+                        # Ideally, we'd recursively call ManufacturingAgent on them,
+                        # but for now we assume they have 'exports' populated or we just list them.
+                        # Phase 10: We list them as Line Items.
+                        
+                        # Check if sub-pod has exported cost/mass (cached from previous runs)
+                        sub_cost = sub_pod.exports.get("cost", 0.0)
+                        sub_mass = sub_pod.exports.get("mass", 0.0)
+                        
+                        bom_items.append({
+                            "id": sub_pod.id,
+                            "name": f"{sub_pod.name} (Assembly)",
+                            "material": "Mixed",
+                            "process": "Assembly",
+                            "mass_kg": round(sub_mass, 3),
+                            "cost": round(sub_cost, 2),
+                            "type": "assembly"
+                        })
+                        
+                        total_cost += sub_cost
+                        total_mass += sub_mass
+
+                    # [NEW] Commit to System Registry (Recursive ISA State)
+                    # This allows 'converge_up' to work for parents.
+                    current_pod.exports["mass"] = total_mass
+                    current_pod.exports["cost"] = total_cost
+                    current_pod.is_dirty = False # Mark as clean/computed
+                        
+            except ImportError:
+                pass # Registry not ready or circular import
+
         return {
             "components": bom_items,
             "bom_analysis": {
                 "total_cost": round(total_cost, 2),
                 "currency": "USD",
-                "lead_time_days": 7 + (len(geometry_tree) * 1),
+                "lead_time_days": 7 + (len(bom_items) * 1),
                 "manufacturability_score": 0.95 if machining_factor < 4 else 0.60
             }
         }

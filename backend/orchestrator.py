@@ -53,6 +53,8 @@ from agents.component_agent import ComponentAgent
 from agents.asset_sourcing_agent import AssetSourcingAgent
 from agents.template_design_agent import TemplateDesignAgent
 from agents.conversational_agent import ConversationalAgent
+from agents.devops_agent import DevOpsAgent
+from agents.review_agent import ReviewAgent
 from agents.remote_agent import RemoteAgent
 from agents.pvc_agent import PvcAgent
 from agents.nexus_agent import NexusAgent
@@ -126,8 +128,8 @@ def get_agent_registry():
         "vhil": VhilAgent(),
         
         # --- Documentation ---
-        "document": DocumentAgent(),
-        "documentation": DocumentAgent(), # Alias
+        "document": DocumentAgent(llm_provider=llm),
+        "documentation": DocumentAgent(llm_provider=llm), # Alias
         "diagnostic": DiagnosticAgent(),
         "verification": VerificationAgent(),
         "visual_validator": VisualValidatorAgent(),
@@ -135,8 +137,11 @@ def get_agent_registry():
         # --- Specialized ---
         "standards": StandardsAgent(),
         "component": ComponentAgent(),
+        "component": ComponentAgent(),
         "conversational": ConversationalAgent(provider=llm),
         "remote": RemoteAgent(),
+        "devops": DevOpsAgent(llm_provider=llm),
+        "review": ReviewAgent(llm_provider=llm),
         
         # --- Training ---
         "training": TrainingAgent(),

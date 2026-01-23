@@ -1,23 +1,20 @@
-# BRICK OS - Comprehensive System Documentation
+# BRICK OS
 
-> **BRICK OS**: Multi-Agent Hardware Compiler for Intelligent Design Automation
+> **Multi-Agent Hardware Compiler for Intelligent Design Automation**
 
----
+**Status**: Production-Grade (Tier 6 Complete)  
+**Version**: 2026.01 (De-Mocked)
 
-## Table of Contents
-
-1. [System Overview](#system-overview)
-2. [Architecture](#architecture)
-3. [Backend Components](#backend-components)
-4. [Frontend Components](#frontend-components)
-5. [Agent System](#agent-system)
-6. [Workflows & Interactions](#workflows--interactions)
-7. [API Endpoints](#api-endpoints)
-8. [Environment & Deployment](#environment--deployment)
-9. [Data Flow](#data-flow)
-10. [Future Roadmap](#future-roadmap)
+## 📚 Documentation
+- **[MASTER ARCHITECTURE (System Bible)](docs/MASTER_ARCHITECTURE.md)**: The comprehensive guide to all 57 agents, folders, and logic. **(Read this for the full summary)**.
+- **[Self-Evolution Architecture](docs/SELF_EVOLUTION_ARCHITECTURE.md)**: Details on how the system learns and improves.
+- **Frontend**: See `frontend/README.md`.
+- **Backend Setup**: See below.
 
 ---
+
+## Quick Start
+
 
 ## System Overview
 
@@ -144,6 +141,32 @@ graph LR
     Validator --> Doc[Documentation Agent]
     Doc --> End([Complete])
 ```
+
+---
+
+## System Evolution & De-Mocking (Jan 2026 Update)
+
+**Transition to Real Intelligence:**
+The system has moved from a prototype (Tier 1-4) to a production-grade Agentic Engineering System (Tier 5-6). We have completely **de-mocked** the core intelligence layers.
+
+### 1. Robust LLM Provider Factory (`backend/llm`)
+We replaced the static `MockDreamer` with a dynamic **LLM Factory** that prioritizes speed and availability:
+- **Groq LPU (Priority 1):** Uses `GroqProvider` for ultra-fast, real-time inference (70b+ parameter models).
+  - *Feature:* **REST API Fallback**: If the `groq` Python SDK is missing, the system automatically degrades to direct `requests` calls, ensuring stability.
+- **OpenAI (Priority 2):** Fallback to GPT-4 Turbo if Groq is unavailable.
+- **No Mocking:** The system now raises explicit errors if no valid AI provider is found, ensuring engineering decisions are never "faked".
+
+### 2. Unified Materials Database (`backend/materials`)
+Engineering requires precise data, not hallucinations. We aggregated 4 major databases into a single **UnifiedMaterialsAPI**:
+- **Materials Project (MP):** Crystal structures and inorganic data.
+- **NIST Thermochemistry:** Heat capacity and thermal limits.
+- **RSC (Royal Society of Chemistry):** Chemical data.
+- **PubChem:** Access to **100M+ compound properties** (Molecular Weight, Formula, Toxicity).
+
+**Logic:** The `MaterialAgent` uses a valid waterfall strategy: `MP -> NIST -> RSC -> PubChem`. It never guesses properties.
+
+### 3. Agentic DevOps (`DevOpsAgent`)
+We introduced "The Operator" to handle system health. Instead of checking mock status, it uses Python's `subprocess` to interface with the **Real Docker CLI**, verifying container PIDs, disk usage, and service health in real-time.
 
 ---
 
@@ -840,11 +863,35 @@ def predict_failure(material_id, stress, temperature)
 
 **Purpose**: Remote collaboration and control
 
-**Capabilities:**
-- Remote design sessions
-- Collaborative editing
-- Real-time synchronization
-- Access control
+    
+### Tier 6: Support & Code Agents (Tool Use)
+
+These agents use advanced ReAct loops and Tool Use to assist the core engineering flow.
+
+#### 42. Codegen Agent (`codegen_agent.py`)
+**Purpose**: Synthesize specialized firmware and scripts.
+- **Logic**: Uses LLM (Groq) to write Python/C++ code based on requirements.
+- **Validation**: Includes `ast` syntax checking to ensure generated code is valid before returning.
+- **Source**: Real-time generation, no templates.
+
+#### 43. DevOps Agent (`devops_agent.py`)
+**Purpose**: Automate system operations.
+- **Capabilities**: 
+    - Real-time `docker ps` / health checks.
+    - Automated `Dockerfile` security auditing.
+    - CI/CD pipeline generation.
+
+#### 44. Document Agent (`document_agent.py`)
+**Purpose**: Generate comprehensive engineering reports.
+- **Logic**: Aggregates state from all other agents (Material, Cost, Manufacturing).
+- **Output**: Synthesized Design Brief (Markdown) + **PDF Generation** (via WeasyPrint).
+
+#### 45. Conversational Agent (`conversational_agent.py`)
+**Purpose**: Strategic Consultant ("The Dreamer").
+- **Logic**: Implements a **Discovery Phase**. It analyzes user intent and asks strategic clarifying questions ("What is the mission profile?", "Any constraints?") *before* triggering the engineering loop.
+- **Context**: Maintains full conversation history window.
+
+### Specialized Domain Agents
 
 ### Training & Learning Agents
 
@@ -1459,7 +1506,7 @@ velocity
 
 ### Phase 6: Manufacturing Integration
 
-**Goal**: Direct manufacturing pipeline
+**Goal**: Direct manufacturing pipeline.
 
 **Features:**
 - CNC toolpath generation
@@ -1467,19 +1514,17 @@ velocity
 - Assembly instructions
 - Quality control integration
 
-### Phase 7: Collaborative Design
+### Phase 7: Collaborative Design (Tier 6)
 
-**Goal**: Multi-user design sessions
+**Goal**: Multi-user design sessions & Tool Use.
 
-**Features:**
-- Real-time collaboration
-- Design branching and merging
-- Comment and review system
-- Access control
+**Status**: **PARTIAL COMPLETE (Jan 2026)**
+- **Completed**: DevOps Automation, Real-time Code Generation, Document Synthesis.
+- **In Progress**: ReviewAgent (Security), AssetSourcing (Vendor APIs).
 
 ### Phase 8: AI-Driven Optimization
 
-**Goal**: Autonomous design optimization
+**Goal**: Autonomous design optimization.
 
 **Features:**
 - Generative design

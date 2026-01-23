@@ -10,7 +10,7 @@ def test_smart_agents():
     print("--- Testing Smart Agents ---")
     
     # 1. Conversational (Mock LLM)
-    conv = ConversationalAgent() # Uses default MockDreamer
+    conv = ConversationalAgent() # Uses default Factory (Real LLM)
     resp = conv.run({"input_text": "Please design a high-speed drone"})
     print("\n[Conversational] Response:", resp.get("response"))
     print("[Conversational] Intent:", resp.get("intent"))

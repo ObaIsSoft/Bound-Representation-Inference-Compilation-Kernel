@@ -1,7 +1,7 @@
 from typing import List, Dict, Any, Optional
 from .base_ingestor import BaseIngestor
 from llm.provider import LLMProvider
-from llm.mock_dreamer import MockDreamer
+
 
 # Schema definition for the LLM
 COMPONENT_SCHEMA = {
@@ -48,7 +48,11 @@ class DatasheetIngestor(BaseIngestor):
         super().__init__()
         self.source_name = "ai_datasheet_parser"
         # Default to Mock if not provided, or load from Env in production
-        self.llm_provider = provider if provider else MockDreamer()
+        if provider:
+            self.llm_provider = provider
+        else:
+            from llm.factory import get_llm_provider
+            self.llm_provider = get_llm_provider()
 
     def fetch_candidates(self, query: str = None) -> List[Dict[str, Any]]:
         # ... (Same as before, placeholder)

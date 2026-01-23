@@ -27,6 +27,16 @@ const SettingsPage = () => {
         setMeshRenderingMode,
         visualizationQuality,
         setVisualizationQuality,
+        simulationFrequency,
+        setSimulationFrequency,
+        incrementalCompilation,
+        setIncrementalCompilation,
+        secureBoot,
+        setSecureBoot,
+        agentSandboxing,
+        setAgentSandboxing,
+        agentProposals,
+        setAgentProposals,
         resetToDefaults
     } = useSettings();
 
@@ -100,8 +110,8 @@ const SettingsPage = () => {
                 {
                     label: 'Simulation Frequency',
                     type: 'select',
-                    value: '1000',
-                    onChange: () => { },
+                    value: simulationFrequency,
+                    onChange: setSimulationFrequency,
                     options: [
                         { value: '100', label: '100 Hz' },
                         { value: '500', label: '500 Hz' },
@@ -174,8 +184,8 @@ const SettingsPage = () => {
                 {
                     label: 'Incremental Compilation',
                     type: 'toggle',
-                    value: true,
-                    onChange: () => { },
+                    value: incrementalCompilation,
+                    onChange: setIncrementalCompilation,
                     description: 'Only recompile changed modules'
                 }
             ]
@@ -187,15 +197,15 @@ const SettingsPage = () => {
                 {
                     label: 'Secure Boot',
                     type: 'toggle',
-                    value: true,
-                    onChange: () => { },
+                    value: secureBoot,
+                    onChange: setSecureBoot,
                     description: 'Verify kernel integrity on startup'
                 },
                 {
                     label: 'Agent Sandboxing',
                     type: 'toggle',
-                    value: true,
-                    onChange: () => { },
+                    value: agentSandboxing,
+                    onChange: setAgentSandboxing,
                     description: 'Run AI agents in isolated environment'
                 }
             ]
@@ -214,8 +224,8 @@ const SettingsPage = () => {
                 {
                     label: 'Agent Proposals',
                     type: 'toggle',
-                    value: true,
-                    onChange: () => { },
+                    value: agentProposals,
+                    onChange: setAgentProposals,
                     description: 'Notify when agents suggest changes'
                 }
             ]
@@ -429,6 +439,20 @@ const SettingsPage = () => {
                             Reset to Defaults
                         </button>
                         <button
+                            onClick={() => {
+                                // Settings are already persisted to localStorage via individual onChange handlers
+                                // This button provides explicit save confirmation
+                                const event = new CustomEvent('settings-saved');
+                                window.dispatchEvent(event);
+
+                                // Visual feedback
+                                const btn = document.activeElement;
+                                const originalText = btn.innerHTML;
+                                btn.innerHTML = '✓ Settings Saved';
+                                setTimeout(() => {
+                                    btn.innerHTML = originalText;
+                                }, 2000);
+                            }}
                             className="px-4 py-2 rounded text-xs font-mono font-bold transition-colors flex items-center gap-2"
                             style={{
                                 background: `linear-gradient(to right, ${theme.colors.accent.primary}, ${theme.colors.accent.secondary})`,

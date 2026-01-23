@@ -158,7 +158,7 @@ const AgentRow = ({ agent, isActive, onToggle, runStatus, logs, computedStats, i
 
                 {isActive && !isExpanded && (
                     <div className="flex gap-2 text-[9px] font-mono opacity-60" style={{ color: theme.colors.text.secondary }}>
-                        <span>CPU:{computedStats?.cpu ? computedStats.cpu.toFixed(1) : 0}%</span>
+                        <span>LOAD:{computedStats?.cpu ? computedStats.cpu.toFixed(1) : 0}%</span>
                         <span>RUNS:{computedStats?.runs || 0}</span>
                     </div>
                 )}

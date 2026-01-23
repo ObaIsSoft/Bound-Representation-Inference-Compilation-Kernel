@@ -182,7 +182,8 @@ void loop() {{
         """
         
         try:
-            code = self.provider.chat([{"role": "user", "content": prompt}])
+            # Use standardized .generate() method from LLMProvider
+            code = self.provider.generate(prompt)
             
             # Syntax Check (Python only)
             validation = {"valid": True, "error": None}

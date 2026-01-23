@@ -2,7 +2,7 @@ from typing import Dict, Any, List, Optional
 import logging
 import os
 from llm.provider import LLMProvider
-from llm.mock_dreamer import MockDreamer
+
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +20,39 @@ class DiscoveryManager:
             "user_preferences": None  # Specific user suggestions or aesthetic desires
         }
         self.active = False
+        
+        # Persistence
+        self.memory_path = "data/long_term_memory.json"
+        
+        # Create directory if needed
+        if not os.path.exists("data"):
+            os.makedirs("data")
+            
+        self._load_memory()
+
+    def _load_memory(self):
+        """Load context from persistent storage"""
+        import json
+        if os.path.exists(self.memory_path):
+            try:
+                with open(self.memory_path, 'r') as f:
+                    saved = json.load(f)
+                    # Merge saved context into current, respecting existing non-None values
+                    for k, v in saved.items():
+                        if not self.context.get(k):
+                            self.context[k] = v
+                    logger.info("DiscoveryManager: Loaded persistent memory.")
+            except Exception as e:
+                logger.warning(f"Failed to load memory: {e}")
+
+    def _save_memory(self):
+        """Save current context to persistent storage"""
+        import json
+        try:
+            with open(self.memory_path, 'w') as f:
+                json.dump(self.context, f, indent=2)
+        except Exception as e:
+            logger.error(f"Failed to save memory: {e}")
 
     def check_completeness(self, current_text: str, llm_provider: LLMProvider, history_str: str = "") -> Dict[str, Any]:
         """
@@ -63,9 +96,14 @@ Return JSON:
             
             # Update Context
             extracted = resp.get("extracted", {})
+            updated = False
             for k, v in extracted.items():
-                if v and v != "None": 
+                if v and v != "None" and self.context.get(k) != v: 
                     self.context[k] = v
+                    updated = True
+            
+            if updated:
+                self._save_memory()
                     
             return resp
         except Exception as e:
@@ -78,9 +116,16 @@ class ConversationalAgent:
     Now equipped with a Discovery Phase to act as a Strategic Consultant.
     """
     
+    
     def __init__(self, provider: Optional[LLMProvider] = None):
         self.name = "ConversationalAgent"
-        self.provider = provider if provider else MockDreamer()
+        if provider:
+            self.provider = provider
+        else:
+             # De-Mocking: Fetch default from factory
+             from llm.factory import get_llm_provider
+             self.provider = get_llm_provider()
+             
         self.discovery = DiscoveryManager()
         
         # Load System Prompt

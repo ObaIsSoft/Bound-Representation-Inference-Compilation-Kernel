@@ -149,12 +149,29 @@ Use the agent data as source of truth - don't make up numbers."""
                 system_prompt="You synthesize engineering data into clear documentation."
             )
             
+            pdf_path = None
+            try:
+                # Optional PDF Generation
+                import markdown
+                from weasyprint import HTML
+                html = markdown.markdown(plan_content)
+                pdf_path = f"data/reports/Design_Plan_{intent.replace(' ', '_')}.pdf"
+                import os
+                os.makedirs("data/reports", exist_ok=True)
+                HTML(string=html).write_pdf(pdf_path)
+                logger.info(f"Generated PDF report: {pdf_path}")
+            except ImportError:
+                logger.warning("PDF generation skipped (weasyprint/markdown not installed)")
+            except Exception as e:
+                logger.warning(f"PDF generation failed: {e}")
+
             return {
                 "status": "success",
                 "document": {
                     "title": f"Design Plan: {intent}",
                     "content": plan_content,
-                    "type": "design_brief"
+                    "type": "design_brief",
+                    "pdf_path": pdf_path
                 },
                 "logs": [f"Plan synthesized from {len(agent_data)} agents"]
             }

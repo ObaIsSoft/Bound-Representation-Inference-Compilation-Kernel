@@ -7,7 +7,7 @@ import os
 # Adjust path to find backend modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from llm.mock_dreamer import MockDreamer
+
 from llm.openai_provider import OpenAIProvider
 from llm.ollama_provider import OllamaProvider
 from scripts.ingestors.datasheet_ingestor import DatasheetIngestor
@@ -44,7 +44,7 @@ Bearings: EZO 6902Z
 def main():
     parser = argparse.ArgumentParser(description="Datasheet Extraction Agent Utility")
     parser.add_argument("--file", help="Path to text file containing OCR/Datasheet text")
-    parser.add_argument("--mock", action="store_true", help="Force usage of MockDreamer (Fake LLM)")
+
     args = parser.parse_args()
 
     print("🤖 -- Datasheet Agent Utility --")
@@ -109,15 +109,6 @@ def main():
 
     # Fallback to Mock if all else fails
     if not provider:
-        print("\n⚠️ No Real LLM configured or reachable. Falling back to MockDreamer.")
-        provider = MockDreamer()
-        # Patch Mock for the sample text logic if using sample, 
-        # otherwise MockDreamer uses its default heuristics
-        if input_text == SAMPLE_OCR_TEXT.strip():
-            from unittest.mock import MagicMock
-            expected_response = {
-                "category": "motor",
-                "name": "U8-II-KV100",
                 "specs": {"kv": 100, "max_power_w": 940}, 
                 "geometry_def": {"params": {"stator_w": 85, "stator_h": 20}},
                 "behavior_model": {"reliability": {"mtbf_hours": 5000}}

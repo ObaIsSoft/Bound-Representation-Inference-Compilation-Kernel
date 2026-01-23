@@ -28,6 +28,9 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="BRICK OS API", version="0.1.0")
 
+# --- Settings Manager ---
+from config.settings_manager import get_settings_manager, RuntimeSettings
+
 # --- Agent Registry ---
 AGENTS = get_agent_registry()
 
@@ -952,7 +955,7 @@ async def chat(request: ChatRequest):
     
     return result
     from agents.conversational_agent import ConversationalAgent
-    from llm.mock_dreamer import MockDreamer
+
     from conversation_state import conversation_manager
     from requirement_gatherer import RequirementGatherer
     import uuid
@@ -1000,9 +1003,11 @@ async def chat(request: ChatRequest):
         provider = GeminiProvider(model_name=model_name)
         
     # Default / Fallback
+    # Default / Fallback
     if not provider:
-        logger.info(f"Using MockDreamer (requested: {request.aiModel})")
-        provider = MockDreamer()
+        logger.info(f"No specific provider request. Using Factory default (requested: {request.aiModel})")
+        from llm.factory import get_llm_provider
+        provider = get_llm_provider()
 
     # Instantiate agents
     agent = ConversationalAgent(provider=provider)

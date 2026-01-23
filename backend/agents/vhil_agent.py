@@ -31,7 +31,7 @@ class VhilAgent:
             params: {
                 "sensors": List of sensor types to emulate,
                 "state": Current system state,
-                "dt": Time step (seconds),
+                "dt": Time step (seconds) - optional, uses settings if not provided,
                 "noise_level": Optional float (0-1)
             }
         
@@ -45,7 +45,17 @@ class VhilAgent:
         """
         sensors = params.get("sensors", ["imu", "gps"])
         state = params.get("state", {})
-        dt = params.get("dt", 0.01)
+        
+        # Use settings manager for dt if not explicitly provided
+        if "dt" not in params:
+            try:
+                from config.settings_manager import get_settings_manager
+                dt = get_settings_manager().get_vhil_dt()
+            except Exception:
+                dt = 0.01  # Fallback default
+        else:
+            dt = params.get("dt", 0.01)
+            
         noise_level = params.get("noise_level", 0.1)
         
         logs = [

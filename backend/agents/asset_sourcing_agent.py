@@ -46,16 +46,16 @@ class AssetSourcingAgent:
         # Detect high-level intents that require a "Kit" of parts using LLM
         
         # If the search query is complex/high-level (more than 2 chars), ask the oracle
+        # If the search query is complex/high-level (more than 2 chars), ask the oracle
         if len(query) > 2 and query not in [a["name"].lower() for a in self.mock_assets]:
             try:
                 # 1. Try to use LLM to break down the request
-                # We'll try to find an available provider
-                from llm.openai_provider import OpenAIProvider
-                import os
+                from llm.factory import get_llm_provider
                 
-                if os.getenv("OPENAI_API_KEY"):
-                    provider = OpenAIProvider()
-                    logs.append(f"[ASSET_SOURCING] 🧠 Analyzing intent '{query}' with AI...")
+                try:
+                    provider = get_llm_provider() # Will default to Groq/OpenAI or raise error
+                    
+                    logs.append(f"[ASSET_SOURCING] 🧠 Analyzing intent '{query}' with AI ({provider.__class__.__name__})...")
                     
                     schema = {
                         "intent_detected": True,
@@ -93,10 +93,9 @@ class AssetSourcingAgent:
                                 "mesh_url": None, # Agent would search for specific mesh in next step
                                 "is_generated": True
                             })
-                            
-                else:
-                    logs.append("[ASSET_SOURCING] ⚠️ AI Key missing. Skipping smart generation.")
-
+                except RuntimeError:
+                     logs.append("[ASSET_SOURCING] ⚠️ No AI Provider available. Skipping smart generation.")
+                
             except Exception as e:
                 logs.append(f"[ASSET_SOURCING] ⚠️ Smart sourcing failed: {e}")
              

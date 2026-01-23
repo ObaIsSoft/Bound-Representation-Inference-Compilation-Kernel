@@ -67,27 +67,30 @@ class VerificationAgent:
             "logs": logs
         }
 
-    def verify_code_safety(self, gcode: List[Dict[str, Any]], stock_dims: List[float]) -> Dict[str, Any]:
+    def verify_safety(self, gcode: List[Dict[str, Any]], stock_dims: List[float], material: str) -> Dict[str, Any]:
         """
         Verify G-Code Safety using VMK Simulation.
         Checks for:
         1. Rapid Collisions (G00 moves through material).
-        2. Tool Holder collisions (Future).
+        2. Tool Holder collisions (Reserved).
+        3. Force Limits (via MaterialAgent check).
         """
+        logs = ["Starting VMK Safety Verification..."]
         try:
-            from vmk_kernel import SymbolicMachiningKernel, ToolProfile, VMKInstruction
+            # Try absolute import first (standard for run from root)
+            try:
+                from backend.vmk_kernel import SymbolicMachiningKernel, ToolProfile, VMKInstruction
+            except ImportError:
+                 # Fallback to direct import if backend is in path
+                 from vmk_kernel import SymbolicMachiningKernel, ToolProfile, VMKInstruction
             import numpy as np
         except ImportError:
-            return {"verified": False, "error": "VMK Unavailable"}
+            return {"verified": False, "error": "VMK Unavailable", "logs": logs}
             
         kernel = SymbolicMachiningKernel(stock_dims=stock_dims)
         collisions = []
         
-        # We need to track Position to check G00 paths.
-        # VMK executes ops.
-        # If op is "G00" (Rapid), we must check if path intersects Stock (SDF < 0).
-        
-        current_pos = np.array([0., 0., 0.])
+        logs.append(f"Initialized VMK with stock {stock_dims}")
         
         for i, op in enumerate(gcode):
             # Register tool if needed
@@ -103,34 +106,36 @@ class VerificationAgent:
             # Check Rapid Collision
             if move_type == "RAPID":
                 # Sample points along path.
-                # If any point has SDF < 0 (Inside Stock), CRASH.
-                # NOTE: Initially Stock is Box. As we cut, Stock changes.
-                # VMK history grows.
-                # Actually, `kernel.get_sdf` reflects accurate CURRENT stock state?
-                # symbolic_vmk calculates derived SDF from Union of Previous Cuts.
-                # So `d_current = max(d_stock, -d_cut_1, -d_cut_2...)`.
-                # If `d_current < 0`, we are inside material.
-                
-                # We check Sample points along the RAPID move.
                 p_start = np.array(path[0])
                 p_end = np.array(path[-1])
-                
-                # Check Midpoint
                 mid = (p_start + p_end) * 0.5
+                
+                # Check Midpoint SDF against Stock State
                 d = kernel.get_sdf(mid)
                 
                 # Tolerance: If d < -0.1 (Inside material), CRASH
                 if d < -0.1:
-                    collisions.append(f"CRASH on Line {i} (Rapid): Point {mid} is inside Stock (SDF={d:.2f})")
+                    msg = f"CRASH on Line {i} (Rapid): Point {mid} is inside Stock (SDF={d:.2f})"
+                    collisions.append(msg)
+                    logs.append(f"❌ {msg}")
             
-            # Update Kernel (Perform the move)
-            # Only CUT moves modify the stock ("remove material").
-            # RAPID moves do not remove material, but we verified they were safe.
+            # Execute Move (Update Stock)
             if move_type == "CUT":
+                # Ensure tool_id is present for Pydantic validation
+                if "tool_id" not in op:
+                    op["tool_id"] = "t_verify"
                 kernel.execute_gcode(VMKInstruction(**op))
                 
+        # Final Status
+        verified = len(collisions) == 0
+        if verified:
+            logs.append("✅ Verification Passed: No Collisions Detected")
+        else:
+            logs.append(f"❌ Verification Failed: {len(collisions)} Collisions")
+            
         return {
-            "verified": len(collisions) == 0,
+            "verified": verified,
             "collision_count": len(collisions),
-            "collisions": collisions
+            "collisions": collisions,
+            "logs": logs
         }

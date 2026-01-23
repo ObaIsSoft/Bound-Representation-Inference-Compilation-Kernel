@@ -64,6 +64,9 @@ class MaterialsProjectAPI:
                 return []
         if limit:
             params["_limit"] = limit
+            
+        # Request specific fields to ensure we get properties
+        params["_fields"] = "formula_pretty,material_id,density,elasticity,thermo,structure"
         
         try:
             response = requests.get(endpoint, headers=self.headers, params=params, timeout=10)
@@ -130,9 +133,16 @@ class NISTChemistryAPI:
         
         try:
             # Search for compound by formula
-            compound = self.nist.get_compound(formula)
+            # Use run_search correctly (signature: query, type)
+            result = self.nist.run_search(formula, 'formula')
             
-            if compound:
+            # Load data if needed
+            if result and result.success:
+                 result.load_found_compounds()
+                 
+            if result and result.success and result.compounds:
+                print(f"[DEBUG] NIST Search Success: {len(result.compounds)} matches")
+                compound = result.compounds[0]
                 return {
                     "formula": formula,
                     "name": compound.name if hasattr(compound, 'name') else formula,
@@ -142,8 +152,12 @@ class NISTChemistryAPI:
                     "thermochemistry": self._get_thermochemistry(compound),
                     "_source": "nist"
                 }
+            else:
+                 print(f"[DEBUG] NIST Search Failed/Empty. Result: {result}, Success: {getattr(result, 'success', 'UNK')}, Cmp: {getattr(result, 'compounds', 'UNK')}")
         except Exception as e:
             logger.error(f"NIST API error for {formula}: {e}")
+            import traceback
+            traceback.print_exc()
         
         return self._mock_compound(formula)
     
@@ -212,6 +226,119 @@ class MatWebAPI:
         return []
 
 
+class RSCApi:
+    """
+    Integration with Royal Society of Chemistry (RSC) API.
+    Primary use: ChemSpider / Compounds data.
+    """
+    
+    def __init__(self, api_key: str = None):
+        self.api_key = api_key or os.getenv("RSC_API_KEY")
+        self.base_url = "https://api.rsc.org/compounds/v1"
+        self.headers = {"apikey": self.api_key} if self.api_key else {}
+        
+    def search_compound(self, name: str) -> List[Dict]:
+        """
+        Search for compounds by name using RSC API.
+        """
+        if not self.api_key:
+            logger.warning("RSC API Key missing.")
+            return []
+            
+        try:
+            # 1. Search to get Record ID
+            search_endpoint = f"{self.base_url}/filter/name"
+            payload = {"name": name}
+            
+            # Post request for search ID
+            resp = requests.post(search_endpoint, json=payload, headers=self.headers, timeout=10)
+            if resp.status_code == 401:
+                logger.error("RSC API Unauthorized. Check Key.")
+                return []
+            resp.raise_for_status()
+            
+            query_id = resp.json().get("queryId")
+            
+            # 2. Fetch Results using queryId
+            results_endpoint = f"{self.base_url}/filter/{query_id}/results"
+            results_resp = requests.get(results_endpoint, headers=self.headers, timeout=10)
+            results_resp.raise_for_status()
+            
+            record_ids = results_resp.json().get("results", [])
+            if not record_ids:
+                return []
+                
+            # 3. Get Details for first result (to save bandwidth)
+            # Only fetching basic details for now
+            top_id = record_ids[0]
+            details_endpoint = f"{self.base_url}/records/{top_id}/details"
+            details_resp = requests.get(details_endpoint, headers=self.headers, params={"fields": "CommonName,Formula,MolecularWeight"}, timeout=10)
+            details_resp.raise_for_status()
+            
+            data = details_resp.json()
+            
+            return [{
+                "name": data.get("commonName", name),
+                "formula": data.get("formula"),
+                "molecular_weight": data.get("molecularWeight"),
+                "record_id": top_id,
+                "_source": "rsc"
+            }]
+            
+        except Exception as e:
+            logger.error(f"RSC API Error: {e}")
+            return []
+
+
+class PubChemAPI:
+    """
+    Integration with NCBI PubChem PUG REST API.
+    Access to 100M+ compounds.
+    """
+    
+    def __init__(self):
+        self.base_url = "https://pubchem.ncbi.nlm.nih.gov/rest/pug"
+        
+    def search_compound(self, name: str) -> List[Dict]:
+        """
+        Search for compound by name and retrieve properties.
+        Properties: Formula, MolecularWeight, SMILES, InChIKey.
+        """
+        try:
+            # URL: /compound/name/{name}/property/{props}/JSON
+            props = "MolecularFormula,MolecularWeight,CanonicalSMILES,InChIKey,Title"
+            endpoint = f"{self.base_url}/compound/name/{name}/property/{props}/JSON"
+            
+            response = requests.get(endpoint, timeout=10)
+            if response.status_code == 404:
+                return []
+            response.raise_for_status()
+            
+            data = response.json()
+            # Parse Response
+            # Structure: {'PropertyTable': {'Properties': [{...}]}}
+            
+            properties = data.get("PropertyTable", {}).get("Properties", [])
+            results = []
+            
+            for p in properties:
+                results.append({
+                    "name": p.get("Title", name),
+                    "formula": p.get("MolecularFormula"),
+                    "molecular_weight": float(p.get("MolecularWeight", 0)) if p.get("MolecularWeight") else None,
+                    "smiles": p.get("CanonicalSMILES"),
+                    "inchi_key": p.get("InChIKey"),
+                    "cid": p.get("CID"),
+                    "_source": "pubchem"
+                })
+                
+            return results
+            
+        except Exception as e:
+            logger.error(f"PubChem API Error: {e}")
+            return []
+
+
 class UnifiedMaterialsAPI:
     """
     Unified interface to multiple materials databases.
@@ -222,6 +349,8 @@ class UnifiedMaterialsAPI:
         self.mp_api = MaterialsProjectAPI(materials_project_key)
         self.nist_api = NISTChemistryAPI()
         self.matweb_api = MatWebAPI()
+        self.rsc_api = RSCApi()
+        self.pubchem_api = PubChemAPI()
         
         # Cache for reducing API calls
         self.cache = {}
@@ -237,7 +366,7 @@ class UnifiedMaterialsAPI:
         Returns:
             List of materials from all sources
         """
-        # Check cache
+        # Cache check
         cache_key = f"{source}:{query}"
         if cache_key in self.cache:
             logger.info(f"Cache hit for {cache_key}")
@@ -245,18 +374,52 @@ class UnifiedMaterialsAPI:
         
         results = []
         
+        # Common Name -> Formula Mapping
+        NAME_TO_FORMULA = {
+            "aluminum": "Al",
+            "aluminium": "Al",
+            "titanium": "Ti",
+            "carbon_fiber": "C", # Approximation
+            "steel": "Fe",       # Approximation
+            "iron": "Fe",
+            "copper": "Cu",
+            "gold": "Au",
+            "silver": "Ag",
+            "silicon": "Si",
+        }
+        
+        # Convert name to formula if applicable
+        query_lower = query.lower()
+        search_query = NAME_TO_FORMULA.get(query_lower, query)
+        
         if source in ["auto", "materials_project"]:
-            mp_results = self.mp_api.search_materials(formula=query)
+            # Try searching as formula first
+            mp_results = self.mp_api.search_materials(formula=search_query)
+            # If no results and query was different from search_query, try original query (maybe it was a formula)
+            if not mp_results and search_query != query:
+                 mp_results = self.mp_api.search_materials(formula=query)
+            
             results.extend([{**r, "_source": "materials_project"} for r in mp_results])
         
         if source in ["auto", "nist"]:
-            nist_result = self.nist_api.get_compound(query)
+            nist_result = self.nist_api.get_compound(search_query)
             if nist_result:
                 results.append({**nist_result, "_source": "nist"})
         
         if source in ["auto", "matweb"]:
+            # MatWeb handles names better
             matweb_results = self.matweb_api.search_alloy(query)
             results.extend([{**r, "_source": "matweb"} for r in matweb_results])
+            
+        if source in ["auto", "rsc"]:
+            # RSC Search
+            rsc_results = self.rsc_api.search_compound(query)
+            results.extend(rsc_results)
+
+        if source in ["auto", "pubchem"]:
+            # PubChem Search (Excellent for organic/general chemicals)
+            pc_results = self.pubchem_api.search_compound(query)
+            results.extend(pc_results)
         
         # Cache results
         self.cache[cache_key] = results

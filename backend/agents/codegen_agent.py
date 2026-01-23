@@ -10,8 +10,9 @@ class CodegenAgent:
     Synthesis Layer: Converts high-level 'Electronics' components into low-level C++ Firmware.
     Supports Motors, Servos, Sensors, and LEDs via Category Detection.
     """
-    def __init__(self):
+    def __init__(self, provider=None):
         self.name = "CodegenAgent"
+        self.provider = provider
         
         # Load Hardware Definitions
         from config.hardware_definitions import HARDWARE_DEFS, DEFAULT_TARGET
@@ -161,3 +162,46 @@ void loop() {{
 }}
 """
         return code
+
+    def generate_script(self, requirements: str, language: str = "python") -> Dict[str, Any]:
+        """
+        Generate a specialized script using the LLM.
+        """
+        if not self.provider:
+            return {"status": "error", "message": "No LLM Provider available"}
+            
+        logger.info(f"Generating {language} script for: {requirements}")
+        
+        prompt = f"""
+        You are an expert embedded systems programmer.
+        Write a complete {language} script for the following requirements:
+        {requirements}
+        
+        Return ONLY the code, no markdown fencing, no explanation.
+        Ensure it is safe and robust.
+        """
+        
+        try:
+            code = self.provider.chat([{"role": "user", "content": prompt}])
+            
+            # Syntax Check (Python only)
+            validation = {"valid": True, "error": None}
+            if language.lower() == "python":
+                validation = self._validate_python_syntax(code)
+                
+            return {
+                "status": "success" if validation["valid"] else "error",
+                "code": code,
+                "validation": validation
+            }
+        except Exception as e:
+            logger.error(f"Codegen LLM Error: {e}")
+            return {"status": "error", "message": str(e)}
+
+    def _validate_python_syntax(self, code: str) -> Dict[str, Any]:
+        import ast
+        try:
+            ast.parse(code)
+            return {"valid": True, "error": None}
+        except SyntaxError as e:
+            return {"valid": False, "error": f"Line {e.lineno}: {e.msg}"}

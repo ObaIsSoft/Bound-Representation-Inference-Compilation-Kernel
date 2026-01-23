@@ -81,18 +81,58 @@ class MaterialAgent:
                 api_results = mat_db.api.find_material(material_name, source="auto")
                 
                 if api_results:
-                    api_data = api_results[0]
+                    # Find candidate with most complete data (prefer existing elasticity/thermo)
+                    best_data = None
+                    best_score = -1
+                    
+                    for candidate in api_results:
+                        score = 0
+                        if candidate.get("density"): score += 1
+                        if candidate.get("elasticity"): score += 2
+                        if candidate.get("thermo") and candidate["thermo"].get("melting_point"): score += 2
+                        
+                        if score > best_score:
+                            best_score = score
+                            best_data = candidate
+                            
+                    api_data = best_data or api_results[0]
+                    
+                    # DEBUG: Print selected candidate keys
+                    print(f"DEBUG SELECTED CANDIDATE KEYS: {list(api_data.keys())}")
+                    
                     # Map API response to internal schema
+                    # Elasticity data is often in G_VRH (shear) or K_VRH (bulk), or just not present
+                    elasticity = api_data.get("elasticity") or {}
+                    thermo = api_data.get("thermo") or {}
+                    
+                    # Convert density from g/cm^3 (MP default) to kg/m^3 (SI)
+                    # 1 g/cm^3 = 1000 kg/m^3
+                    density_raw = api_data.get("density", 0.0)
+                    density_si = density_raw * 1000.0 if density_raw else None
+                    
+                    # Approximating yield strength from bulk modulus (K_VRH) if available
+                    # yield ~ K_VRH / 10 is a very rough rule of thumb, but better than nothing
+                    # Real yield strength is microstructure dependent and not in MP core data
+                    bulk_modulus = elasticity.get("K_VRH") # GPa
+                    yield_strength = (bulk_modulus * 1e9 / 10.0) if bulk_modulus else None
+                    
                     props = {
-                        "name": api_data.get("name", material_name),
-                        "density": api_data.get("density", 0.0),
-                        # Elasticity might be nested or missing
-                        "yield_strength": api_data.get("elasticity", {}).get("K_VRH", 0.0) if isinstance(api_data.get("elasticity"), dict) else 0.0,
-                        # Melting point from thermo data
-                        "melting_point": api_data.get("thermo", {}).get("melting_point", 1000.0) if isinstance(api_data.get("thermo"), dict) else 1000.0,
+                        "name": api_data.get("formula_pretty", material_name),
+                        "density": density_si,
+                        "yield_strength": yield_strength,
+                        "melting_point": thermo.get("melting_point"), # Kelvin? MP is usually Kelvin? No, check docs. usually Kelvin.
                     }
+                    
+                    # Convert Melting Point from Kelvin to Celsius if > 200 (assuming K)
+                    if props["melting_point"] and props["melting_point"] > 273.15:
+                         props["melting_point"] -= 273.15
+                         
                     # Derive max_temp from melting point
-                    props["max_temp"] = props["melting_point"] * 0.8
+                    if props["melting_point"]:
+                        props["max_temp"] = props["melting_point"] * 0.8
+                    else:
+                        props["max_temp"] = None
+                        
                     found = True
                     logger.info(f"Found {material_name} in Materials Project API")
             except Exception as e:
@@ -109,50 +149,62 @@ class MaterialAgent:
 
         # 4. Temperature Degradation (Deep Evolution: MaterialNet)
         
-        # Safe access to properties
-        T_melt = props.get("melting_point", 1500.0)
-        max_temp = props.get("max_temp", 200.0)
+        # Safe access to properties - NO FALLBACKS (None if missing)
+        T_melt = props.get("melting_point")
+        max_temp = props.get("max_temp")
+        yield_strength = props.get("yield_strength")
         
         # Base Heuristic (Analytic Prior)
         heuristic_factor = 1.0
-        if temperature > max_temp:
+        
+        # Only apply degradation if we have thermal data
+        if max_temp is not None and temperature > max_temp:
             excess = temperature - max_temp
             heuristic_factor = max(0, 1.0 - (excess * 0.005))
             
         # Neural/Learned Correction (Learned Residual)
-        # Input Features: [Temperature/1000, YieldStrength/1e9, Time(unused), pH(unused)]
-        # Normalized inputs for better NN performance
         import numpy as np
         
         correction = 0.0
-        if self.has_brain and self.brain:
+        # Only run neural net if we have yield strength
+        if self.has_brain and self.brain and yield_strength is not None:
             inputs = np.array([
                 temperature / 1000.0, 
-                props.get("yield_strength", 200e6) / 1e9,
+                yield_strength / 1e9,
                 0.0, # Time placeholder
                 7.0  # pH placeholder
             ])
             
             # Neural Inference
-            # Output [0] is correction to strength_factor
             nn_output = self.brain.forward(inputs).flatten()
             correction = float(nn_output[0])
         
-        # Hybrid Fusion: Prediction = Heuristic + NeuralResidual
-        # We clamp the result between 0 and 1
+        # Hybrid Fusion
         final_factor = max(0.0, min(1.0, heuristic_factor + correction))
         
+        # Prepare Result
+        result_props = {
+            "density": props.get("density"),
+            "melting_point": T_melt,
+            "max_temp": max_temp,
+            "is_melted": (temperature >= T_melt) if T_melt is not None else None,
+            "strength_factor": round(final_factor, 3),
+            "degradation_model": "Deep Hybrid" if self.has_brain else "Heuristic"
+        }
+        
+        # Handle Yield Strength specially since we modify it
+        if yield_strength is not None:
+            result_props["yield_strength"] = yield_strength * final_factor
+        else:
+            result_props["yield_strength"] = None
+            
+        # Add neural correction metadata if applied
+        if correction != 0.0:
+            result_props["neural_correction"] = round(correction, 4)
+            
         return {
-            "name": material_name if found else f"Generic Aluminum (Fallback for {material_name})",
-            "properties": {
-                "density": props.get("density", 2700),
-                "yield_strength": props.get("yield_strength", 200e6) * final_factor,
-                "melting_point": props.get("melting_point", 1500.0),
-                "is_melted": temperature >= T_melt,
-                "strength_factor": round(final_factor, 3),
-                "degradation_model": "Deep Hybrid (Linear Prior + MaterialNet)" if self.has_brain else "Heuristic (Fallback)",
-                "neural_correction": round(correction, 4)
-            }
+            "name": material_name if found else f"Unknown ({material_name})",
+            "properties": result_props
         }
 
     def evolve(self, training_data: list):

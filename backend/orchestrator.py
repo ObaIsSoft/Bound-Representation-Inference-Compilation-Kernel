@@ -62,12 +62,17 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+from llm.factory import get_llm_provider
+
 # Initialize Critics (Global Singleton-ish for now)
 surrogate_critic = SurrogateCritic(window_size=100)
 physics_critic = PhysicsCritic(window_size=100) # For future hybrid agents
 
 def get_agent_registry():
     """Returns a dict of all instantiated agents."""
+    # Use Factory to get best available LLM
+    llm = get_llm_provider(preferred="groq") # Prefer Groq for speed if available? Or make configurable. Defaulting check order.
+    
     return {
         # --- Core Agents ---
         "environment": EnvironmentAgent(),
@@ -97,7 +102,7 @@ def get_agent_registry():
         "manufacturing": ManufacturingAgent(),
         "slicer": SlicerAgent(),
         "tolerance": ToleranceAgent(),
-        "codegen": CodegenAgent(), # Phase 16: Firmware Synthesis
+        "codegen": CodegenAgent(provider=llm), # Phase 16: Firmware Synthesis
         
         # --- Material ---
         "material": MaterialAgent(),
@@ -130,7 +135,7 @@ def get_agent_registry():
         # --- Specialized ---
         "standards": StandardsAgent(),
         "component": ComponentAgent(),
-        "conversational": ConversationalAgent(),
+        "conversational": ConversationalAgent(provider=llm),
         "remote": RemoteAgent(),
         
         # --- Training ---
@@ -156,7 +161,10 @@ def dreamer_node(state: AgentState) -> Dict[str, Any]:
     raw_intent = state.get("user_intent", "")
     current_params = state.get("design_parameters", {})
     
-    agent = ConversationalAgent()
+    # Use Registry Instance (Persistent) instead of new one
+    registry = get_agent_registry()
+    agent = registry["conversational"]
+    
     # Call the agent to extract entities/intent
     result = agent.run({
         "input_text": raw_intent,

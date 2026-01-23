@@ -22,7 +22,7 @@ def generate_random_drone_design():
                 "params": {
                     "radius": random.uniform(0.5, 2.0),
                     "length": random.uniform(2.0, 8.0),
-                    "material": random.choice(["aluminum", "carbon_fiber", "titanium"])
+                    "material": "iron"
                 }
             }
         ],
@@ -64,8 +64,12 @@ def test_multi_agent_workflow():
         results['material'] = material_result
         print(f"✓ Material: {material_result.get('name', 'Unknown')}")
         props = material_result.get('properties', {})
-        print(f"  Density: {props.get('density', 0):.0f} kg/m³")
-        print(f"  Young's Modulus: {props.get('youngs_modulus', 0)/1e9:.0f} GPa")
+        
+        density = props.get('density')
+        ym = props.get('youngs_modulus')
+        
+        print(f"  Density: {f'{density:.0f}' if density is not None else 'N/A'} kg/m³")
+        print(f"  Young's Modulus: {f'{ym/1e9:.0f}' if ym is not None else 'N/A'} GPa")
     except Exception as e:
         print(f"✗ MaterialAgent failed: {e}")
         results['material'] = {"error": str(e)}

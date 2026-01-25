@@ -85,6 +85,35 @@ class PhysicsAgent:
              # Fallback mass if not yet calculated
              if "mass_kg" in part:
                  total_mass += part["mass_kg"]
+             elif "volume" in part:
+                 # Use actual mesh volume if available (OpenSCADAgent provides this)
+                 # Unit: SCAD units cubed usually. If mismatch, we might need conversion.
+                 # Assuming 1 unit = 1 mm for standard CAD.
+                 vol_scad = part["volume"]
+                 
+                 # Apply Scale Factor Intelligence
+                 # If the design has a scale_factor (e.g. 1/6), and we want REAL mass:
+                 # Real Volume = Model Volume * (1/scale)^3
+                 # But we need access to the scale factor here.
+                 # For now, let's assume 'part' might have metadata or we use a global design param.
+                 scale = design_params.get("metadata", {}).get("scale_factor", 1.0)
+                 if scale == 0: scale = 1.0
+                 
+                 # Correction for 1:Scale models to get Real Mass
+                 # If user wants model mass, scale=1. If user wants proto mass, scale=scale.
+                 # Usually users want the Real car specs.
+                 real_vol_factor = (1.0 / scale) ** 3
+                 
+                 # Convert mm^3 to m^3
+                 vol_m3 = (vol_scad * real_vol_factor) / 1e9 
+                 
+                 # Density (Steel/Aluminium avg ~ 4000 kg/m3 if unknown)
+                 # Or use specific material density
+                 density = part.get("material", {}).get("density", 2700.0) # Al
+                 
+                 mass = vol_m3 * density
+                 total_mass += mass
+                 total_volume += vol_m3
              else:
                  total_mass += 1.0 # Safe fallback to avoid div/0
         

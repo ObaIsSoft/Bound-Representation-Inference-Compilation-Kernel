@@ -100,6 +100,7 @@ const SimulationBay = ({ activeActivity }) => {
                     <UnifiedSDFRenderer
                         design={activeTab}
                         viewMode={viewMode}
+                        showGrid={showGrid}
                         physicsData={combinedPhysicsData}
                     />
                 )}
@@ -231,6 +232,20 @@ const SimulationBay = ({ activeActivity }) => {
                         <span className="text-[7px] font-bold uppercase tracking-wider hidden sm:block">
                             {isExploded ? "Assemble" : "Scatter"}
                         </span>
+                    </button>
+
+                    {/* Grid Toggle */}
+                    <button
+                        onClick={() => setShowGrid(!showGrid)}
+                        className="flex items-center gap-1 px-1.5 py-0.5 rounded-full transition-all border"
+                        style={{
+                            backgroundColor: showGrid ? theme.colors.accent.primary + '33' : 'transparent',
+                            borderColor: showGrid ? theme.colors.accent.primary : 'transparent',
+                            color: showGrid ? theme.colors.accent.primary : theme.colors.text.muted
+                        }}
+                        title={showGrid ? "Hide Grid" : "Show Grid"}
+                    >
+                        <Grid size={8} />
                     </button>
 
                     <div className="w-px h-2" style={{ backgroundColor: theme.colors.border.primary }} />

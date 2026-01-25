@@ -29,6 +29,7 @@ class ASTNode:
     name: str
     code: str
     params: Dict[str, Any] = field(default_factory=dict)
+    header: str = "" # Reconstructable header (e.g. "translate([0,0,0])")
     children: List['ASTNode'] = field(default_factory=list)
     dependencies: Set[str] = field(default_factory=set)
     depth: int = 0
@@ -74,36 +75,219 @@ class OpenSCADParser:
         return ast_nodes
     
     def _extract_modules(self, code: str):
-        """Extract all module definitions"""
-        # Regex to match: module name(params) { body }
-        module_pattern = r'module\s+(\w+)\s*\((.*?)\)\s*\{([^}]*(?:\{[^}]*\}[^}]*)*)\}'
+        """Extract all module definitions using brace counting"""
+        # We need to parse robustly.
+        # 1. Remove comments to avoid confusing braces inside comments
+        clean_code = self._remove_comments(code)
         
-        for match in re.finditer(module_pattern, code, re.DOTALL):
+        # 2. Find "module" keywords
+        # We can't just split by "module" because it might be in strings.
+        # But for SCAD, "module" keyword is top level.
+        
+        # Iterating through the code to find 'module name(params) {'
+        # Then capturing the body until matching '}'
+        
+        cursor = 0
+        length = len(clean_code)
+        
+        while cursor < length:
+            # Find next 'module' keyword
+            match = re.search(r'\bmodule\s+(\w+)\s*\(', clean_code[cursor:])
+            if not match:
+                break
+                
+            module_start_idx = cursor + match.start()
             name = match.group(1)
-            params = match.group(2)
-            body = match.group(3)
+            
+            # Find the opening brace of the body
+            # We need to skip the parameters (...) part
+            # Parameters might have parentheses inside? (vectors)
+            
+            # Start searching for body start '{' after the module name declaration
+            # robustly handle params
+            params_start = clean_code.find('(', module_start_idx)
+            if params_start == -1: break # Should not happen if regex matched
+            
+            # Find matching closing paren for params
+            # We need to handle nested Parens? SCAD params are usually simple but can have default values with calls?
+            # Yes: module foo(a = sin(x))
+            
+            p_depth = 0
+            params_end = -1
+            for k in range(params_start, length):
+                if clean_code[k] == '(':
+                    p_depth += 1
+                elif clean_code[k] == ')':
+                    p_depth -= 1
+                    if p_depth == 0:
+                        params_end = k
+                        break
+            
+            if params_end == -1: break # Malformed
+            
+            # Extract params string
+            params_str = clean_code[params_start+1 : params_end]
+            
+            # Now search for opening brace '{'
+            body_start = clean_code.find('{', params_end)
+            if body_start == -1: break
+            
+            # Check if there is only whitespace between params end and body start
+            # If there is code, maybe it's not a module definition?
+            # SCAD: module foo() { ... }
+            # module foo() variable = 1; { ... } ? No.
+            
+            # Find module body end
+            b_depth = 0
+            body_end = -1
+            
+            for k in range(body_start, length):
+                if clean_code[k] == '{':
+                    b_depth += 1
+                elif clean_code[k] == '}':
+                    b_depth -= 1
+                    if b_depth == 0:
+                        body_end = k
+                        break
+            
+            if body_end == -1: break # Unclosed brace?
+            
+            body_content = clean_code[body_start+1 : body_end]
+            full_definition = clean_code[module_start_idx : body_end+1]
             
             self.modules[name] = {
-                'params': self._parse_params(params),
-                'body': body,
-                'code': match.group(0)
+                'params': self._parse_params(params_str),
+                'body': body_content,
+                'code': full_definition
             }
+            
+            # Advance cursor
+            cursor = body_end + 1
     
+    def _remove_comments(self, code: str) -> str:
+        """Remove C-style comments from code"""
+        # Remove // comments
+        code = re.sub(r'//.*?$', '', code, flags=re.MULTILINE)
+        # Remove /* */ comments
+        code = re.sub(r'/\*.*?\*/', '', code, flags=re.DOTALL)
+        return code
+
     def _extract_variables(self, code: str):
         """Extract all variable assignments"""
-        # Match: variable = value;
-        var_pattern = r'(\w+)\s*=\s*([^;]+);'
+        # Remove comments first
+        clean_code = self._remove_comments(code)
         
-        for match in re.finditer(var_pattern, code):
+        # Remove all module bodies to ensure we only get top-level variables
+        # (and don't extract local module variables as globals)
+        for module_data in self.modules.values():
+            # Use simple replace (might be slow for huge files but robust)
+            # Make sure to handle potential whitespace variations if 'code' here is cleaned?
+            # self.modules contains 'code' extracted from raw source.
+            # clean_code has comments removed. 
+            # So mod['code'] (raw) won't match clean_code exactly if it had comments.
+            # Better strategy: Extract variables from MAIN BODY logic?
+            pass
+            
+        # Strategy: We assume modules are already extracted.
+        # We can mask them out.
+        # But wait, self.modules[name]['code'] includes comments?
+        # Let's rely on the fact that _remove_comments preserves structure mostly.
+        
+        # ACTUALLY: Just stripping comments helps regex.
+        # To avoid module internals, we can rely on indentation? No.
+        # We can implement a "strip modules" helper that respects braces.
+        
+        # Simplified approach: iterating regex matches is fast.
+        # We just need to check if the match.start() is inside a module definition range.
+        
+        # Helper to map module spans
+        module_spans = []
+        for mod in self.modules.values():
+            # Find usage of this module code in clean_code? 
+            # We don't have spans.
+            # Let's try removing modules from clean_code using regex again?
+            pass
+
+        # Robust fix: 
+        # 1. Remove comments.
+        # 2. Blank out module definitions {} blocks.
+        # 3. Parse variables.
+        
+        # Regex to match module { ... } recursively? Hard.
+        # But we already extracted modules!
+        # self.modules matches in ORIGINAL code.
+        
+        # Let's use the 'main_body' extraction logic but for variables.
+        # Create a temp string with modules removed.
+        # Since we can't easily map raw modules to clean code, let's work on raw code?
+        # But we need to remove comments to avoid false positives.
+        
+        # Combined: Remove comments from 'code', THEN Remove modules (by regex) from that.
+        
+        # 1. Clean comments
+        working_code = self._remove_comments(code)
+        
+        # 2. Blank out module definitions
+        # Pattern: module name(...) { ... }
+        # Only works if we handle nested braces.
+        # Since _extract_modules worked, we can trust it?
+        # But _extract_modules worked on RAW code.
+        
+        # Let's verify: module definitions in `self.modules` are raw.
+        # We can iterate matches of module pattern on `working_code` and strip them.
+        module_pattern = r'module\s+(\w+)\s*\((.*?)\)\s*\{'
+        # We need brace counting to find end.
+        
+        # Easier: iterate `working_code`, counting braces.
+        # If at depth 0, we are at top level.
+        # Only extract variables at depth 0!
+        
+        top_level_code = []
+        depth = 0
+        current_segment = []
+        
+        i = 0
+        while i < len(working_code):
+            char = working_code[i]
+            if char == '{':
+                if depth == 0:
+                    top_level_code.append("".join(current_segment))
+                    current_segment = []
+                depth += 1
+            elif char == '}':
+                depth -= 1
+                if depth == 0:
+                    # End of block (module or if/for).
+                    # If it was a module, we skip it.
+                    # If it was a global if/for, we conceptually treat it as global scope in SCAD?
+                    # Yes, variables in top-level for/if are reachable?
+                    # Actually SCAD variables in if() are local scope.
+                    # So skipping everything in {} is CORRECT for globals!
+                    pass
+            elif depth == 0:
+                current_segment.append(char)
+            i += 1
+            
+        if current_segment:
+            top_level_code.append("".join(current_segment))
+            
+        final_code = "\n".join(top_level_code)
+        
+        # Match: variable = value;
+        # Use [^;\n] to avoid matching across lines
+        # Use ^ anchor to avoid matching named parameters
+        var_pattern = r'^\s*(\w+)\s*=\s*([^;\n]+);'
+        
+        for match in re.finditer(var_pattern, final_code, re.MULTILINE):
             name = match.group(1)
             value = match.group(2).strip()
-            
-            # Skip if this is inside a module definition
-            if not any(name in mod['code'] for mod in self.modules.values()):
-                self.variables[name] = self._evaluate_expression(value)
+            self.variables[name] = self._evaluate_expression(value)
     
     def _extract_main_body(self, code: str) -> str:
         """Extract code outside module definitions"""
+        # Remove comments first so we can match the code stored in self.modules
+        code = self._remove_comments(code)
+        
         # Remove all module definitions
         for module_data in self.modules.values():
             code = code.replace(module_data['code'], '')
@@ -116,7 +300,7 @@ class OpenSCADParser:
         for line in lines:
             stripped = line.strip()
             # Skip if it's a simple variable assignment (no function calls)
-            if re.match(r'^\w+\s*=\s*[^()]+;$', stripped):
+            if re.match(r'^\w+\s*=\s*[^()]+;(\s*//.*)?$', stripped):
                 continue
             filtered_lines.append(line)
         
@@ -127,8 +311,7 @@ class OpenSCADParser:
         nodes = []
         
         # Remove comments
-        code = re.sub(r'//.*?$', '', code, flags=re.MULTILINE)
-        code = re.sub(r'/\*.*?\*/', '', code, flags=re.DOTALL)
+        code = self._remove_comments(code)
         
         # Split into top-level statements
         statements = self._split_statements(code)
@@ -195,12 +378,13 @@ class OpenSCADParser:
             name=name,
             code=stmt,
             params=params,
+            header=stmt.split(';')[0], # Primitives are self-contained
             depth=parent_depth
         )
     
     def _is_transform(self, stmt: str) -> bool:
         """Check if statement is a transform"""
-        transforms = ['translate', 'rotate', 'scale', 'mirror', 'resize', 'color', 'multmatrix']
+        transforms = ['translate', 'rotate', 'scale', 'mirror', 'resize', 'color', 'multmatrix', 'offset']
         return any(stmt.startswith(t + '(') for t in transforms)
     
     def _parse_transform(self, stmt: str, parent_depth: int) -> ASTNode:
@@ -215,6 +399,8 @@ class OpenSCADParser:
         child_code = match.group(3).strip()
         
         params = self._parse_function_params(params_str)
+        
+        header = f"{name}({params_str})" 
         
         # Parse child statement
         children = []
@@ -233,6 +419,7 @@ class OpenSCADParser:
             name=name,
             code=stmt,
             params=params,
+            header=header,
             children=children,
             depth=parent_depth
         )
@@ -249,13 +436,20 @@ class OpenSCADParser:
         
         # Try with parentheses first
         match = re.match(r'(\w+)\s*\(\)\s*\{', stmt, re.DOTALL)
-        if not match:
+        header = ""
+        if match:
+            name = match.group(1)
+            header = f"{name}()"
+        else:
             # Try without parentheses
             match = re.match(r'(\w+)\s*\{', stmt, re.DOTALL)
+            if match:
+                name = match.group(1)
+                header = name 
         
         if not match:
             return None
-        
+            
         name = match.group(1)
         
         # Extract the block content using brace matching
@@ -272,6 +466,7 @@ class OpenSCADParser:
             node_type=NodeType.BOOLEAN,
             name=name,
             code=stmt,
+            header=header,
             children=children,
             depth=parent_depth
         )

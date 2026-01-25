@@ -12,7 +12,7 @@ class OllamaProvider(LLMProvider):
     Assumes Ollama is running on http://localhost:11434.
     """
     
-    def __init__(self, model_name: str = "llama3.2"):
+    def __init__(self, model_name: str = "llama2"):
         self.base_url = "http://localhost:11434/api"
         self.model = model_name
         self.headers = {"Content-Type": "application/json"}

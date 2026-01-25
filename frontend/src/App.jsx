@@ -8,6 +8,7 @@ import CodeEditor from './components/editor/CodeEditor';
 import SimulationBay from './components/simulation/SimulationBay';
 import ControlDeck from './components/control/ControlDeck';
 import IntegratedTerminal from './components/terminal/IntegratedTerminal';
+import BootSequence from './components/ui/BootSequence';
 
 import SettingsPage from './components/settings/SettingsPage';
 import SearchPanel from './components/panels/SearchPanel';
@@ -549,6 +550,7 @@ export default function App() {
                 '--editor-font-size': `${fontSize}px`
             }}
         >
+            <BootSequence />
             <Header isRunning={isRunning} />
 
             {/* Main Interaction Matrix */}

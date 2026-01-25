@@ -51,7 +51,7 @@ class OpenSCADAgent:
         """Check if OpenSCAD CLI is available."""
         return self.openscad_path is not None
     
-    def compile_to_stl(self, scad_code: str, output_path: str = None) -> Dict[str, Any]:
+    def compile_to_stl(self, scad_code: str, output_path: str = None, timeout: int = 120) -> Dict[str, Any]:
         """
         Compiles OpenSCAD code to STL using the CLI.
         Now includes auto-optimization for high $fn values.
@@ -115,7 +115,7 @@ class OpenSCADAgent:
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=120,  # Increased to 120s for complex models
+                timeout=timeout,  # Use dynamic timeout
                 env=env
             )
             
@@ -170,12 +170,13 @@ class OpenSCADAgent:
             # 32^3 = 32k points. 64^3 = 262k points (too slow for real-time).
             vertex_count = len(vertices)
             
-            if vertex_count > 100000:
-                print(f"[OpenSCAD] Mesh too complex ({vertex_count}v) for SDF baking. Skipping.")
-                resolution = 0 
-            elif vertex_count > 25000:
-                print(f"[OpenSCAD] Mesh complex ({vertex_count}v). Reducing SDF resolution to 16.")
+            # Optimization: Adaptive resolution based on complexity
+            if vertex_count > 50000:
+                print(f"[OpenSCAD] Mesh very complex ({vertex_count}v). Forcing low-res SDF (16).")
                 resolution = 16
+            elif vertex_count > 10000:
+                print(f"[OpenSCAD] Mesh complex ({vertex_count}v). Reducing SDF resolution to 24.")
+                resolution = 24
             else:
                 resolution = 32
 
@@ -315,14 +316,53 @@ class OpenSCADAgent:
         Args:
             scad_code: OpenSCAD source code
             
-        Yields:
-            Dict with part data: {"part_id": str, "vertices": list, "faces": list, ...}
         """
-        from agents.openscad_parser import OpenSCADParser
+        try:
+            from .openscad_parser import OpenSCADParser
+        except ImportError:
+            from backend.agents.openscad_parser import OpenSCADParser
         import concurrent.futures
         import time
         
-        # Parse code into AST
+        # --- INTELLIGENT AUTO-CENTERING (Analytic) ---
+        # "Intelligence" means checking the AST for global transforms without compiling.
+        
+        try:
+            from .geometry_estimator import GeometryEstimator
+            
+            # 1. Parse Initial (Fast)
+            parser = OpenSCADParser()
+            ast_nodes = parser.parse(scad_code)
+            
+            # 2. Analytic Bounds Check (Instant)
+            estimator = GeometryEstimator()
+            bounds, center = estimator.calculate_bounds(ast_nodes, parser.variables)
+            
+            cx, cy, cz = center["x"], center["y"], center["z"]
+            
+            # 3. Apply Correction if Needed
+            offset_vec = [0, 0, 0]
+            if abs(cx) > 100 or abs(cy) > 100 or abs(cz) > 100:
+                print(f"[OpenSCAD] Intelligence: Model off-center ({cx:.1f}, {cy:.1f}, {cz:.1f}). Applying correction.")
+                offset_vec = [-cx, -cy, -cz]
+                scad_code = f"translate([{offset_vec[0]}, {offset_vec[1]}, {offset_vec[2]}]) {{ \n{scad_code}\n }}"
+                
+                # Re-parse needed? Yes, structure changed (though logically strictly deeper).
+                # But progressive compiler re-parses anyway at line 329.
+                # So we just update scad_code and let it flow.
+                
+                # Update metadata for the stream
+                sys_bounds = bounds
+                sys_center = center
+            else:
+                print("[OpenSCAD] Model is already valid/centered.")
+                
+        except Exception as e:
+            print(f"[OpenSCAD] Auto-centering analysis failed: {e}. Proceeding raw.")
+
+        # --- END INTELLIGENT AUTO-CENTERING ---
+        
+        # Parse code into AST (Freshly centered if updated)
         parser = OpenSCADParser()
         try:
             ast_nodes = parser.parse(scad_code)
@@ -334,14 +374,60 @@ class OpenSCADAgent:
             }
             return
         
-        # Flatten AST to get all compilable nodes
-        all_nodes = parser.flatten_ast(ast_nodes)
+        # Instead of flattening, we traverse recursively to bundle transforms
+        # and respect atomic units (Booleans like Hull/Difference).
         
-        # Filter to only primitives and modules (things that generate geometry)
-        compilable_nodes = [
-            node for node in all_nodes 
-            if node.node_type.value in ['primitive', 'module']
-        ]
+        compilable_nodes = []
+        
+        def _collect_parts_recursive(node, transform_stack=[]):
+            """
+            Traverse tree to find renderable parts, propagating transforms.
+            """
+            # 1. Atomic Units: Booleans (Hull, Difference), Primitives, & LOOPS
+            # We treat these as single renderable objects (Mesh) to prevent explosion of parts
+            if node.node_type.value in ['boolean', 'primitive', 'loop']:
+                # For booleans (hull/diff) and loops, the 'code' includes the children block/statements.
+                # Just need to check if we should wrap it in transforms.
+                
+                # Clone the node to attach the context (wrapper code) 
+                # or just yield it with metadata.
+                # We need to render: transform_stack + node.code
+                
+                # Create a synthetic wrapper for compilation
+                wrapper_code = "\n".join(transform_stack)
+                
+                # Store the wrapper in the node (hacky but ephemeral)
+                node.temp_wrapper = wrapper_code
+                node.temp_idx = len(compilable_nodes)
+                compilable_nodes.append(node)
+                return
+
+            # 2. Containers: Transforms
+            if node.node_type.value in ['transform']:
+                # Add this transform to stack
+                # Ensure we handle the header correctly (it might be empty for some transforms?)
+                header = node.header if hasattr(node, 'header') else ""
+                new_stack = transform_stack + [header] if header else transform_stack
+                # Recurse
+                for child in node.children:
+                    _collect_parts_recursive(child, new_stack)
+                    
+            # 3. Transparent Containers: Modules, Conditionals
+            # We must traverse these to find the geometry inside.
+            # For modules, the parser has already inlined the body into .children
+            # Note: Conditionals (IF) could also be atomic, but traversing them is safer for now
+            # unless we can evaluate them statically (which parser tries to do).
+            elif node.node_type.value in ['module', 'conditional']:
+                for child in node.children:
+                    _collect_parts_recursive(child, transform_stack)
+        
+        # Start traversal from roots
+        for root in ast_nodes:
+            _collect_parts_recursive(root)
+        
+        # Filter is no longer needed as we collected specifically
+        # compilable_nodes list is already populated
+
         
         if not compilable_nodes:
             yield {
@@ -354,11 +440,49 @@ class OpenSCADAgent:
         total_parts = len(compilable_nodes)
         completed = 0
         
-        # Yield initial status
+        # Generate global variable header
+        variable_header_lines = []
+        for name, value in parser.variables.items():
+            # Convert Python value to SCAD value string
+            if isinstance(value, bool):
+                val_str = "true" if value else "false"
+            elif isinstance(value, (list, tuple)):
+                # Simple list handling (no recursion for MVP)
+                val_str = str(list(value)).replace("'", '"')
+            else:
+                val_str = str(value)
+            variable_header_lines.append(f"{name} = {val_str};")
+        
+        variable_header = "\n".join(variable_header_lines)
+
+
+        # Analyze variables for Physical Intelligence (Scale, Units)
+        # Defaults
+        scale_factor = 1.0
+        
+        # Check for common scale variable names
+        if 'scale_factor' in parser.variables:
+            try:
+                scale_factor = float(parser.variables['scale_factor'])
+            except: pass
+        elif 'scale' in parser.variables:
+             try:
+                scale_factor = float(parser.variables['scale'])
+             except: pass
+             
+        # Heuristic: If scale is suspiciously small (like 1/6), assume it's a model
+        # and we might want to report "Real World" dims.
+        
+        # Yield initial status with Intelligence Metadata
         yield {
             "event": "start",
             "total_parts": total_parts,
-            "message": f"Compiling {total_parts} parts in parallel..."
+            "message": f"Compiling {total_parts} parts in parallel...",
+            "metadata": {
+                "scale_factor": scale_factor,
+                "is_scaled_model": scale_factor != 1.0,
+                "estimated_real_scale": 1.0 / scale_factor if scale_factor != 0 else 1.0
+            }
         }
         
         # Compile parts in parallel
@@ -367,7 +491,7 @@ class OpenSCADAgent:
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             # Submit all compilation jobs
             future_to_node = {
-                executor.submit(self._compile_node, node, idx): (node, idx)
+                executor.submit(self._compile_node, node, idx, variable_header): (node, idx)
                 for idx, node in enumerate(compilable_nodes)
             }
             
@@ -421,19 +545,28 @@ class OpenSCADAgent:
             "message": f"Assembly complete: {completed}/{total_parts} parts rendered"
         }
     
-    def _compile_node(self, node, idx: int) -> Dict[str, Any]:
+    def _compile_node(self, node, idx: int, variable_header: str = "") -> Dict[str, Any]:
         """
         Compile a single AST node to geometry.
         
         Args:
             node: ASTNode to compile
             idx: Node index for unique identification
+            variable_header: Global variables to prepend
             
         Returns:
             Compilation result with vertices, faces, etc.
         """
         # Generate standalone OpenSCAD code for this node
         scad_code = self._generate_scad_for_node(node)
+        
+        # Prepend transform stack (if we used context-aware traversal)
+        if hasattr(node, 'temp_wrapper') and node.temp_wrapper:
+             scad_code = f"{node.temp_wrapper}\n{scad_code}"
+        
+        # Prepend global variables
+        if variable_header:
+            scad_code = f"{variable_header}\n{scad_code}"
         
         # Compile using existing compile_to_stl method
         result = self.compile_to_stl(scad_code)
@@ -450,7 +583,10 @@ class OpenSCADAgent:
         Returns:
             OpenSCAD code string
         """
-        from agents.openscad_parser import NodeType
+        try:
+            from .openscad_parser import NodeType
+        except ImportError:
+            from backend.agents.openscad_parser import NodeType
         
         # For primitives, just return the code
         if node.node_type == NodeType.PRIMITIVE:

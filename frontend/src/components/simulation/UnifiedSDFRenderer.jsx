@@ -64,6 +64,7 @@ const MODE_MAP = {
 // Inner kernel component (must be inside Canvas)
 const SDFKernel = ({
     viewMode = 'realistic',
+    showGrid = true,
     baseShape = 1,
     baseDims = [1, 1, 1],
     baseColor = [0.8, 0.8, 0.8],
@@ -195,11 +196,13 @@ const SDFKernel = ({
                 materialRef.current.uniforms.uBgColor1.value.set(bg1.r, bg1.g, bg1.b);
                 materialRef.current.uniforms.uBgColor2.value.set(bg2.r, bg2.g, bg2.b);
                 materialRef.current.uniforms.uGridColor.value.set(gridColor.r, gridColor.g, gridColor.b);
+                materialRef.current.uniforms.uGridEnabled.value = showGrid ? 1.0 : 0.0;
             } else {
                 // No theme - use visible defaults
                 materialRef.current.uniforms.uBgColor1.value.set(0.4, 0.5, 0.7);
                 materialRef.current.uniforms.uBgColor2.value.set(0.1, 0.12, 0.18);
                 materialRef.current.uniforms.uGridColor.value.set(0.1, 0.1, 0.1);
+                materialRef.current.uniforms.uGridEnabled.value = showGrid ? 1.0 : 0.0;
             }
 
             // Phase 8.4: Control Mesh SDF Enabled based on settings
@@ -209,7 +212,7 @@ const SDFKernel = ({
             }
             // Note: The specific texture loading effect below also sets it to true, so we need to sync.
         }
-    }, [viewModeInt, baseShape, baseDims, baseColor, metalness, roughness, clipPlane, clipOffset, clipEnabled, theme, meshRenderingMode]);
+    }, [viewModeInt, baseShape, baseDims, baseColor, metalness, roughness, clipPlane, clipOffset, clipEnabled, theme, meshRenderingMode, showGrid]);
 
     // Phase 2: Update Stress Uniforms from Physics Data
     useEffect(() => {
@@ -500,6 +503,7 @@ const GhostMesh = ({ baseDims, theme, parentDims }) => {
 const UnifiedSDFRenderer = ({
     design = null,
     viewMode = 'realistic',
+    showGrid = true,
     clipPlane = null,
     physicsData = null,
     className = '',
@@ -686,12 +690,23 @@ const UnifiedSDFRenderer = ({
                     fov={35}
                 />
                 <OrbitControls
+                    makeDefault
                     ref={controlsRef}
                     enableDamping
                     dampingFactor={0.05}
+                    enablePan={true}
+                    screenSpacePanning={true} // Allow panning up/down (critical for F-22 tail inspection)
+                    zoomSpeed={1.2}
+                    panSpeed={1.0}
+                    rotateSpeed={0.8}
                     target={cameraStateRef.current.target}
                     onEnd={handleCameraChange}
-                    enabled={!sketchMode} // Disable rotation when drawing
+                    enabled={!sketchMode}
+                    mouseButtons={{
+                        LEFT: THREE.MOUSE.ROTATE,
+                        MIDDLE: THREE.MOUSE.DOLLY,
+                        RIGHT: THREE.MOUSE.PAN
+                    }}
                 />
 
                 {/* 0. Sketch Layer */}
@@ -709,6 +724,7 @@ const UnifiedSDFRenderer = ({
                 {/* 1. SDF Background & Kernel (Always rendered for background/grid) */}
                 <SDFKernel
                     viewMode={viewMode}
+                    showGrid={showGrid}
                     baseShape={geometryState.baseShape}
                     baseDims={geometryState.baseDims}
                     baseColor={geometryState.baseColor}

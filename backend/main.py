@@ -361,17 +361,18 @@ async def compile_design(intent: Dict[str, Any]):
     """
     user_intent = intent.get("user_intent", "")
     project_id = intent.get("project_id", "temp-1")
+    mode = intent.get("mode", "plan") # Default to plan
     
     # Call the Orchestrator
     try:
-        final_state = await run_orchestrator(user_intent, project_id)
+        final_state = await run_orchestrator(user_intent, project_id, mode=mode)
         
         # In a real app, we might sanitize this before sending back
         return {
             "success": True,
             "project_id": project_id,
             "environment": final_state.get("environment"),
-            "planning_doc": final_state.get("planning_doc"),
+            "planning_doc": final_state.get("plan_markdown") or final_state.get("planning_doc"),
             # Return other fields as they get populated
             "bom_analysis": final_state.get("bom_analysis"),
             "components": final_state.get("components"),

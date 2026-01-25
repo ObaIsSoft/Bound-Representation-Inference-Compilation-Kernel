@@ -65,6 +65,15 @@ logger = logging.getLogger(__name__)
 
 from llm.factory import get_llm_provider
 
+# Mock for deprecated SurrogateAgent
+class MockSurrogateAgent:
+    def run(self, state):
+        return {
+            "recommendation": "PROCEED", 
+            "confidence": 0.9, 
+            "gate_value": 0.8
+        }
+
 # Initialize Critics (Global Singleton-ish for now)
 surrogate_critic = SurrogateCritic(window_size=100)
 physics_critic = PhysicsCritic(window_size=100) # For future hybrid agents
@@ -426,7 +435,7 @@ def surrogate_physics_node(state: AgentState) -> Dict[str, Any]:
     surrogate = state.get("surrogate_physics")
     # If not in state (lazily init?) or use registry
     if not surrogate:
-        surrogate = SurrogateAgent() # Fallback
+        surrogate = MockSurrogateAgent() # Fallback
         
     # Run Prediction
     prediction = surrogate.run(state)
@@ -867,11 +876,8 @@ def build_graph():
     # workflow.add_edge("environment_agent", "planning_node") # REMOVED (Replaced by Topo)
     # Execute Path: Plan -> Check -> Designer -> Geometry
     
-    # To achieve this, check 'execution_mode' in state.
-    workflow.add_conditional_edges(
-        "planning_node",
-        check_planning_mode
-    )
+    # If check_planning_mode returns "designer_agent", we go there.
+    # Otherwise if "plan", we stop.
     
     # If check_planning_mode returns "designer_agent", we go there.
     # Otherwise if "plan", we stop.
@@ -929,9 +935,10 @@ def check_planning_mode(state: AgentState) -> Literal["designer_agent", "geometr
     If we are in 'planning' mode, we stop after generating the plan.
     If we are in 'execution' mode (resumed), we continue.
     """
+
     if state.get("execution_mode") == "plan":
-        return END
-    return "designer_agent"
+        return "plan"
+    return "execute"
 
 # --- Public Interface ---
 

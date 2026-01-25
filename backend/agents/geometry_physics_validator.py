@@ -15,7 +15,7 @@ def validate_geometry_physics(
     geometry_tree: List[Dict[str, Any]], 
     material: str = "Aluminum 6061-T6"
 ) -> Dict[str, Any]:
-    \"""
+    """
     Validates geometry using real physics calculations.
     
     Args:
@@ -25,7 +25,7 @@ def validate_geometry_physics(
     
     Returns:
         Dictionary with validation results and physics metadata
-    \"""
+    """
     validation = {
         "is_valid": True,
         "warnings": [],

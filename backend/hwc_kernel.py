@@ -150,11 +150,16 @@ class HighFidelityKernel:
                         params["radius"] = self.mating_interface(op.get("id"), params["radius"], fit)
                 
                 # Param Normalization
-                if p_type == "box" and "dims" in params:
-                    d = params["dims"]
-                    params["x"] = d[0]/2
-                    params["y"] = d[1]/2
-                    params["z"] = d[2]/2
+                if p_type == "box": 
+                    if "dims" in params:
+                        d = params["dims"]
+                        params["x"] = d[0]/2
+                        params["y"] = d[1]/2
+                        params["z"] = d[2]/2
+                    elif "length" in params:
+                        params["x"] = params.get("length", 1.0)/2
+                        params["y"] = params.get("width", 1.0)/2
+                        params["z"] = params.get("height", 1.0)/2
                 
                 sdf_str = self.primitive(p_type, params, offset)
                 lines.append(f"    float d_{i} = {sdf_str};")
@@ -203,6 +208,53 @@ float map(vec3 p) {{
 {body}
 }}
 """
+
+    def to_kcl(self, isa: Dict[str, Any]) -> str:
+        """
+        Transpiles the Precision ISA into KCL (KittyCAD Language).
+        """
+        ops = isa["render_tree"]["operations"]
+        kcl_lines = ["// BRICK OS Generated KCL", ""]
+        
+        for i, op in enumerate(ops):
+            p_type = op.get("type", "box")
+            params = op.get("params", {}).copy()
+            offset = op.get("offset", [0,0,0])
+            node_id = op.get("id", f"part_{i}")
+            
+            # Param Normalization (Reuse logic from to_glsl or generic)
+            if p_type == "box":
+                # KCL uses startSketchOn -> extrude workflow usually
+                # Or use stdlib primitives if available?
+                # For now using sketch workflow as it is robust in KCL
+                
+                # Resolve Dimensions
+                x = params.get("x", params.get("length", 1.0)/2) * 2
+                y = params.get("y", params.get("width", 1.0)/2) * 2
+                z = params.get("z", params.get("height", 1.0)/2) * 2
+                
+                kcl_lines.append(f"// Component: {node_id}")
+                kcl_lines.append(f"const {node_id} = startSketchOn('XY')")
+                kcl_lines.append(f"  |> startProfileAt([{-x/2}, {-y/2}], %)")
+                kcl_lines.append(f"  |> line([{x}, 0], %)")
+                kcl_lines.append(f"  |> line([0, {y}], %)")
+                kcl_lines.append(f"  |> line([{-x}, 0], %)")
+                kcl_lines.append("  |> close(%)")
+                kcl_lines.append(f"  |> extrude({z}, %)")
+                
+                if offset != [0,0,0]:
+                    # KCL transform?
+                    pass
+            
+            elif p_type == "cylinder":
+                 r = params.get("radius", 1.0)
+                 h = params.get("height", 1.0)
+                 kcl_lines.append(f"// Component: {node_id}")
+                 kcl_lines.append(f"const {node_id} = startSketchOn('XY')")
+                 kcl_lines.append(f"  |> circle(center=[0,0], radius={r}, %)")
+                 kcl_lines.append(f"  |> extrude({h}, %)")
+
+        return "\n".join(kcl_lines)
 
     def synthesize_isa(self, project_id: str, components: List[Dict], ops: List[Dict]) -> Dict[str, Any]:
         """Final compilation of the Physical State."""

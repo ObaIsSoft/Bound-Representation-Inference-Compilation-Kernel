@@ -1,6 +1,7 @@
 from typing import Dict, Any, List
 import logging
 import re
+from backend.physics.kernel import get_physics_kernel
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +41,12 @@ class EnvironmentAgent:
         
         # Physics Enhancement: Radiation Pressure (P = Phi / c)
         if regime == "SPACE" or env_data.get("fluid_density", 0) == 0:
-            c = 299792458
+            kernel = get_physics_kernel()
+            try:
+                c = kernel.get_constant('c')
+            except:
+                c = 299792458 # Safe fallback only if kernel fails
+                
             flux = env_data.get("solar_flux", 0)
             # Radiation pressure (perfect absorption)
             env_data["radiation_pressure_pa"] = flux / c
@@ -87,6 +93,14 @@ class EnvironmentAgent:
             return "SPACE"
             
         return "GROUND" # Ultimate fallback
+
+    @property
+    def _g_earth(self) -> float:
+        """Get standard earth gravity from kernel."""
+        try:
+            return get_physics_kernel().get_constant('g')
+        except:
+            return 9.80665
 
     def _determine_location(self, intent_lower: str) -> dict:
         """Determine physical location constants using regex."""
@@ -204,7 +218,7 @@ class EnvironmentAgent:
     def _volcano_environment(self) -> dict:
         return {
             "type": "VOLCANO",
-            "gravity": 9.81, "fluid_density": 0.6, "pressure": 101325.0, "temperature": 800.0,
+            "gravity": self._g_earth, "fluid_density": 0.6, "pressure": 101325.0, "temperature": 800.0,
             "viscosity": 4.0e-5, "magnetic_field": 50.0, "solar_flux": 1000.0,
             "description": "Extreme heat environment. Ash particulates, corrosive gases."
         }
@@ -212,7 +226,7 @@ class EnvironmentAgent:
     def _hurricane_environment(self) -> dict:
         return {
             "type": "HURRICANE",
-            "gravity": 9.81, "fluid_density": 1.225, "pressure": 95000.0, "temperature": 27.0,
+            "gravity": self._g_earth, "fluid_density": 1.225, "pressure": 95000.0, "temperature": 27.0,
             "wind_speed": 70.0, "viscosity": 1.8e-5, "magnetic_field": 50.0, "solar_flux": 200.0, # Cloudy
             "description": "Extreme wind, rain, turbulence."
         }
@@ -220,7 +234,7 @@ class EnvironmentAgent:
     def _undersea_environment(self) -> dict:
         return {
             "type": "UNDERSEA",
-            "gravity": 9.81, "fluid_density": 1025.0, "pressure": 10000000.0, "temperature": 4.0,
+            "gravity": self._g_earth, "fluid_density": 1025.0, "pressure": 10000000.0, "temperature": 4.0,
             "viscosity": 1.0e-3, "magnetic_field": 50.0, "solar_flux": 0.0,
             "description": "High pressure deep ocean. No light, high salinity."
         }
@@ -228,7 +242,7 @@ class EnvironmentAgent:
     def _aero_environment(self) -> dict:
         return {
             "type": "AERO",
-            "gravity": 9.81, "fluid_density": 1.225, "pressure": 101325.0, "temperature": 15.0,
+            "gravity": self._g_earth, "fluid_density": 1.225, "pressure": 101325.0, "temperature": 15.0,
             "viscosity": 1.8e-5, "magnetic_field": 50.0, "solar_flux": 1000.0,
             "description": "Standard Earth Atmosphere (ISA)."
         }
@@ -236,7 +250,7 @@ class EnvironmentAgent:
     def _naval_environment(self) -> dict:
         return {
             "type": "NAVAL",
-            "gravity": 9.81, "fluid_density": 1025.0, "pressure": 101325.0, "temperature": 15.0,
+            "gravity": self._g_earth, "fluid_density": 1025.0, "pressure": 101325.0, "temperature": 15.0,
             "viscosity": 1.0e-3, "magnetic_field": 50.0, "solar_flux": 1000.0,
             "description": "Surface water operations. Wave action, salt corrosion."
         }
@@ -244,7 +258,7 @@ class EnvironmentAgent:
     def _ground_environment(self) -> dict:
         return {
             "type": "GROUND",
-            "gravity": 9.81, "fluid_density": 1.225, "pressure": 101325.0, "temperature": 20.0,
+            "gravity": self._g_earth, "fluid_density": 1.225, "pressure": 101325.0, "temperature": 20.0,
             "viscosity": 1.8e-5, "magnetic_field": 50.0, "solar_flux": 1000.0,
             "description": "Standard Earth Ground."
         }
@@ -252,7 +266,7 @@ class EnvironmentAgent:
     def _industrial_environment(self) -> dict:
         return {
             "type": "INDUSTRIAL",
-            "gravity": 9.81, "fluid_density": 1.225, "pressure": 101325.0, "temperature": 22.0,
+            "gravity": self._g_earth, "fluid_density": 1.225, "pressure": 101325.0, "temperature": 22.0,
             "viscosity": 1.8e-5, "magnetic_field": 50.0, "solar_flux": 0.0, # Artificial light
             "description": "Controlled indoor industrial."
         }
@@ -260,7 +274,7 @@ class EnvironmentAgent:
     def _bio_environment(self) -> dict:
         return {
             "type": "BIO",
-            "gravity": 9.81, "fluid_density": 1050.0, "pressure": 101325.0, "temperature": 37.0,
+            "gravity": self._g_earth, "fluid_density": 1050.0, "pressure": 101325.0, "temperature": 37.0,
             "viscosity": 3.0e-3, "magnetic_field": 0.0, "solar_flux": 0.0,
             "description": "Internal biological. Non-newtonian fluids likely."
         }

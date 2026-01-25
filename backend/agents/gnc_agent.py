@@ -2,6 +2,7 @@ from typing import Dict, Any, List, Tuple
 import logging
 import math
 from isa import PhysicalValue, Unit, create_physical_value
+from backend.physics.kernel import get_physics_kernel
 
 logger = logging.getLogger(__name__)
 
@@ -40,13 +41,19 @@ class GncAgent:
         thrust_n = params.get("thrust_n", 0.0)
         env_type = params.get("environment", "EARTH")
         
+        # Get earth gravity from kernel
+        try:
+            g_earth = get_physics_kernel().get_constant('g')
+        except:
+            g_earth = 9.80665
+
         # Gravity map
         gravity_mps2 = {
-            "EARTH": 9.81,
+            "EARTH": g_earth,
             "MARS": 3.71,
             "MOON": 1.62,
             "DEEP_SPACE": 0.0
-        }.get(env_type, 9.81)
+        }.get(env_type, g_earth)
         
         status = "success"
         issues = []

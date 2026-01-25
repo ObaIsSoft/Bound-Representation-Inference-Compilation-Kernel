@@ -1,0 +1,16 @@
+PubChem API Error: HTTPSConnectionPool(host='pubchem.ncbi.nlm.nih.gov', port=443): Read timed out. (read timeout=10)
+Property 'energy_above_hull' not found for 'Al' in any of 12 sources.
+Property 'specific_heat' not found for 'Ti' in any of 12 sources.
+Property 'energy_above_hull' not found for 'Ti' in any of 12 sources.
+Property 'specific_heat' not found for 'Cu' in any of 10 sources.
+Property 'energy_above_hull' not found for 'Cu' in any of 10 sources.
+Property 'specific_heat' not found for 'Fe' in any of 12 sources.
+Property 'energy_above_hull' not found for 'Fe' in any of 12 sources.
+Property 'youngs_modulus' not found for 'Fe2O3' in any of 12 sources.
+Property 'specific_heat' not found for 'Fe2O3' in any of 12 sources.
+Property 'thermal_conductivity' not found for 'Fe2O3' in any of 12 sources.
+Property 'energy_above_hull' not found for 'Fe2O3' in any of 12 sources.
+Property 'youngs_modulus' not found for 'SiO2' in any of 12 sources.
+Property 'specific_heat' not found for 'SiO2' in any of 12 sources.
+Property 'thermal_conductivity' not found for 'SiO2' in any of 12 sources.
+Property 'energy_above_hull' not found for 'SiO2' in any of 12 sources.

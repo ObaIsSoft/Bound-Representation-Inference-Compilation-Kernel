@@ -3,6 +3,7 @@ import math
 import numpy as np
 import logging
 from typing import Dict, Any, List, Optional
+from backend.physics import get_physics_kernel
 
 
 # Try importing TensorFlow (User requested "The Real Thing")
@@ -76,6 +77,10 @@ class StructuralAgent:
     """
     def __init__(self):
         self.name = "StructuralAgent"
+        
+        # Initialize Physics Kernel
+        self.physics = get_physics_kernel()
+        logger.info("StructuralAgent: Physics kernel initialized")
         
         # Initialize Oracles for structural analysis
         try:
@@ -197,8 +202,9 @@ class StructuralAgent:
 
         logs = []
         
-        # 1. Stress Analysis (Axial) - Heuristic Base
-        force_n = mass_kg * (g_force * 9.81)
+        # 1. Stress Analysis (Axial) - Using REAL PHYSICS
+        g = self.physics.get_constant("g")  # Get real gravity constant
+        force_n = mass_kg * (g_force * g)
         stress_mpa = force_n / max(cross_section_mm2, 0.1) # Avoid div/0
         
         fos_yield = yield_strength_mpa / max(stress_mpa, 0.001)

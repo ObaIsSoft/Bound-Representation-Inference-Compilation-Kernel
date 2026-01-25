@@ -23,7 +23,13 @@ class SwarmManager:
         Initialize the swarm with seed agents, resources, and tasks.
         """
         self.env_agent = EnvironmentAgent()
-        self.gravity = environment.get("gravity", 9.81) if environment else 9.81
+        
+        # Physics Kernel Integration
+        from backend.physics.kernel import get_physics_kernel
+        kernel = get_physics_kernel()
+        g_default = kernel.get_constant('g')
+        
+        self.gravity = environment.get("gravity", g_default) if environment else g_default
         self.construction_targets = geometry_tree if geometry_tree else []
         
         # Task Queue for Distributed Compute

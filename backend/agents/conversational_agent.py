@@ -20,39 +20,6 @@ class DiscoveryManager:
             "user_preferences": None  # Specific user suggestions or aesthetic desires
         }
         self.active = False
-        
-        # Persistence
-        self.memory_path = "data/long_term_memory.json"
-        
-        # Create directory if needed
-        if not os.path.exists("data"):
-            os.makedirs("data")
-            
-        self._load_memory()
-
-    def _load_memory(self):
-        """Load context from persistent storage"""
-        import json
-        if os.path.exists(self.memory_path):
-            try:
-                with open(self.memory_path, 'r') as f:
-                    saved = json.load(f)
-                    # Merge saved context into current, respecting existing non-None values
-                    for k, v in saved.items():
-                        if not self.context.get(k):
-                            self.context[k] = v
-                    logger.info("DiscoveryManager: Loaded persistent memory.")
-            except Exception as e:
-                logger.warning(f"Failed to load memory: {e}")
-
-    def _save_memory(self):
-        """Save current context to persistent storage"""
-        import json
-        try:
-            with open(self.memory_path, 'w') as f:
-                json.dump(self.context, f, indent=2)
-        except Exception as e:
-            logger.error(f"Failed to save memory: {e}")
 
     def check_completeness(self, current_text: str, llm_provider: LLMProvider, history_str: str = "") -> Dict[str, Any]:
         """
@@ -96,14 +63,9 @@ Return JSON:
             
             # Update Context
             extracted = resp.get("extracted", {})
-            updated = False
             for k, v in extracted.items():
-                if v and v != "None" and self.context.get(k) != v: 
+                if v and v != "None": 
                     self.context[k] = v
-                    updated = True
-            
-            if updated:
-                self._save_memory()
                     
             return resp
         except Exception as e:

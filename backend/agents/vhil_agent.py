@@ -1,5 +1,6 @@
 from typing import Dict, Any, List
 import logging
+from backend.physics import get_physics_kernel
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +17,14 @@ class VhilAgent:
     
     def __init__(self):
         self.name = "VhilAgent"
+        
+        # Initialize Physics Kernel for real dynamics
+        self.physics = get_physics_kernel()
+        logger.info("VhilAgent: Physics kernel initialized")
+        
+        # Store gravity constant
+        self.g = self.physics.get_constant("g")  # Real gravity from physics
+        
         self.sensor_models = {
             "imu": self._emulate_imu,
             "gps": self._emulate_gps,
@@ -64,6 +73,7 @@ class VhilAgent:
             f"[VHIL] Noise level: {noise_level:.1%}"
         ]
         
+       
         # Emulate sensors
         sensor_data = {}
         for sensor_type in sensors:
@@ -75,6 +85,26 @@ class VhilAgent:
         # Mock actuator commands (basic control law)
         actuator_commands = self._generate_control_commands(state, sensor_data)
         
+        # REAL PHYSICS SIMULATION: Update state using integrated dynamics
+        geometry_data = params.get("geometry_data", {})
+        if geometry_data and state:
+            try:
+                from agents.vhil_physics import simulate_aerial_dynamics
+                updated_state = simulate_aerial_dynamics(
+                    self.physics,
+                    state,
+                    actuator_commands,
+                    geometry_data,
+                    dt
+                )
+                # Update original state reference
+                state.update(updated_state)
+                logs.append(f"[VHIL] ✓ Physics-based state propagation complete")
+                logs.append(f"[VHIL]   Altitude: {updated_state['position']['y']:.1f}m, Velocity: {updated_state['aerodynamics']['velocity_m_s']:.1f}m/s")
+            except Exception as e:
+                logger.warning(f"Physics simulation failed, using kinematic fallback: {e}")
+                logs.append(f"[VHIL] ⚠ Physics simulation error: {str(e)}")
+        
         # Timing simulation
         timing_ms = dt * 1000  # Convert to milliseconds
         
@@ -84,6 +114,7 @@ class VhilAgent:
         return {
             "sensor_data": sensor_data,
             "actuator_commands": actuator_commands,
+            "updated_state": state,  # Return updated state
             "timing_ms": timing_ms,
             "logs": logs
         }
@@ -95,7 +126,7 @@ class VhilAgent:
         # Extract state or use defaults
         accel_x = state.get("acceleration", 0) + random.gauss(0, noise * 0.1)
         accel_y = random.gauss(0, noise * 0.1)
-        accel_z = -9.81 + random.gauss(0, noise * 0.1)
+        accel_z = -self.g + random.gauss(0, noise * 0.1)  # Use real gravity constant
         
         gyro_x = random.gauss(0, noise * 0.01)
         gyro_y = random.gauss(0, noise * 0.01)

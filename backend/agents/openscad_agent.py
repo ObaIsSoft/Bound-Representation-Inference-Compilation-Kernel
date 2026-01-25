@@ -60,22 +60,29 @@ class OpenSCADAgent:
             return {"success": False, "error": "OpenSCAD CLI not available"}
             
         # --- Auto-Optimization: Clamp $fn to reasonable values ---
-        # High $fn values (e.g. > 50) cause exponential slowdowns.
-        # We replace global $fn definitions with a capped value.
         import re
         
-        # Regex to find $fn = <number>;
         optimized_code = scad_code
-        fn_match = re.search(r'\$fn\s*=\s*(\d+);', scad_code)
-        if fn_match:
-            val = int(fn_match.group(1))
-            if val > 32:
-                print(f"Optimizing: Reducing $fn from {val} to 32 for performance.")
-                optimized_code = re.sub(r'\$fn\s*=\s*\d+;', '$fn = 32;', scad_code)
         
-        # Also handle local defaults if they appear frequently
-        optimized_code = re.sub(r'\$fn\s*=\s*([5-9]\d|\d{3,});', '$fn=32;', optimized_code)
-        optimized_code = re.sub(r'\$fn\s*=\s*([5-9]\d|\d{3,})\)', '$fn=32)', optimized_code)
+        # Detect if script is heavy (heuristic)
+        is_heavy = len(scad_code) > 2000
+        target_fn = 24 if is_heavy else 32
+        
+        # Regex to find $fn = <number>; handling mostly standard formatting
+        # We replace any $fn > target with target
+        
+        def fn_reducer(match):
+            val = int(match.group(1))
+            if val > target_fn:
+                print(f"Optimizing: Reducing $fn from {val} to {target_fn}")
+                return f"$fn={target_fn};"
+            return match.group(0)
+            
+        optimized_code = re.sub(r'\$fn\s*=\s*(\d+);', fn_reducer, optimized_code)
+        
+        # Also handle inline $fn (common in spheres) e.g. sphere(r=10, $fn=100)
+        # Replacing all might be aggressive, but safest for performance
+        optimized_code = re.sub(r'\$fn\s*=\s*(\d{2,})', f'$fn={target_fn}', optimized_code)
 
         with tempfile.NamedTemporaryFile(suffix=".scad", delete=False, mode='w') as tmp_scad:
             tmp_scad.write(optimized_code)
@@ -90,18 +97,22 @@ class OpenSCADAgent:
         
         try:
             # Compile OpenSCAD to STL with proper headless flags
-            # --export-format forces binary STL output
-            # -o specifies output file
+            # Setup environment for headless mode
             env = os.environ.copy()
             env['DISPLAY'] = ''  # Ensure headless mode on Linux/Mac
             
+            # OpenSCAD command - use only universally supported flags
+            # Removed --enable=fast-csg and --enable=lazy-union for compatibility
+            # These flags are only available in OpenSCAD 2021.01+ and cause errors on older versions
+            cmd = [
+                self.openscad_path,
+                '--export-format', 'binstl',  # Binary STL (supported since 2015)
+                '-o', stl_path,
+                scad_path
+            ]
+            
             result = subprocess.run(
-                [
-                    self.openscad_path,
-                    '--export-format', 'binstl',  # Binary STL (smaller, faster)
-                    '-o', stl_path,
-                    scad_path
-                ],
+                cmd,
                 capture_output=True,
                 text=True,
                 timeout=120,  # Increased to 120s for complex models
@@ -153,7 +164,68 @@ class OpenSCADAgent:
             # Calculate bounding box
             bounds = mesh.bounds
             center = mesh.centroid.tolist()
+
+            # --- Generate SDF Grid (Phase 8/9: True SDF Support) ---
+            # Optimize: Adaptive resolution based on complexity
+            # 32^3 = 32k points. 64^3 = 262k points (too slow for real-time).
+            vertex_count = len(vertices)
             
+            if vertex_count > 100000:
+                print(f"[OpenSCAD] Mesh too complex ({vertex_count}v) for SDF baking. Skipping.")
+                resolution = 0 
+            elif vertex_count > 25000:
+                print(f"[OpenSCAD] Mesh complex ({vertex_count}v). Reducing SDF resolution to 16.")
+                resolution = 16
+            else:
+                resolution = 32
+
+            sdf_flat = []
+            sdf_min = 0
+            sdf_max = 0
+            min_pt = center
+            max_pt = center # Fallback
+
+            if resolution > 0:
+                # 1. Create grid points
+                # Add 10% padding
+                size = bounds[1] - bounds[0]
+                max_dim = np.max(size)
+                center_pt = (bounds[0] + bounds[1]) / 2
+                
+                # Make a cubic bound centered on object
+                half_size = (max_dim * 1.2) / 2
+                min_pt = center_pt - half_size
+                max_pt = center_pt + half_size
+                
+                x = np.linspace(min_pt[0], max_pt[0], resolution)
+                y = np.linspace(min_pt[1], max_pt[1], resolution)
+                z = np.linspace(min_pt[2], max_pt[2], resolution)
+                
+                # Create coordinate grid
+                # Note: Meshgrid order='ij' matches array indexing (x, y, z)
+                grid_x, grid_y, grid_z = np.meshgrid(x, y, z, indexing='ij')
+                grid_points = np.stack((grid_x, grid_y, grid_z), axis=-1).reshape(-1, 3)
+                
+                # 2. Compute Signed Distance
+                try:
+                    # check if scene is watertight? Trimesh signed distance works best on watertight.
+                    # Warning: This is O(N*M).
+                    print(f"[OpenSCAD] Baking SDF ({resolution}^3) for {vertex_count} vertices...")
+                    sdf_values = trimesh.proximity.signed_distance(mesh, grid_points)
+                    
+                    sdf_flat = sdf_values.astype(float).tolist()
+                    sdf_min = float(np.min(sdf_values))
+                    sdf_max = float(np.max(sdf_values))
+                    print("[OpenSCAD] SDF Bake Complete.")
+                    
+                except Exception as sdf_err:
+                    print(f"SDF generation failed: {sdf_err}")
+                    sdf_flat = []
+            else:
+                # Fallback bounds for non-SDF return
+                min_pt = bounds[0]
+                max_pt = bounds[1]
+
             return {
                 "success": True,
                 "vertices": vertices,
@@ -168,7 +240,13 @@ class OpenSCADAgent:
                 "surface_area": float(mesh.area),
                 "stl_path": stl_path,
                 "vertex_count": len(vertices),
-                "face_count": len(faces)
+                "face_count": len(faces),
+                
+                # SDF Data
+                "sdf_data": sdf_flat,
+                "sdf_resolution": resolution,
+                "sdf_bounds": [min_pt.tolist(), max_pt.tolist()],
+                "sdf_range": [sdf_min, sdf_max]
             }
             
         except subprocess.TimeoutExpired:
@@ -220,6 +298,189 @@ class OpenSCADAgent:
                 "OpenSCAD script compilation",
                 "STL mesh generation",
                 "Thingiverse compatibility",
-                "Syntax validation"
-            ]
+                "Syntax validation",
+                "SDF Baking (Trimesh)",
+                "Progressive Assembly Rendering"
+            ],
+            "progressive_rendering": True
         }
+    
+    # ===== PROGRESSIVE ASSEMBLY RENDERING =====
+    
+    def compile_assembly_progressive(self, scad_code: str):
+        """
+        Compile OpenSCAD assembly progressively using parallel execution.
+        Yields parts as they complete.
+        
+        Args:
+            scad_code: OpenSCAD source code
+            
+        Yields:
+            Dict with part data: {"part_id": str, "vertices": list, "faces": list, ...}
+        """
+        from agents.openscad_parser import OpenSCADParser
+        import concurrent.futures
+        import time
+        
+        # Parse code into AST
+        parser = OpenSCADParser()
+        try:
+            ast_nodes = parser.parse(scad_code)
+        except Exception as e:
+            yield {
+                "success": False,
+                "error": f"Parse error: {str(e)}",
+                "event": "error"
+            }
+            return
+        
+        # Flatten AST to get all compilable nodes
+        all_nodes = parser.flatten_ast(ast_nodes)
+        
+        # Filter to only primitives and modules (things that generate geometry)
+        compilable_nodes = [
+            node for node in all_nodes 
+            if node.node_type.value in ['primitive', 'module']
+        ]
+        
+        if not compilable_nodes:
+            yield {
+                "success": False,
+                "error": "No compilable geometry found",
+                "event": "error"
+            }
+            return
+        
+        total_parts = len(compilable_nodes)
+        completed = 0
+        
+        # Yield initial status
+        yield {
+            "event": "start",
+            "total_parts": total_parts,
+            "message": f"Compiling {total_parts} parts in parallel..."
+        }
+        
+        # Compile parts in parallel
+        max_workers = min(4, total_parts)  # Limit to 4 concurrent compilations
+        
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all compilation jobs
+            future_to_node = {
+                executor.submit(self._compile_node, node, idx): (node, idx)
+                for idx, node in enumerate(compilable_nodes)
+            }
+            
+            # Yield results as they complete
+            for future in concurrent.futures.as_completed(future_to_node):
+                node, idx = future_to_node[future]
+                completed += 1
+                
+                try:
+                    result = future.result()
+                    
+                    if result.get("success"):
+                        yield {
+                            "event": "part",
+                            "part_id": f"{node.name}_{idx}",
+                            "part_name": node.name,
+                            "part_index": idx,
+                            "depth": node.depth,
+                            "vertices": result["vertices"],
+                            "faces": result["faces"],
+                            "normals": result.get("normals", []),
+                            "bounds": result.get("bounds"),
+                            "center": result.get("center"),
+                            "volume": result.get("volume", 0),
+                            "progress": completed / total_parts,
+                            "completed": completed,
+                            "total": total_parts
+                        }
+                    else:
+                        # Part failed, but continue with others
+                        yield {
+                            "event": "part_error",
+                            "part_id": f"{node.name}_{idx}",
+                            "error": result.get("error", "Unknown error"),
+                            "progress": completed / total_parts
+                        }
+                        
+                except Exception as e:
+                    yield {
+                        "event": "part_error",
+                        "part_id": f"{node.name}_{idx}",
+                        "error": str(e),
+                        "progress": completed / total_parts
+                    }
+        
+        # Yield completion
+        yield {
+            "event": "complete",
+            "total_parts": total_parts,
+            "completed": completed,
+            "message": f"Assembly complete: {completed}/{total_parts} parts rendered"
+        }
+    
+    def _compile_node(self, node, idx: int) -> Dict[str, Any]:
+        """
+        Compile a single AST node to geometry.
+        
+        Args:
+            node: ASTNode to compile
+            idx: Node index for unique identification
+            
+        Returns:
+            Compilation result with vertices, faces, etc.
+        """
+        # Generate standalone OpenSCAD code for this node
+        scad_code = self._generate_scad_for_node(node)
+        
+        # Compile using existing compile_to_stl method
+        result = self.compile_to_stl(scad_code)
+        
+        return result
+    
+    def _generate_scad_for_node(self, node) -> str:
+        """
+        Generate standalone OpenSCAD code for a single node.
+        
+        Args:
+            node: ASTNode to generate code for
+            
+        Returns:
+            OpenSCAD code string
+        """
+        from agents.openscad_parser import NodeType
+        
+        # For primitives, just return the code
+        if node.node_type == NodeType.PRIMITIVE:
+            return node.code
+        
+        # For modules, we need the module definition + instantiation
+        if node.node_type == NodeType.MODULE:
+            # node.children contains the parsed module body
+            # We need to reconstruct: module definition + module call
+            # But the parser already inlined the body into children
+            # So we just need to render the children as standalone code
+            
+            # Generate code from children (the inlined module body)
+            children_code = []
+            for child in node.children:
+                child_code = self._generate_scad_for_node(child)
+                if child_code:
+                    children_code.append(child_code)
+            
+            # Return the children code (primitives/transforms from module body)
+            return "\n".join(children_code)
+        
+        # For transforms, include the transform + child
+        if node.node_type == NodeType.TRANSFORM:
+            return node.code
+        
+        # For booleans, include all children
+        if node.node_type == NodeType.BOOLEAN:
+            return node.code
+        
+        # Default: return the code as-is
+        return node.code
+

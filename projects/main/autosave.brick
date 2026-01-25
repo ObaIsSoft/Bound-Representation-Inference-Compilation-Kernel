@@ -1,0 +1,56 @@
+{
+  "geometry": {
+    "id": "50ef2021-4a71-4f27-bc88-ef66c093a577",
+    "name": "Project_Root",
+    "constraints": {
+      "mass_budget": 100
+    },
+    "exports": {
+      "mass": 0,
+      "power_draw": 0,
+      "bounding_volume": 0
+    },
+    "children": []
+  },
+  "physics": {
+    "state": {
+      "velocity": 0,
+      "altitude": 0,
+      "temperature": 20,
+      "fuel": 100,
+      "position": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "orientation": {
+        "yaw": 0,
+        "pitch": 0,
+        "roll": 0
+      },
+      "acceleration": 0
+    },
+    "params": {
+      "temperature": 20,
+      "windSpeed": 0,
+      "gravity": 9.81,
+      "load": 0,
+      "rpm": 0,
+      "airDensity": 1.225,
+      "attackAngle": 0,
+      "orbitAltitude": 400,
+      "solarRadiation": 1361,
+      "waterDepth": 10,
+      "waterDensity": 1025,
+      "currentSpeed": 0
+    },
+    "scenario": "none"
+  },
+  "sketch": [],
+  "timestamp": "2026-01-25T07:48:58.993Z",
+  "manifest": {
+    "last_saved": "2026-01-25T08:48:59.065995",
+    "version": "1.0.0",
+    "branch": "main"
+  }
+}

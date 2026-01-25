@@ -16,6 +16,10 @@ class FluidAgent:
     """
 
     def __init__(self):
+        # Initialize Physics Kernel
+        self.physics = get_physics_kernel()
+        logger.info("FluidAgent: Physics kernel initialized")
+        
         self.name = "FluidAgent"
         
         # Initialize Oracles if available (PhysicsOracle handles complex CFD)
@@ -81,12 +85,21 @@ class FluidAgent:
     def _run_potential_flow(self, geometry: List[Dict], context: Dict) -> Dict:
         """
         Simplified Panel Method (2D/2.5D Sections).
-        Estimates Drag and Lift coefficients.
+        Estimates Drag and Lift coefficients using REAL PHYSICS.
         """
-        # Heuristic: Project geometry area and use bluff body drag equation
-        # This is a "Zeroth Order" solver, better than nothing.
+        # Get air density from physics or context
+        altitude = context.get("altitude", 0.0)  # meters
+        temperature = context.get("temperature", 288.15)  # Kelvin
         
-        density = context.get("density", 1.225) # kg/m^3
+        # Use physics kernel to calculate air density
+        try:
+            density = self.physics.domains["fluids"].calculate_air_density(
+                temperature=temperature,
+                pressure=101325 * (1 - 0.0065 * altitude / 288.15) ** 5.255  # ISA
+            )
+        except:
+            density = context.get("density", 1.225)  # Fallback
+        
         velocity = context.get("velocity", 10.0) # m/s
         
         # 1. Calculate Frontal Area (Projected on Y-Z plane if moving in X)
@@ -96,15 +109,31 @@ class FluidAgent:
         # Default Cube Cd=1.05. Streamlined=0.04.
         cd = self._estimate_cd(geometry)
         
-        # Drag Equation: Fd = 0.5 * rho * v^2 * Cd * A
-        drag_force = 0.5 * density * (velocity**2) * cd * frontal_area
+        # 3. Use Physics Kernel for Drag Calculation
+        drag_force = self.physics.domains["fluids"].calculate_drag(
+            velocity=velocity,
+            density=density,
+            reference_area=frontal_area,
+            drag_coefficient=cd
+        )
+        
+        # Calculate Reynolds number
+        char_length = (frontal_area ** 0.5)  # Approximate characteristic length
+        reynolds_number = self.physics.domains["fluids"].calculate_reynolds_number(
+            velocity=velocity,
+            characteristic_length=char_length,
+            density=density,
+            dynamic_viscosity=1.81e-5  # Air at 15°C
+        )
         
         return {
-            "solver": "Potential Flow (Heuristic)",
+            "solver": "Potential Flow (Physics Kernel)",
             "drag_n": round(drag_force, 2),
             "lift_n": 0.0, # Simple bodies don't lift without airfoil logic
             "cd": cd,
-            "frontal_area_m2": frontal_area
+            "frontal_area_m2": frontal_area,
+            "air_density_kg_m3": density,
+            "reynolds_number": reynolds_number
         }
 
     def _run_openfoam(self, geometry: List[Dict], context: Dict) -> Dict:

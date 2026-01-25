@@ -1,4 +1,5 @@
 from typing import Dict, Any
+from backend.physics import get_physics_kernel
 
 class MaterialAgent:
     """
@@ -8,6 +9,9 @@ class MaterialAgent:
     
     def __init__(self):
         self.db_path = "data/materials.db"
+        
+        # Initialize Physics Kernel (Real Physics!)
+        self.physics = get_physics_kernel()
         
         # Initialize Oracles for advanced calculations
         try:

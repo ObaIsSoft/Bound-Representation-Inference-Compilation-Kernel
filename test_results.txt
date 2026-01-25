@@ -1,0 +1,83 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.13.7, pytest-9.0.2, pluggy-1.6.0
+rootdir: /Users/obafemi/Documents/dev/brick
+plugins: anyio-4.11.0, flask-1.3.0, langsmith-0.6.0
+collected 6 items
+
+backend/tests/test_physics_kernel.py FF.FEE                              [100%]
+
+==================================== ERRORS ====================================
+___________ ERROR at setup of TestFluidDynamics.test_reynolds_number ___________
+
+self = <test_physics_kernel.TestFluidDynamics object at 0x107c0dd10>
+
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        self.kernel = get_physics_kernel()
+>       self.fluids = self.kernel.domains.fluids
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'dict' object has no attribute 'fluids'
+
+backend/tests/test_physics_kernel.py:52: AttributeError
+________ ERROR at setup of TestThermodynamics.test_heat_transfer_exists ________
+
+self = <test_physics_kernel.TestThermodynamics object at 0x107c0df90>
+
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        self.kernel = get_physics_kernel()
+>       self.thermo = self.kernel.domains.thermodynamics
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'dict' object has no attribute 'thermodynamics'
+
+backend/tests/test_physics_kernel.py:72: AttributeError
+=================================== FAILURES ===================================
+____________________ TestPhysicsKernel.test_initialization _____________________
+
+self = <test_physics_kernel.TestPhysicsKernel object at 0x107c0da90>
+
+    def test_initialization(self):
+        """Test that the physics kernel initializes correctly with all providers"""
+        assert self.kernel is not None
+        assert self.kernel.providers is not None
+>       assert 'fphysics' in self.kernel.providers
+E       AssertionError: assert 'fphysics' in {'analytical': <backend.physics.providers.physipy_provider.PhysiPyProvider object at 0x10837d2b0>, 'constants': <backe...ject at 0x110c0e7b0>, 'numerical': <backend.physics.providers.scipy_provider.SciPyProvider object at 0x10f38d6a0>, ...}
+E        +  where {'analytical': <backend.physics.providers.physipy_provider.PhysiPyProvider object at 0x10837d2b0>, 'constants': <backe...ject at 0x110c0e7b0>, 'numerical': <backend.physics.providers.scipy_provider.SciPyProvider object at 0x10f38d6a0>, ...} = <physics.kernel.UnifiedPhysicsKernel object at 0x10837cd70>.providers
+E        +    where <physics.kernel.UnifiedPhysicsKernel object at 0x10837cd70> = <test_physics_kernel.TestPhysicsKernel object at 0x107c0da90>.kernel
+
+backend/tests/test_physics_kernel.py:20: AssertionError
+------------------------------ Captured log setup ------------------------------
+ERROR    backend.llm.factory:factory.py:46 No working LLM API Keys (OPENAI_API_KEY, GROQ_API_KEY) or Packages found.
+WARNING  physics.kernel:kernel.py:267 Could not load LLM provider: No working LLM API Keys (OPENAI_API_KEY, GROQ_API_KEY) or Packages found.
+ERROR    backend.models.material_net:material_net.py:145 Failed to load weights: 'b1'
+____________________ TestPhysicsKernel.test_domains_loaded _____________________
+
+self = <test_physics_kernel.TestPhysicsKernel object at 0x107c0de50>
+
+    def test_domains_loaded(self):
+        """Test that all physics domains are loaded"""
+        assert self.kernel.domains is not None
+>       assert self.kernel.domains.fluids is not None
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'dict' object has no attribute 'fluids'
+
+backend/tests/test_physics_kernel.py:26: AttributeError
+____________________ TestPhysicsKernel.test_unit_conversion ____________________
+
+self = <test_physics_kernel.TestPhysicsKernel object at 0x107b37820>
+
+    def test_unit_conversion(self):
+        """Test unit conversion capabilities"""
+        # 1 inch to mm
+>       val = self.kernel.convert_units(1, 'inch', 'mm')
+              ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'UnifiedPhysicsKernel' object has no attribute 'convert_units'
+
+backend/tests/test_physics_kernel.py:41: AttributeError
+=========================== short test summary info ============================
+FAILED backend/tests/test_physics_kernel.py::TestPhysicsKernel::test_initialization
+FAILED backend/tests/test_physics_kernel.py::TestPhysicsKernel::test_domains_loaded
+FAILED backend/tests/test_physics_kernel.py::TestPhysicsKernel::test_unit_conversion
+ERROR backend/tests/test_physics_kernel.py::TestFluidDynamics::test_reynolds_number
+ERROR backend/tests/test_physics_kernel.py::TestThermodynamics::test_heat_transfer_exists
+==================== 3 failed, 1 passed, 2 errors in 52.57s ====================

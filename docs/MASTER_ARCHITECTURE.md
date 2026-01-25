@@ -51,17 +51,18 @@ The codebase is organized as a Monorepo containing three distinct layers.
 The system intelligence is distributed across **57 Specialized Agents**, categorized by domain.
 
 ### A. Core Physics & Geometry (Tier 1-2)
-*Handle the raw reality of the design.*
-1.  **EnvironmentAgent**: Determines gravity, pressure, regime (AERO/SPACE/MARINE).
-2.  **GeometryAgent**: Generates KCL/CAD models via KittyCAD.
-3.  **PhysicsAgent**: Supervises all physical simulations.
-4.  **SurrogatePhysicsAgent**: Fast neural approximations of physics.
-5.  **ThermalAgent**: Heat dissipation and thermal rise analysis.
-6.  **StructuralAgent**: FEA-lite stress and load path analysis.
-7.  **FluidAgent**: CFD approximations for lift/drag.
-8.  **MassPropertiesAgent**: Inertia tensor and CoG calculation.
-9.  **ManifoldAgent**: Mesh watertightness and repair.
-10. **SlicerAgent**: G-Code generation for 3D printing.
+*Handle the raw reality of the design via the Unified Physics Kernel.*
+1.  **UnifiedPhysicsKernel (The Heart)**: Central orchestrator integrating 8 domains (Mechanics, Fluids, Thermo, Electromagnetism).
+2.  **OpenSCADAgent (The Builder)**: Headless compiler with **Progressive Assembly** (parallel rendering) and **Adaptive SDF Baking**.
+3.  **EnvironmentAgent**: Determines gravity, pressure, regime (AERO/SPACE/MARINE).
+4.  **GeometryAgent**: Generates KCL/CAD models via KittyCAD & OpenSCAD.
+5.  **PhysicsEngineAgent (The Router)**: Routes queries between analytical solvers (`SymPy`) and numerical engines (`FEniCS`).
+6.  **ThermalAgent**: Heat dissipation using real NIST/CoolProp data.
+7.  **StructuralAgent**: FEA-lite stress analysis using `scikit-fem`.
+8.  **FluidAgent**: CFD approximations and Bernoulli/Navier-Stokes solving.
+9.  **MassPropertiesAgent**: Inertia tensor and CoG calculation.
+10. **ManifoldAgent**: Mesh watertightness and repair (using `fast-csg`).
+11. **SlicerAgent**: G-Code generation for 3D printing.
 
 ### B. Design & Optimization (Tier 3)
 *Handle the creative generation of solutions.*

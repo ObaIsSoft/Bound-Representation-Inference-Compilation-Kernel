@@ -1,0 +1,63 @@
+======================================================================
+MATERIALS API - DEBUG MODE
+======================================================================
+
+Tracking exactly where hangs occur...
+
+
+======================================================================
+SECTION 1: Testing Element (Al)
+======================================================================
+
+======================================================================
+TESTING: Al @ 298.15K
+======================================================================
+
+  Querying density... ✓ 2700.0000 kg/m³ (0.00s)
+
+  Querying youngs_modulus... ✓ 70000000000.0000 GPa (0.00s)
+
+  Querying specific_heat... Property 'specific_heat' not found for 'Al' in any of 12 sources.
+[DEBUG] NIST Search Success: 3 matches
+✗ Error (6.60s): Property 'specific_heat' not found for 'Al' in any
+
+  Querying thermal_conductivity... Property 'thermal_conductivity' not found for 'Al' in any of 12 sources.
+✗ Error (0.00s): Property 'thermal_conductivity' not found for 'Al'
+
+  Querying energy_above_hull... Property 'energy_above_hull' not found for 'Al' in any of 12 sources.
+✗ Error (0.00s): Property 'energy_above_hull' not found for 'Al' in
+
+======================================================================
+SECTION 2: Testing Compound (Fe2O3)
+======================================================================
+NOTE: If it hangs here, issue is with Materials Project API...
+
+======================================================================
+TESTING: Fe2O3 @ 298.15K
+======================================================================
+
+  Querying density... [DEBUG] NIST Search Success: 5 matches
+✓ 4142.4249 kg/m³ (8.82s)
+
+  Querying youngs_modulus... Property 'youngs_modulus' not found for 'Fe2O3' in any of 12 sources.
+✗ Error (0.00s): Property 'youngs_modulus' not found for 'Fe2O3' in
+
+  Querying specific_heat... Property 'specific_heat' not found for 'Fe2O3' in any of 12 sources.
+✗ Error (0.00s): Property 'specific_heat' not found for 'Fe2O3' in 
+
+  Querying thermal_conductivity... Property 'thermal_conductivity' not found for 'Fe2O3' in any of 12 sources.
+✗ Error (0.00s): Property 'thermal_conductivity' not found for 'Fe2
+
+  Querying energy_above_hull... Property 'energy_above_hull' not found for 'Fe2O3' in any of 12 sources.
+✗ Error (0.00s): Property 'energy_above_hull' not found for 'Fe2O3'
+
+======================================================================
+SECTION 3: Testing Polymer (Polyethylene)
+======================================================================
+NOTE: If it hangs here, issue is with thermo library initialization...
+
+======================================================================
+TESTING: Polyethylene @ 298.15K
+======================================================================
+
+  Querying density... 

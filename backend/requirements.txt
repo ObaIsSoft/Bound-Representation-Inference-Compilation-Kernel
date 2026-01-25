@@ -1,0 +1,43 @@
+# Core Physics Libraries (ALL WORKING - NO FALLBACKS)
+fphysics==1.0
+physipy==0.2.8
+sympy>=1.11
+scipy  # Let pip find a compatible pre-built version
+CoolProp>=6.4
+
+# Additional Physics Libraries
+pint>=0.20  # Units management
+astropy>=5.0  # Astronomical constants and units
+pydy>=0.7.0  # Symbolic dynamics and kinematics
+scikit-fem>=8.0  # Finite element analysis
+uncertainties>=3.1  # Error propagation
+
+# Advanced Libraries (Phase 2.4)
+pymatgen>=2024.1  # Materials science and crystal structures ✓ INSTALLED
+fenics>=2019.1  # Advanced FEA (Python wrapper only, C++ backend needs Docker/conda)
+# torch>=2.1 - Required by the_well, install from pytorch.org (not on PyPI for Python 3.13)
+# the_well - PolymathicAI 15TB physics dataset API
+#   GitHub: https://github.com/PolymathicAI/the_well
+#   HuggingFace: hf://datasets/polymathic-ai/[dataset_name]
+#   Install: pip install the_well (requires PyTorch >=2.1)
+#   Streaming API: WellDataset(well_base_path="hf://datasets/polymathic-ai/")
+
+# PelePhysics - C++ combustion library
+#   GitHub: https://github.com/AMReX-Combustion/PelePhysics
+#   Docs: https://amrex-combustion.github.io/PelePhysics/
+#   Requires: AMReX, SUNDIALS, GCC/GFortran, CMake
+#   Installation: git clone + make (see PelePhysics/GettingStarted.html)
+# myPhysicsLab - JavaScript library (frontend only, defer to UI phase)
+#   GitHub: https://www.myphysicslab.com/
+
+# Existing dependencies (assumed to be present)
+fastapi
+uvicorn
+pydantic
+numpy==1.24.3
+groq
+openai
+python-multipart
+
+# Additional utilities
+jinja2

@@ -13,7 +13,8 @@ import { OpenSCADMesh } from './OpenSCADMesh';
 export const StandardMeshPreview = ({
     design,
     viewMode = 'realistic',
-    theme
+    theme,
+    onSDFLoaded // New callback
 }) => {
 
     // Helper to determine material based on view mode
@@ -46,12 +47,18 @@ export const StandardMeshPreview = ({
     const content = useMemo(() => {
         if (!design?.content) return null;
         try {
-            return typeof design.content === 'string'
-                ? JSON.parse(design.content)
-                : design.content;
+            if (typeof design.content === 'string') {
+                const trimmed = design.content.trim();
+                if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+                    return JSON.parse(trimmed);
+                }
+                // Treat non-JSON strings as OpenSCAD code
+                return { type: 'openscad', code: design.content };
+            }
+            return design.content;
         } catch (e) {
-            console.warn("StandardMeshPreview: Failed to parse design content", e);
-            return null;
+            console.warn("StandardMeshPreview: Failed to parse design content, treating as code", e);
+            return { type: 'openscad', code: design.content };
         }
     }, [design]);
 
@@ -65,6 +72,7 @@ export const StandardMeshPreview = ({
                 scadCode={code}
                 viewMode={viewMode}
                 theme={theme}
+                onSDFLoaded={onSDFLoaded}
             />
         );
     }

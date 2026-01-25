@@ -250,8 +250,18 @@ const ComponentPanel = ({ width }) => {
                                     <div className="text-[11px] font-bold" style={{ color: theme.colors.text.primary }}>
                                         {item.name}
                                     </div>
-                                    <div className="text-[9px] font-mono opacity-70" style={{ color: theme.colors.text.secondary }}>
+                                    <div className="text-[9px] font-mono opacity-70 mb-1" style={{ color: theme.colors.text.secondary }}>
                                         {item.source} • {item.category}
+                                    </div>
+
+                                    {/* Physics Metadata Badge */}
+                                    <div className="flex items-center gap-2 text-[9px] font-mono">
+                                        <span className="px-1 py-px rounded bg-white/5 border border-white/10" style={{ color: theme.colors.text.secondary }}>
+                                            {item.metadata?.weight || '0.5kg'}
+                                        </span>
+                                        <span className="px-1 py-px rounded bg-white/5 border border-white/10" style={{ color: theme.colors.text.secondary }}>
+                                            FOS: {item.metadata?.fos || '3.2'}
+                                        </span>
                                     </div>
                                 </div>
                                 <Cpu size={14} style={{ color: theme.colors.accent.primary }} />

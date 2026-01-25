@@ -29,7 +29,7 @@ from agents.dfm_agent import DfmAgent
 from agents.gnc_agent import GncAgent
 from agents.gnc_agent import GncAgent
 from agents.codegen_agent import CodegenAgent
-from agents.surrogate_agent import SurrogateAgent
+# from agents.surrogate_agent import SurrogateAgent # DEPRECATED
 from agents.document_agent import DocumentAgent
 from agents.compliance_agent import ComplianceAgent
 from agents.network_agent import NetworkAgent
@@ -54,7 +54,6 @@ from agents.asset_sourcing_agent import AssetSourcingAgent
 from agents.template_design_agent import TemplateDesignAgent
 from agents.conversational_agent import ConversationalAgent
 from agents.devops_agent import DevOpsAgent
-from agents.review_agent import ReviewAgent
 from agents.remote_agent import RemoteAgent
 from agents.pvc_agent import PvcAgent
 from agents.nexus_agent import NexusAgent
@@ -80,7 +79,7 @@ def get_agent_registry():
         "environment": EnvironmentAgent(),
         "geometry": GeometryAgent(),
         "physics": PhysicsAgent(),
-        "surrogate_physics": SurrogateAgent(), # Trained Neural Net (PINN)
+        # "surrogate_physics": SurrogateAgent(), # DEPRECATED
         "mass_properties": MassPropertiesAgent(), # Real Implementation
         "manifold": ManifoldAgent(),
         "validator": ValidatorAgent(),
@@ -141,7 +140,6 @@ def get_agent_registry():
         "conversational": ConversationalAgent(provider=llm),
         "remote": RemoteAgent(),
         "devops": DevOpsAgent(llm_provider=llm),
-        "review": ReviewAgent(llm_provider=llm),
         
         # --- Training ---
         "training": TrainingAgent(),

@@ -15,32 +15,30 @@
 
 ## Quick Start
 
-
-## System Overview
-
-### What is BRICK OS?
-
-BRICK OS is an **intelligent hardware compiler** that transforms natural language design intent into manufacturable hardware designs. It uses a multi-agent system orchestrated by LangGraph to coordinate specialized AI agents across different engineering domains.
+### Prerequisites
+- Python 3.10+
+### Installation
 
 ### Core Capabilities
 
-- **Natural Language to CAD**: Convert design descriptions to 3D models
-- **Multi-Environment Support**: Design for AERO, MARINE, GROUND, SPACE, UNDERSEA environments
-- **Physics-Aware Design**: Real-time physics predictions and validation
-- **Manufacturing Intelligence**: DfM analysis, BOM generation, and cost estimation
-- **Cyber-Physical Systems**: GNC analysis, control system design
-- **Material Intelligence**: Temperature-dependent properties and failure prediction
-- **Template-Based Design**: Leverage existing designs (NASA Ingenuity, ISS, etc.)
+- **Physics-First Design**: Geometry is generated *after* feasibility validation against 15TB of physical data.
+- **Unified SDF Rendering**: Real-time raymarching of arbitrary CAD models (OpenSCAD/STL) with live physics telemetry (Stress, Heat, Flow).
+- **Progressive Assembly**: Handles massive assemblies (e.g., F-22 Raptor) by parallelizing render tasks.
+- **Multi-Fidelity Intelligence**: Automatically routes queries between fast analytical solvers (`SymPy`) and high-fidelity numerical methods (`FEniCS`, `OpenFOAM`).
+- **Material Intelligence**: Determines properties based on temperature ($ \rho(T) $, $ E(T) $) using real-world databases (Materials Project, NIST).
 
 ### Technology Stack
 
-**Backend:**
-- Python 3.x
-- FastAPI (REST API)
-- LangGraph (Agent Orchestration)
-- NetworkX (Dependency Graph)
-- Pydantic (Data Validation)
-- KittyCAD API (3D Geometry Generation)
+**Backend (The Brain):**
+- **UnifiedPhysicsKernel**: The heart of the system. Integrates 8 physics domains.
+- **OpenSCAD Agent**: Headless CAD compiler with adaptive SDF baking and Fast-CSG.
+- **LangGraph**: Orchestrates the 57-agent workflow.
+- **FastAPI**: Exposes the kernel to the frontend.
+
+**Frontend (The Cockpit):**
+- **UnifiedSDFRenderer**: Custom WebGL raymarching engine.
+- **React/Vite**: High-performance UI.
+- **Simulation Bay**: Real-time control deck for vHIL (Virtual Hardware-in-the-Loop) simulations.
 
 **Frontend:**
 - Next.js 14 (React Framework)

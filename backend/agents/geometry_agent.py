@@ -3,6 +3,7 @@ import re
 import logging
 import math
 from typing import Dict, Any, List, Optional
+from backend.physics import get_physics_kernel
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,10 @@ class GeometryAgent:
     DEFAULT_UNIT_SIZE = 1
 
     def __init__(self):
+        # Initialize Physics Kernel
+        self.physics = get_physics_kernel()
+        logger.info("GeometryAgent: Physics kernel initialized")
+        
         self.zoo_client = None
         # Try initializing Zoo client if token exists
         token = os.getenv("ZOO_API_TOKEN") or os.getenv("KITTYCAD_API_TOKEN")
@@ -137,6 +142,7 @@ class GeometryAgent:
             if zoo_res.get("success"):
                 gltf_data = zoo_res.get("gltf_data")
 
+
         # 5. Validation (Manifold Agent)
         from agents.manifold_agent import ManifoldAgent
         manifold_agent = ManifoldAgent()
@@ -145,6 +151,14 @@ class GeometryAgent:
         validation = manifold_res.get("validation", {})
         if not validation.get("is_watertight", True):
             logger.warning(f"Geometry not watertight: {validation.get('issues')}")
+        
+        # 6. Physics Validation (Real Physics!)
+        from agents.geometry_physics_validator import validate_geometry_physics
+        material = params.get("material", "Aluminum 6061-T6")
+        physics_validation = validate_geometry_physics(self.physics, geometry_tree, material)
+        
+        if not physics_validation["is_valid"]:
+            logger.warning(f"Physics validation failed: {physics_validation['warnings']}")
 
         return {
             "kcl_code": kcl_code,
@@ -152,7 +166,9 @@ class GeometryAgent:
             "hwc_isa": isa if mode == "parametric" else {},
             "geometry_tree": geometry_tree,
             "gltf_data": gltf_data,
-            "validation_logs": validation.get("logs", [])
+            "validation_logs": validation.get("logs", []),
+            "physics_validation": physics_validation,
+            "physics_metadata": physics_validation["physics_metadata"]
         }
 
     def _estimate_geometry_tree(self, regime, params):

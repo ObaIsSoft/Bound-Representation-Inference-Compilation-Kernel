@@ -15,13 +15,6 @@ export const SettingsProvider = ({ children }) => {
     const [visualizationQuality, setVisualizationQualityState] = useState('HIGH'); // 'ULTRA', 'HIGH', 'MEDIUM', 'LOW'
     const [meshRenderingMode, setMeshRenderingMode] = useState('sdf'); // 'sdf' (boolean ops), 'preview' (fast mesh)
 
-    // New settings for previously broken buttons
-    const [simulationFrequency, setSimulationFrequency] = useState('1000'); // Hz
-    const [incrementalCompilation, setIncrementalCompilation] = useState(true);
-    const [secureBoot, setSecureBoot] = useState(true);
-    const [agentSandboxing, setAgentSandboxing] = useState(true);
-    const [agentProposals, setAgentProposals] = useState(true);
-
     // Load settings from localStorage on mount
     useEffect(() => {
         const savedSettings = localStorage.getItem('brick-settings');
@@ -39,34 +32,10 @@ export const SettingsProvider = ({ children }) => {
                 if (settings.aiModel) setAiModel(settings.aiModel);
                 if (settings.visualizationQuality) setVisualizationQualityState(settings.visualizationQuality);
                 if (settings.meshRenderingMode) setMeshRenderingMode(settings.meshRenderingMode);
-                if (settings.simulationFrequency) setSimulationFrequency(settings.simulationFrequency);
-                if (settings.incrementalCompilation !== undefined) setIncrementalCompilation(settings.incrementalCompilation);
-                if (settings.secureBoot !== undefined) setSecureBoot(settings.secureBoot);
-                if (settings.agentSandboxing !== undefined) setAgentSandboxing(settings.agentSandboxing);
-                if (settings.agentProposals !== undefined) setAgentProposals(settings.agentProposals);
             } catch (e) {
                 console.error('Failed to load settings:', e);
             }
         }
-
-        // Also fetch from backend to sync
-        fetch('http://localhost:8000/api/settings')
-            .then(res => res.json())
-            .then(data => {
-                if (data.settings) {
-                    const backendSettings = data.settings;
-                    // Backend settings take precedence for runtime configuration
-                    if (backendSettings.simulation_frequency) setSimulationFrequency(backendSettings.simulation_frequency.toString());
-                    if (backendSettings.physics_kernel) setPhysicsKernel(backendSettings.physics_kernel);
-                    if (backendSettings.compiler_optimization) setCompilerOptimization(backendSettings.compiler_optimization);
-                    if (backendSettings.visualization_quality) setVisualizationQualityState(backendSettings.visualization_quality);
-                    if (backendSettings.incremental_compilation !== undefined) setIncrementalCompilation(backendSettings.incremental_compilation);
-                    if (backendSettings.secure_boot !== undefined) setSecureBoot(backendSettings.secure_boot);
-                    if (backendSettings.agent_sandboxing !== undefined) setAgentSandboxing(backendSettings.agent_sandboxing);
-                    if (backendSettings.agent_proposals !== undefined) setAgentProposals(backendSettings.agent_proposals);
-                }
-            })
-            .catch(err => console.warn('Backend settings fetch failed:', err));
     }, []);
 
     // Save settings to localStorage whenever they change
@@ -83,33 +52,9 @@ export const SettingsProvider = ({ children }) => {
             aiModel,
             visualizationQuality,
             meshRenderingMode,
-            simulationFrequency,
-            incrementalCompilation,
-            secureBoot,
-            agentSandboxing,
-            agentProposals,
             ...newSettings
         };
         localStorage.setItem('brick-settings', JSON.stringify(currentSettings));
-
-        // Sync critical backend settings (runtime configuration)
-        const backendSettings = {
-            simulation_frequency: currentSettings.simulationFrequency ? parseInt(currentSettings.simulationFrequency) : undefined,
-            physics_kernel: currentSettings.physicsKernel,
-            compiler_optimization: currentSettings.compilerOptimization,
-            visualization_quality: currentSettings.visualizationQuality,
-            incremental_compilation: currentSettings.incrementalCompilation,
-            secure_boot: currentSettings.secureBoot,
-            agent_sandboxing: currentSettings.agentSandboxing,
-            agent_proposals: currentSettings.agentProposals
-        };
-
-        // Send to backend (fire and forget, don't block UI)
-        fetch('http://localhost:8000/api/settings', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(backendSettings)
-        }).catch(err => console.warn('Backend settings sync failed:', err));
     };
 
     const setFontSize = (size) => {
@@ -162,31 +107,6 @@ export const SettingsProvider = ({ children }) => {
         saveSettings({ visualizationQuality: value });
     };
 
-    const updateSimulationFrequency = (value) => {
-        setSimulationFrequency(value);
-        saveSettings({ simulationFrequency: value });
-    };
-
-    const updateIncrementalCompilation = (value) => {
-        setIncrementalCompilation(value);
-        saveSettings({ incrementalCompilation: value });
-    };
-
-    const updateSecureBoot = (value) => {
-        setSecureBoot(value);
-        saveSettings({ secureBoot: value });
-    };
-
-    const updateAgentSandboxing = (value) => {
-        setAgentSandboxing(value);
-        saveSettings({ agentSandboxing: value });
-    };
-
-    const updateAgentProposals = (value) => {
-        setAgentProposals(value);
-        saveSettings({ agentProposals: value });
-    };
-
     const resetToDefaults = () => {
         setFontSizeState('12');
         setAutoSave(true);
@@ -198,11 +118,6 @@ export const SettingsProvider = ({ children }) => {
         setShow3DThermometer(false);
         setVisualizationQualityState('HIGH');
         setMeshRenderingMode('sdf');
-        setSimulationFrequency('1000');
-        setIncrementalCompilation(true);
-        setSecureBoot(true);
-        setAgentSandboxing(true);
-        setAgentProposals(true);
         localStorage.removeItem('brick-settings');
     };
 
@@ -237,21 +152,6 @@ export const SettingsProvider = ({ children }) => {
                     setMeshRenderingMode(mode);
                     saveSettings({ meshRenderingMode: mode });
                 },
-
-                simulationFrequency,
-                setSimulationFrequency: updateSimulationFrequency,
-
-                incrementalCompilation,
-                setIncrementalCompilation: updateIncrementalCompilation,
-
-                secureBoot,
-                setSecureBoot: updateSecureBoot,
-
-                agentSandboxing,
-                setAgentSandboxing: updateAgentSandboxing,
-
-                agentProposals,
-                setAgentProposals: updateAgentProposals,
 
                 resetToDefaults
             }}

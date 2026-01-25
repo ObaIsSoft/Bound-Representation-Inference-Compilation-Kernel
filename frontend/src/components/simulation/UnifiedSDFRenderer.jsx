@@ -162,9 +162,9 @@ const SDFKernel = ({
         if (materialRef.current) {
             materialRef.current.uniforms.uViewMode.value = viewModeInt;
 
-            // If in preview mode, hide the SDF object (set shape to 0)
-            // Assuming 0 is treated as 'empty' or handled in shader to render nothing
-            materialRef.current.uniforms.uBaseShape.value = (meshRenderingMode === 'preview') ? 0 : baseShape;
+            // If in preview mode OR if baseShape is 0 (OpenSCAD/Fallback), render nothing in SDF
+            // This allows the fallback mesh to be seen
+            materialRef.current.uniforms.uBaseShape.value = (meshRenderingMode === 'preview' || baseShape === 0) ? 0 : baseShape;
 
             materialRef.current.uniforms.uBaseDims.value.set(...baseDims);
             materialRef.current.uniforms.uBaseColor.value.set(...baseColor);
@@ -556,12 +556,27 @@ const UnifiedSDFRenderer = ({
             roughness: 0.5
         };
 
+        // Check for OpenSCAD or Raw Code first
+        let isRawCode = false;
+        if (design?.content && typeof design.content === 'string') {
+            const trimmed = design.content.trim();
+            if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
+                isRawCode = true;
+            }
+        }
+
+        if (isRawCode || design?.type === 'openscad') {
+            // If OpenSCAD, hide the SDF primitive box
+            state.baseShape = 0; // 0 = None/Empty in SDF Shader
+            return state;
+        }
+
         // design is activeTab which has .content as JSON string
         if (design?.content) {
             try {
-                const asset = typeof design.content === 'string'
+                const asset = (typeof design.content === 'string' && design.content.trim().startsWith('{'))
                     ? JSON.parse(design.content)
-                    : design.content;
+                    : (typeof design.content === 'object' ? design.content : {});
 
                 if (asset.type === 'primitive') {
                     const { geometry, args = [], material = {} } = asset;
@@ -583,6 +598,8 @@ const UnifiedSDFRenderer = ({
                     }
                     state.metalness = material.metalness ?? 0.5;
                     state.roughness = material.roughness ?? 0.5;
+                } else if (asset.type === 'openscad') {
+                    state.baseShape = 0; // Hide SDF logic if explicitly openscad type
                 }
             } catch (e) {
                 console.warn('[UnifiedSDFRenderer] Failed to parse design content:', e);
@@ -632,6 +649,19 @@ const UnifiedSDFRenderer = ({
         setShowRegionSelector(false);
         // TODO: Exit Micro-Machining mode or show alternate message
     }, []);
+
+    // Phase 9: Real-Time SDF Baking Support
+    const [sdfOverride, setSdfOverride] = React.useState(null);
+
+    const handleSDFLoaded = React.useCallback((data) => {
+        console.log('[UnifiedSDFRenderer] Received baked SDF data from OpenSCAD:', data);
+        setSdfOverride(data);
+    }, []);
+
+    // Merge design with override
+    const effectiveDesign = useMemo(() => {
+        return { ...design, ...sdfOverride };
+    }, [design, sdfOverride]);
 
     return (
         <div className={`w-full h-full ${className}`} style={style}>
@@ -690,19 +720,23 @@ const UnifiedSDFRenderer = ({
                     physicsData={physicsData}
                     onShaderError={handleShaderError}
                     theme={theme}
-                    meshRenderingMode={meshRenderingMode}
-                    design={design} // [FIX] Passing design prop
+                    meshRenderingMode={sdfOverride ? 'sdf' : meshRenderingMode} // Auto-switch to SDF if data exists
+                    design={effectiveDesign} // [FIX] Passing design prop
                     sketchPoints={sketchPoints} // Phase 9.3
                 />
 
                 {/* 2. Preview Mode Overlays (Standard Mesh Rasterization) */}
-                {meshRenderingMode === 'preview' && (
+                {/* Fallback to Mesh if explicitly requested OR if SDF cannot handle the geometry (baseShape === 0) */}
+                {/* AND if we don't have an SDF override yet */}
+                {(!sdfOverride && (meshRenderingMode === 'preview' || geometryState.baseShape === 0)) && (
                     <StandardMeshPreview
                         design={design}
                         viewMode={viewMode}
                         theme={theme}
+                        onSDFLoaded={handleSDFLoaded}
                     />
                 )}
+
 
                 {/* 3. Neural SDF Mode (Micro-Machining) */}
                 {(viewMode === 'micro' || viewMode === 'micro_wgsl') && selectedRegion && (

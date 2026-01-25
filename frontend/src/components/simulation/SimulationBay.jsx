@@ -117,6 +117,29 @@ const SimulationBay = ({ activeActivity }) => {
                                 <div className="text-[5px] font-mono uppercase leading-tight" style={{ color: theme.colors.text.muted }}>FPS</div>
                                 <div className="text-[10px] font-mono font-bold leading-tight" style={{ color: theme.colors.status.success }}>60</div>
                             </div>
+
+                            <div className="w-px h-4" style={{ backgroundColor: theme.colors.border.secondary }} />
+                            <div className="flex flex-col">
+                                <div className="text-[5px] font-mono uppercase leading-tight" style={{ color: theme.colors.text.muted }}>Mass</div>
+                                <div className="text-[10px] font-mono font-bold leading-tight" style={{ color: theme.colors.text.primary }}>
+                                    {combinedPhysicsData.metrics?.mass ? combinedPhysicsData.metrics.mass.toFixed(1) : '-'} kg
+                                </div>
+                            </div>
+                            <div className="w-px h-4" style={{ backgroundColor: theme.colors.border.secondary }} />
+                            <div className="flex flex-col">
+                                <div className="text-[5px] font-mono uppercase leading-tight" style={{ color: theme.colors.text.muted }}>Stress</div>
+                                <div className="text-[10px] font-mono font-bold leading-tight" style={{ color: theme.colors.text.primary }}>
+                                    {combinedPhysicsData.metrics?.max_stress ? (combinedPhysicsData.metrics.max_stress / 1e6).toFixed(1) : '0.0'} MPa
+                                </div>
+                            </div>
+                            <div className="w-px h-4" style={{ backgroundColor: theme.colors.border.secondary }} />
+                            <div className="flex flex-col">
+                                <div className="text-[5px] font-mono uppercase leading-tight" style={{ color: theme.colors.text.muted }}>Drag</div>
+                                <div className="text-[10px] font-mono font-bold leading-tight" style={{ color: theme.colors.text.primary }}>
+                                    {combinedPhysicsData.metrics?.drag_force ? combinedPhysicsData.metrics.drag_force.toFixed(1) : '0.0'} N
+                                </div>
+                            </div>
+
                             <div className="w-px h-4" style={{ backgroundColor: theme.colors.border.secondary }} />
                             <div className="flex items-center gap-0.5">
                                 <div className={`w-0.5 h-0.5 rounded-full ${isRunning ? 'animate-pulse' : ''}`}
@@ -245,130 +268,215 @@ const SimulationBay = ({ activeActivity }) => {
             </div>
 
             {/* PHYSICS TERMINAL OVERLAY */}
-            <PhysicsOverlay theme={theme} active={showViewMenu} onResult={setPhysicsResult} />
+            <PhysicsOverlay theme={theme} active={true} onResult={setPhysicsResult} activeTab={activeTab} />
         </main>
     );
 };
 
-const PhysicsOverlay = ({ theme, active, onResult }) => {
+const PhysicsOverlay = ({ theme, active, onResult, activeTab }) => {
+    const [mode, setMode] = useState('VALIDATE');
     const [domain, setDomain] = useState('NUCLEAR');
     const [query, setQuery] = useState('');
     const [result, setResult] = useState(null);
     const [loading, setLoading] = useState(false);
-
-    // Auto-expand if result is present
     const [expanded, setExpanded] = useState(false);
 
-    const runPhysics = async () => {
+    // State for Dynamic Validation Context
+    const [valContext, setValContext] = useState({ material: 'Generic', load: '0 N' });
+
+    const runValidation = React.useCallback(async (overrideContext) => {
+        const ctx = overrideContext || valContext;
+        // Don't validate if no material/geometry
+        if (!ctx.material || ctx.material === 'Unknown') return;
+
         setLoading(true);
         try {
-            const res = await fetch('http://localhost:8000/api/physics/solve', {
+            // Re-parse for the API call to ensure latest state
+            let geometry = { type: 'box', dims: { length: 1, width: 1, height: 1 } };
+            let material = ctx.material;
+            // Default load if none provided
+            let loads = { force: 1000 };
+
+            if (activeTab?.content) {
+                try {
+                    const asset = typeof activeTab.content === 'string' ? JSON.parse(activeTab.content) : activeTab.content;
+                    if (asset.type === 'primitive') {
+                        if (asset.geometry === 'box') {
+                            geometry = {
+                                type: 'box',
+                                dims: {
+                                    length: Number(asset.args?.[0] || 1),
+                                    width: Number(asset.args?.[1] || 1),
+                                    height: Number(asset.args?.[2] || 1)
+                                }
+                            };
+                        } else if (asset.geometry === 'cylinder') {
+                            geometry = {
+                                type: 'cylinder',
+                                dims: {
+                                    radius: Number(asset.args?.[0] || 0.5),
+                                    height: Number(asset.args?.[1] || 1)
+                                }
+                            };
+                        }
+                    }
+                } catch (e) { }
+            }
+
+            const res = await fetch('http://localhost:8000/api/physics/validate', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    query: query || "Simulate",
-                    domain: domain,
-                    params: {} // Populate based on form inputs later
-                })
+                body: JSON.stringify({ geometry, material, loads })
             });
             const data = await res.json();
             setResult(data);
-            if (onResult) onResult({ ...data, domain }); // Pass up
-            setExpanded(true);
+            if (onResult && data.valid) onResult({ ...data, type: 'validation' });
+            // Auto-expand only if there are warnings or errors to be less intrusive
+            if (data.warnings?.length > 0 || !data.valid) setExpanded(true);
         } catch (e) {
             setResult({ error: e.message });
+            setExpanded(true);
         }
         setLoading(false);
-    };
+    }, [activeTab, valContext, onResult]);
 
-    if (!active) return null; // Or control visibility via a separate state
+    // Update context AND trigger validation when activeTab changes
+    useEffect(() => {
+        if (activeTab?.content) {
+            try {
+                const asset = typeof activeTab.content === 'string' ? JSON.parse(activeTab.content) : activeTab.content;
+                const mat = asset.material ? (typeof asset.material === 'string' ? asset.material : asset.material.name) : 'Generic';
+                const load = asset.loads ? 'Custom' : 'Self-weight';
+
+                const newContext = { material: mat, load };
+                setValContext(newContext);
+
+                // Auto-trigger validation if in VALIDATE mode
+                if (mode === 'VALIDATE') {
+                    // Small timeout to allow state to settle/render
+                    const timer = setTimeout(() => {
+                        runValidation(newContext);
+                    }, 500);
+                    return () => clearTimeout(timer);
+                }
+            } catch (e) {
+                setValContext({ material: 'Unknown', load: '-' });
+            }
+        }
+    }, [activeTab, mode]); // runValidation is stable or re-created with activeTab, so we omit it to avoid loops or use it carefully.
+    // Actually, we should refactor runValidation to NOT depend on valContext if we pass it in.
+    // I updated runValidation to accept overrideContext.
+
+    if (!active) return null;
 
     return (
-        <div className="absolute top-4 left-4 z-50 w-80 border rounded-lg p-4 shadow-2xl backdrop-blur-xl"
+        <div className="absolute bottom-12 left-4 z-50 w-72 border rounded-lg shadow-xl backdrop-blur-md transition-all duration-300 overflow-hidden"
             style={{
-                backgroundColor: theme.colors.bg.secondary + 'F2', // 95% opacity
+                backgroundColor: theme.colors.bg.secondary + 'E6', // High opacity
                 borderColor: theme.colors.border.primary
             }}
         >
-            <div className="flex justify-between items-center mb-4">
-                <h3 className="text-xs font-bold uppercase tracking-wider" style={{ color: theme.colors.text.primary }}>Physics Oracle</h3>
-                <div className={`w-2 h-2 rounded-full ${loading ? 'animate-ping' : ''}`}
-                    style={{ backgroundColor: loading ? theme.colors.status.warning : theme.colors.status.success }}
-                />
+            {/* Header / Mode Switch - Compact */}
+            <div className="flex items-center justify-between p-2 border-b" style={{ borderColor: theme.colors.border.secondary }}>
+                <div className="flex gap-2 bg-black/20 p-0.5 rounded-md">
+                    {['VALIDATE', 'ORACLE'].map(m => (
+                        <button
+                            key={m}
+                            onClick={() => { setMode(m); setResult(null); }}
+                            className="text-[9px] px-2 py-0.5 rounded font-bold transition-all"
+                            style={{
+                                backgroundColor: mode === m ? theme.colors.bg.primary : 'transparent',
+                                color: mode === m ? theme.colors.accent.primary : theme.colors.text.muted,
+                                boxShadow: mode === m ? '0 1px 2px rgba(0,0,0,0.1)' : 'none'
+                            }}
+                        >
+                            {m}
+                        </button>
+                    ))}
+                </div>
+
+                {loading && <Activity size={12} className="animate-spin" style={{ color: theme.colors.accent.primary }} />}
             </div>
 
-            <div className="space-y-3">
-                <div>
-                    <label className="text-[10px] uppercase" style={{ color: theme.colors.text.muted }}>Domain</label>
-                    <select
-                        value={domain}
-                        onChange={e => setDomain(e.target.value)}
-                        className="w-full text-xs p-1 rounded mt-1 border"
-                        style={{
-                            backgroundColor: theme.colors.bg.tertiary,
-                            borderColor: theme.colors.border.secondary,
-                            color: theme.colors.text.primary
-                        }}
-                    >
-                        <option value="NUCLEAR">NUCLEAR</option>
-                        <option value="ASTROPHYSICS">ASTROPHYSICS</option>
-                        <option value="THERMODYNAMICS">THERMODYNAMICS</option>
-                        <option value="OPTICS">OPTICS</option>
-                        <option value="FLUID">FLUID</option>
-                        <option value="CIRCUIT">CIRCUIT</option>
-                        <option value="MECHANICS">MECHANICS</option>
-                        <option value="ELECTROMAGNETISM">ELECTROMAGNETISM</option>
-                        <option value="QUANTUM">QUANTUM</option>
-                        <option value="ACOUSTICS">ACOUSTICS</option>
-                        <option value="MATERIALS">MATERIALS</option>
-                        <option value="PLASMA">PLASMA</option>
-                        <option value="RELATIVITY">RELATIVITY</option>
-                        <option value="GEOPHYSICS">GEOPHYSICS</option>
-                    </select>
-                </div>
+            <div className="p-2 space-y-2">
+                {mode === 'ORACLE' && (
+                    <div className="flex gap-1">
+                        <input
+                            type="text"
+                            value={query}
+                            onChange={e => setQuery(e.target.value)}
+                            placeholder="Ask Physics Oracle..."
+                            className="flex-1 text-[10px] px-2 py-1 rounded border outline-none bg-transparent"
+                            style={{
+                                borderColor: theme.colors.border.secondary,
+                                color: theme.colors.text.primary
+                            }}
+                            onKeyDown={e => e.key === 'Enter' && runOracle()}
+                        />
+                        <button
+                            onClick={runOracle}
+                            className="p-1 rounded hover:bg-white/10"
+                            style={{ color: theme.colors.accent.primary }}
+                        >
+                            <Zap size={12} fill="currentColor" />
+                        </button>
+                    </div>
+                )}
 
-                <div>
-                    <label className="text-[10px] uppercase" style={{ color: theme.colors.text.muted }}>Input</label>
-                    <input
-                        type="text"
-                        value={query}
-                        onChange={e => setQuery(e.target.value)}
-                        placeholder="e.g. Calculate Critical Mass"
-                        className="w-full text-xs p-1 rounded mt-1 border"
-                        style={{
-                            backgroundColor: theme.colors.bg.tertiary,
-                            borderColor: theme.colors.border.secondary,
-                            color: theme.colors.text.primary
-                        }}
-                    />
-                </div>
-
-                <button
-                    onClick={runPhysics}
-                    disabled={loading}
-                    className="w-full text-xs py-1.5 rounded uppercase font-bold transition-colors"
-                    style={{
-                        backgroundColor: theme.colors.accent.primary,
-                        color: theme.colors.bg.primary
-                    }}
-                >
-                    {loading ? 'Solving...' : 'Compute'}
-                </button>
-
-                {result && expanded && (
-                    <div className="mt-4 p-2 rounded border max-h-60 overflow-y-auto"
-                        style={{
-                            backgroundColor: theme.colors.bg.primary,
-                            borderColor: theme.colors.border.secondary
-                        }}
-                    >
-                        <div className="flex justify-between items-center mb-2">
-                            <span className="text-[10px]" style={{ color: theme.colors.status.success }}>RESULT</span>
-                            <button onClick={() => setExpanded(false)} className="text-[10px] hover:text-white" style={{ color: theme.colors.text.muted }}>CLOSE</button>
+                {mode === 'VALIDATE' && (
+                    <div>
+                        <div className="grid grid-cols-2 gap-2 text-[9px] mb-2 font-mono">
+                            <div className="flex flex-col">
+                                <span style={{ color: theme.colors.text.muted }}>Material</span>
+                                <span className="truncate font-bold" style={{ color: theme.colors.text.primary }} title={valContext.material}>
+                                    {valContext.material}
+                                </span>
+                            </div>
+                            <div className="flex flex-col text-right">
+                                <span style={{ color: theme.colors.text.muted }}>Est. Load</span>
+                                <span style={{ color: theme.colors.text.primary }}>{valContext.load}</span>
+                            </div>
                         </div>
-                        <pre className="text-[10px] font-mono whitespace-pre-wrap" style={{ color: theme.colors.text.secondary }}>
-                            {JSON.stringify(result, null, 2)}
-                        </pre>
+                        <button
+                            onClick={runValidation}
+                            disabled={loading}
+                            className="w-full py-1 rounded text-[9px] font-bold uppercase tracking-wider flex items-center justify-center gap-1 hover:brightness-110"
+                            style={{
+                                backgroundColor: theme.colors.accent.primary,
+                                color: theme.colors.bg.primary
+                            }}
+                        >
+                            {loading ? 'Analyzing...' : 'Run Analysis'}
+                        </button>
+                    </div>
+                )}
+
+                {/* Inline Result Display - Compact */}
+                {result && expanded && (
+                    <div className="mt-2 pt-2 border-t text-[9px]" style={{ borderColor: theme.colors.border.secondary }}>
+                        <div className="flex justify-between items-center mb-1">
+                            <span className="font-bold uppercase" style={{ color: theme.colors.status.success }}>Results</span>
+                            <button onClick={() => setExpanded(false)} style={{ color: theme.colors.text.muted }}>✕</button>
+                        </div>
+                        {result.metrics ? (
+                            <div className="grid grid-cols-2 gap-x-2 gap-y-1 font-mono">
+                                {Object.entries(result.metrics).map(([k, v]) => (
+                                    <React.Fragment key={k}>
+                                        <span style={{ color: theme.colors.text.secondary }}>{k.split('_')[0]}</span>
+                                        <span className="text-right" style={{ color: theme.colors.text.primary }}>{v}</span>
+                                    </React.Fragment>
+                                ))}
+                            </div>
+                        ) : (
+                            <div className="font-mono opacity-80 max-h-20 overflow-y-auto">
+                                {result.answer || JSON.stringify(result)}
+                            </div>
+                        )}
+                        {result.warnings?.length > 0 && (
+                            <div className="mt-1 text-red-400 font-bold">
+                                ⚠ {result.warnings.length} Warning(s)
+                            </div>
+                        )}
                     </div>
                 )}
             </div>

@@ -3,6 +3,7 @@ import math
 import numpy as np
 from typing import Dict, Any, List, Optional
 import os
+from backend.physics import get_physics_kernel
 
 # Try to import TensorFlow/Keras
 try:
@@ -173,6 +174,10 @@ class ThermalAgent:
         self.model_path = model_path
         self.model = None
         self.has_tf = HAS_TF
+        
+        # Initialize Physics Kernel
+        self.physics = get_physics_kernel()
+        logger.info("ThermalAgent: Physics kernel initialized")
         
         # Initialize Oracles for thermal analysis
         try:

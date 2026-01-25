@@ -1,0 +1,13 @@
+{
+  "simulation_frequency": 2000,
+  "incremental_compilation": true,
+  "secure_boot": true,
+  "agent_sandboxing": true,
+  "agent_proposals": true,
+  "physics_kernel": "EARTH_MARINE",
+  "compiler_optimization": "balanced",
+  "visualization_quality": "ULTRA",
+  "physics_fidelity": "balanced",
+  "physics_validation_enabled": true,
+  "physics_logging_level": "INFO"
+}

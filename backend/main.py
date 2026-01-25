@@ -28,9 +28,6 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="BRICK OS API", version="0.1.0")
 
-# --- Settings Manager ---
-from config.settings_manager import get_settings_manager, RuntimeSettings
-
 # --- Agent Registry ---
 AGENTS = get_agent_registry()
 
@@ -414,6 +411,101 @@ async def solve_physics(request: PhysicsRequest):
         logger.error(f"Physics Oracle Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+class PhysicsValidationRequest(BaseModel):
+    geometry: Dict[str, Any] # e.g. {type, dims: {length, width, height}}
+    material: str             # e.g. "Aluminum"
+    loads: Optional[Dict[str, Any]] = None # e.g. {force_y: -100}
+
+@app.post("/api/physics/validate")
+async def validate_physics_component(req: PhysicsValidationRequest):
+    """
+    Validates a single component's physics.
+    Returns: Mass, Deflection, FOS, Stability Status.
+    """
+    from agents.physics_agent import PhysicsAgent
+    # We use PhysicsAgent which wraps UnifiedPhysicsKernel
+    
+    try:
+        agent = PhysicsAgent()
+        
+        # 1. Material Properties
+        # The agent should have access to UnifiedMaterialsAPI via kernel
+        # We can ask it to get properties
+        mat_props = agent.physics.domains["materials"].get_material_properties(req.material)
+        
+        # 2. Structural Calculation
+        # Map geometry to structural element (beam/plate)
+        # This logic ideally belongs in domains/structures, but we'll orchestrate here for now
+        g = req.geometry
+        dims = g.get("dims", {})
+        
+        # Default load if none provided (e.g. self-weight or standard test load)
+        load = req.loads if req.loads else {"force": 1000} # 1kN test load
+        
+        results = {
+            "valid": True,
+            "metrics": {},
+            "warnings": []
+        }
+        
+        # A. Mass Calculation
+        # Volume * Density
+        # Simple box approximation for now if specific shape logic missing
+        volume = 0
+        if g.get("type") == "box":
+             volume = dims.get("length",0) * dims.get("width",0) * dims.get("height",0)
+        elif g.get("type") == "cylinder":
+             import math
+             r = dims.get("radius", 0)
+             h = dims.get("height", 0)
+             volume = math.pi * r**2 * h
+             
+        rho = mat_props.get("density", 1000)
+        mass = volume * rho
+        results["metrics"]["mass_kg"] = round(mass, 4)
+        
+        # B. Deflection / Stress (Beam Theory)
+        # If it looks like a beam (long slender), run beam calc
+        # Length >> Width/Height
+        L = dims.get("length", 1)
+        if L > 0 and mat_props.get("youngs_modulus"):
+            E = mat_props.get("youngs_modulus")
+            # I = bh^3 / 12 (Rectangular cross section)
+            w = dims.get("width", 0.1)
+            h = dims.get("height", 0.1)
+            
+            if w > 0 and h > 0:
+                I = (w * h**3) / 12
+                F = load.get("force", 1000)
+                
+                # Cantilever: FL^3 / 3EI
+                # Simply Supported: FL^3 / 48EI
+                # We'll assume Cantilever for worst-case validation
+                deflection = (F * L**3) / (3 * E * I)
+                results["metrics"]["deflection_mm"] = round(deflection * 1000, 4)
+                results["metrics"]["stiffness_kNm"] = round((3 * E * I) / L**3, 2)
+                
+                # C. FOS (Yield / Stress)
+                # Sigma = My/I = (F*L) * (h/2) / I
+                moment = F * L
+                stress = (moment * (h/2)) / I
+                yield_str = mat_props.get("yield_strength") # Might be missing for elements
+                
+                if yield_str:
+                    fos = yield_str / stress
+                    results["metrics"]["fos"] = round(fos, 2)
+                    if fos < 1.0:
+                        results["valid"] = False
+                        results["warnings"].append("Factor of Safety < 1.0 (Yield Failure)")
+                else:
+                     results["metrics"]["stress_MPa"] = round(stress / 1e6, 2)
+            
+        return results
+        
+    except Exception as e:
+        logger.error(f"Validation Error: {e}")
+        return {"valid": False, "error": str(e)}
+
 @app.post("/api/physics/compile")
 async def compile_physics(project: BrickProject):
     """
@@ -596,6 +688,56 @@ async def openscad_info():
     
     agent = OpenSCADAgent()
     return agent.get_info()
+
+@app.post("/api/openscad/compile-stream")
+async def compile_openscad_stream(request: Dict[str, Any]):
+    """
+    Compile OpenSCAD assembly progressively using Server-Sent Events (SSE).
+    Streams parts as they complete for parallel rendering.
+    """
+    from agents.openscad_agent import OpenSCADAgent
+    from fastapi.responses import StreamingResponse
+    import json
+    
+    scad_code = request.get("code", "")
+    
+    if not scad_code:
+        return {"success": False, "error": "No OpenSCAD code provided"}
+    
+    agent = OpenSCADAgent()
+    
+    async def event_generator():
+        """Generate SSE events for progressive compilation"""
+        try:
+            for event_data in agent.compile_assembly_progressive(scad_code):
+                # Format as SSE
+                event_type = event_data.get("event", "message")
+                
+                # Serialize data to JSON
+                data_json = json.dumps(event_data)
+                
+                # SSE format: event: <type>\ndata: <json>\n\n
+                yield f"event: {event_type}\n"
+                yield f"data: {data_json}\n\n"
+                
+        except Exception as e:
+            error_data = {
+                "event": "error",
+                "error": str(e),
+                "success": False
+            }
+            yield f"event: error\n"
+            yield f"data: {json.dumps(error_data)}\n\n"
+    
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"  # Disable nginx buffering
+        }
+    )
 
 
 # --- Geometry Export API (Phase 13) ---

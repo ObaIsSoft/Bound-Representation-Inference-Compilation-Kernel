@@ -5,7 +5,12 @@ export default {
         "./src/**/*.{js,ts,jsx,tsx}",
     ],
     theme: {
-        extend: {},
+        extend: {
+            fontFamily: {
+                sans: ['"League Spartan"', 'sans-serif'], // Override default sans
+                majestic: ['"League Spartan"', 'sans-serif'], // Custom class
+            }
+        },
     },
     plugins: [],
     safelist: [

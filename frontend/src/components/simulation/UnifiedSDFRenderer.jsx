@@ -825,49 +825,96 @@ const UnifiedSDFRenderer = ({
 
 // Simple Help Overlay Component
 const ControlsTour = ({ onClose }) => {
+    const { theme } = useTheme();
+
     return (
-        <div className="absolute top-16 right-4 z-50 w-64 p-4 bg-gray-900/95 text-gray-200 rounded-lg shadow-xl border border-gray-700 backdrop-blur-md animate-fade-in origin-top-right">
-            <div className="flex justify-between items-center mb-3 border-b border-gray-700 pb-2">
-                <h3 className="font-bold text-sm text-blue-400">Navigation Controls</h3>
-                <button onClick={onClose} className="text-gray-500 hover:text-white">✕</button>
+        <div
+            className="absolute top-16 right-4 z-50 w-64 p-4 rounded-lg shadow-xl backdrop-blur-md animate-fade-in origin-top-right"
+            style={{
+                backgroundColor: theme?.colors?.bg?.secondary ? `${theme.colors.bg.secondary}F2` : '#111827F2', // 95% opacity
+                border: `1px solid ${theme?.colors?.border?.primary || '#374151'}`,
+                color: theme?.colors?.text?.primary || '#E5E7EB'
+            }}
+        >
+            <div
+                className="flex justify-between items-center mb-3 pb-2"
+                style={{ borderBottom: `1px solid ${theme?.colors?.border?.primary || '#374151'}` }}
+            >
+                <h3
+                    className="font-bold text-sm"
+                    style={{ color: theme?.colors?.accent?.primary || '#60A5FA' }}
+                >
+                    Navigation Controls
+                </h3>
+                <button
+                    onClick={onClose}
+                    className="hover:opacity-80 transition-opacity"
+                    style={{ color: theme?.colors?.text?.tertiary || '#9CA3AF' }}
+                >
+                    ✕
+                </button>
             </div>
 
             <div className="space-y-3 text-xs">
                 <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 flex items-center justify-center bg-gray-800 rounded border border-gray-600">
+                    <div
+                        className="w-8 h-8 flex items-center justify-center rounded border"
+                        style={{
+                            backgroundColor: theme?.colors?.bg?.tertiary || '#1F2937',
+                            borderColor: theme?.colors?.border?.secondary || '#4B5563',
+                            color: theme?.colors?.text?.primary || '#E5E7EB'
+                        }}
+                    >
                         <span className="font-mono">LMB</span>
                     </div>
                     <div>
-                        <p className="font-semibold text-gray-300">Rotate</p>
-                        <p className="text-gray-500">Orbit around object</p>
+                        <p className="font-semibold" style={{ color: theme?.colors?.text?.primary || '#E5E7EB' }}>Rotate</p>
+                        <p style={{ color: theme?.colors?.text?.secondary || '#9CA3AF' }}>Orbit around object</p>
                     </div>
                 </div>
 
                 <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 flex items-center justify-center bg-gray-800 rounded border border-gray-600">
+                    <div
+                        className="w-8 h-8 flex items-center justify-center rounded border"
+                        style={{
+                            backgroundColor: theme?.colors?.bg?.tertiary || '#1F2937',
+                            borderColor: theme?.colors?.border?.secondary || '#4B5563',
+                            color: theme?.colors?.text?.primary || '#E5E7EB'
+                        }}
+                    >
                         <span className="font-mono">RMB</span>
                     </div>
                     <div>
-                        <p className="font-semibold text-gray-300">Pan</p>
-                        <p className="text-gray-500">Move camera view</p>
+                        <p className="font-semibold" style={{ color: theme?.colors?.text?.primary || '#E5E7EB' }}>Pan</p>
+                        <p style={{ color: theme?.colors?.text?.secondary || '#9CA3AF' }}>Move camera view</p>
                     </div>
                 </div>
 
                 <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 flex items-center justify-center bg-gray-800 rounded border border-gray-600">
+                    <div
+                        className="w-8 h-8 flex items-center justify-center rounded border"
+                        style={{
+                            backgroundColor: theme?.colors?.bg?.tertiary || '#1F2937',
+                            borderColor: theme?.colors?.border?.secondary || '#4B5563',
+                            color: theme?.colors?.text?.primary || '#E5E7EB'
+                        }}
+                    >
                         <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
                         </svg>
                     </div>
                     <div>
-                        <p className="font-semibold text-gray-300">Zoom</p>
-                        <p className="text-gray-500">Scroll wheel</p>
+                        <p className="font-semibold" style={{ color: theme?.colors?.text?.primary || '#E5E7EB' }}>Zoom</p>
+                        <p style={{ color: theme?.colors?.text?.secondary || '#9CA3AF' }}>Scroll wheel</p>
                     </div>
                 </div>
 
-                <div className="mt-2 pt-2 border-t border-gray-700">
-                    <p className="text-gray-500 italic">
-                        Tip: Use <span className="text-blue-400">Shift + Drag</span> to Pan without RMB.
+                <div
+                    className="mt-2 pt-2"
+                    style={{ borderTop: `1px solid ${theme?.colors?.border?.secondary || '#4B5563'}` }}
+                >
+                    <p className="italic" style={{ color: theme?.colors?.text?.muted || '#6B7280' }}>
+                        Tip: Use <span style={{ color: theme?.colors?.accent?.primary || '#60A5FA' }}>Shift + Drag</span> to Pan without RMB.
                     </p>
                 </div>
             </div>

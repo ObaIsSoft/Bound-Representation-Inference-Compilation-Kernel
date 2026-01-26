@@ -626,6 +626,8 @@ The `backend/main.py` file serves as the gateway to the BRICK OS kernel. It is a
 29. **ChemistryCritic**: Reaction hazards.
 30. **ComponentCritic**: Vendor availability.
 31. **SurrogateCritic**: Hallucination check.
+32. **RedTeamAgent**: Adversarial Stress Testing (`EdgeCaseGenerator`).
+33. **ScientistAgent**: Symbolic Regression & Equation Discovery.
 
 ## 11.5 Advanced / Experimental Agents
 32. **Von Neumann Agent** (`von_neumann_agent.py`): Self-replication logic.
@@ -654,6 +656,7 @@ The `backend/main.py` file serves as the gateway to the BRICK OS kernel. It is a
 55. **Template Design Agent** (`template_design_agent.py`): Boilerplate generation.
 56. **Thermal Agent** (`thermal_agent.py`): Heat accumulation logic.
 57. **Tolerance Agent** (`tolerance_agent.py`): GD&T stackup analysis.
+58. **LatentSpaceAgent** (`latent_agent.py`): Manifold Learning & Design Interpolation.
 
 ---
 
@@ -823,6 +826,47 @@ SQLite database for material properties.
     *   `specific_heat` (REAL) [J/(kg*K)]
     *   `cost_per_kg` (REAL) [USD]
     *   `category` (TEXT) ['metal', 'polymer', 'ceramic']
+
+---
+
+# 15. The Generative Pivot (Phases 11-14)
+
+In early 2026, BRICK OS transitioned from a deterministic "Constraint Solver" to a **Generative Artificial Engineering System**. This pivot involved four major technological phases.
+
+## 15.1 Phase 11: The Evolutionary Engine
+We replaced the gradient-descent parameter tuner with a true **Topology Optimization** engine.
+*   **Graph Genome**: Designs are no longer fixed trees but dynamic graphs of `ConstraintNodes`.
+*   **Mutators**: The `OptimizationAgent` uses `MutationOperators` (Add, Remove, Split, Connect) to explore novel topologies.
+    *   *Example*: "Splitting a single beam into a truss structure."
+*   **Crossover**: Implements sexual reproduction (Subtree Swapping) to combine traits from high-performing parents.
+*   **Library Injection**: Unlike standard genetic algorithms, our engine injects "high-value assets" (Motors, Batteries) from the catalog into the genome, ensuring functional designs.
+
+## 15.2 Phase 12: The Physics Oracle (PINN)
+Evolutionary algorithms require thousands of evaluations, which is too slow for standard FEA.
+*   **MultiPhysicsPINN**: We built a **Physics-Informed Neural Network**.
+*   **Teacher-Student Architecture**:
+    *   **Teacher (Analytical)**: Slow, exact solver (Conservation Laws).
+    *   **Student (Neural)**: Fast MLPRegressor (`sklearn`) that learns the residuals of the Teacher.
+*   **Online Learning**: The Student trains *during* the evolutionary run. As the population evolves, the Student becomes smarter, accelerating the search 100x.
+
+## 15.3 Phase 13: The Closed Loop (Adversarial & Scientific)
+To prevent "gaming the metric", we introduced critics.
+1.  **Red Team (The Adversary)**:
+    *   **`EdgeCaseGenerator`**: Injects extreme faults (`IMPACT_LOAD`, `THERMAL_SHOCK`, `MATERIAL_DEGRADATION`).
+    *   **StressTest**: Runs Monte Carlo simulations on elite candidates.
+    *   **Decimation**: Designs that fail the Red Team audit receive a 90% fitness penalty.
+2.  **Scientist (The Observer)**:
+    *   **Symbolic Regression**: Uses Genetic Programming to evolve mathematical formulas that fit the failure data.
+    *   **Insight Generation**: Returns human-readable laws (e.g., `FailureRate ~= 0.4 * Height / Mass`) to explain *why* designs worked or failed.
+
+## 15.4 Phase 14: Latent Space Interpolation
+To bridge the gap between discrete designs, we implemented Manifold Learning.
+*   **`LatentSpaceAgent`**:
+    *   **Encoder**: Maps the Graph Genome into a continuous 3D Vector Space (Z-Space) using PCA.
+    *   **Interpolation**: Allows smooth "Morphing" between two distinct topological species (e.g., transforming a Drone Frame into a Rover Chassis).
+    *   **Retrieval**: Enables "Design by Analogy" (finding nearest neighbors in latent memory).
+
+This stack (Evolution -> PINN -> Adversary -> Latent Space) constitutes the modern **Creator's Engine**.
 
 ---
 

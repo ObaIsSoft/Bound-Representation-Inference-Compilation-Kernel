@@ -1,320 +1,296 @@
 import logging
 import random
+import copy
 import math
-from typing import Dict, Any, List, Optional, Tuple
-from enum import Enum
+from typing import Dict, Any, List, Optional
 from pydantic import BaseModel
-import numpy as np
+from backend.agents.evolution import GeometryGenome, EvolutionaryMutator, EvolutionaryCrossover
+from backend.agents.surrogate.pinn_model import MultiPhysicsPINN
+from backend.agents.critics.adversarial import RedTeamAgent
+from backend.agents.critics.scientist import ScientistAgent
+from backend.agents.generative.latent_agent import LatentSpaceAgent
 
 logger = logging.getLogger(__name__)
 
-class OptimizationStrategy(str, Enum):
-    GRADIENT_DESCENT = "GRADIENT_DESCENT"
-    GENETIC_ALGORITHM = "GENETIC_ALGORITHM"
-    SIMULATED_ANNEALING = "SIMULATED_ANNEALING"
-
-class ObjectiveFunction(BaseModel):
-    id: str
-    target: str # 'MINIMIZE' | 'MAXIMIZE'
-    metric: str # 'DRAG', 'MASS', 'STRESS'
-
-class StrategySelector:
-    """
-    Meta-Learner: Decides WHICH optimization strategy to use.
-    Uses a simplified Contextual Bandit approach.
-    Context: [Problem Size, Constraints, Nonlinearity Score]
-    """
-    def __init__(self):
-        # Maps strategy -> weight (success probability)
-        # Initial priors: Gradient is fast (default), Genetic is robust
-        self.weights = {
-            OptimizationStrategy.GRADIENT_DESCENT: 0.6,
-            OptimizationStrategy.GENETIC_ALGORITHM: 0.2,
-            OptimizationStrategy.SIMULATED_ANNEALING: 0.2
-        }
-        self.history = []
-
-    def select_strategy(self, context: Dict[str, Any]) -> OptimizationStrategy:
-        """
-        Epsilon-Greedy selection based on context.
-        """
-        # Exploration: 20% chance to try random strategy (Boosted for Phase 3 Verification)
-        if random.random() < 0.2:
-            return random.choice(list(OptimizationStrategy))
-            
-        # Exploitation: Heuristic overrides
-        # If problem is highly constrained or non-differentiable -> Genetic
-        if context.get("constraints_count", 0) > 10 or context.get("is_discrete", False):
-            return OptimizationStrategy.GENETIC_ALGORITHM
-            
-        # Default: Pick highest weight
-        return max(self.weights, key=self.weights.get)
-
-    def update_policy(self, strategy: OptimizationStrategy, success: bool, efficiency: float):
-        """
-        Self-Evolution: Logic to update weights based on outcome.
-        """
-        reward = 1.0 if success else -0.5
-        reward += efficiency * 0.1 # Bonus for speed
-        
-        # Simple exponential moving average update
-        lr = 0.1
-        self.weights[strategy] = (1 - lr) * self.weights[strategy] + lr * reward
-        self.history.append({"strategy": strategy, "reward": reward})
-        logger.info(f"[META-LEARNING] Updated {strategy} weight to {self.weights[strategy]:.2f}")
-
 class OptimizationAgent:
     """
-    Optimization Agent - Ares-Class Multi-Modal Solver.
+    The Evolutionary Designer.
     
-    Evolution Capabilities:
-    1. Strategy Selection (Meta-Learning)
-    2. Hyperparameter Tuning (Self-Adjustment)
+    Replaces the old 'Gradient Descent' Tuner with a Population-Based
+    Evolutionary Engine that explores Topological Novelty.
+    
+    Pipeline:
+    1. Seed Population (from Constraints or Random)
+    2. Evaluate Fitness (Physics/Surrogate)
+    3. Select Parents (Tournament)
+    4. Crossover (Sexual Reproduction)
+    5. Mutate (Topological & Parametric)
+    6. Repeat
     """
     
     def __init__(self):
         self.name = "OptimizationAgent"
-        self.selector = StrategySelector()
-        self.step_size = 0.01 
+        # Defaults (will be overridden by config in run)
+        self.default_config = {
+            "population_size": 50,
+            "generations": 20, 
+            "mutation_rate": 0.2,
+            "crossover_rate": 0.7,
+            "topology_add_rate": 0.2,
+            "topology_remove_rate": 0.05,
+            "param_mutation_strength": 0.2,
+            "enable_red_team": True # New config toggle
+        }
+        self.judge = MultiPhysicsPINN(config=self.default_config) # The Physics Oracle
+        self.red_team = RedTeamAgent(self.judge) # The Adversary
+        self.scientist = ScientistAgent() # The Observer
+        self.latent_agent = LatentSpaceAgent() # The Cartographer
         
     def run(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Main entry point.
+        Main Evolutionary Loop.
+        Input: Constraints (from Dreamer/ISA).
+        Output: The Fittest GeometryGenome.
         """
         isa_state = params.get("isa_state", {})
-        obj_dict = params.get("objective", {"target": "MINIMIZE", "metric": "MASS"})
-        objective = ObjectiveFunction(**obj_dict)
-        
-        # 1. Context Extraction (for Meta-Learner)
         constraints = isa_state.get('constraints', {})
-        context = {
-            "num_params": len(constraints),
-            "constraints_count": sum(1 for v in constraints.values() if v.get('locked')),
-            "metric": objective.metric
-        }
         
-        # 2. Strategy Selection
-        strategy = self.selector.select_strategy(context)
-        logger.info(f"[OPTIMIZATION] Strategy Selected: {strategy.value}")
+        # Load Config
+        config = {**self.default_config, **params.get("config", {})}
         
-        mutation_log = []
-        success = False
+        pop_size = config["population_size"]
+        generations = config["generations"]
+        mutation_rate = config["mutation_rate"]
+        crossover_rate = config["crossover_rate"]
+        possible_assets = config.get("available_assets", [])
+        enable_red_team = config.get("enable_red_team", False)
         
-        # 3. Execution (Polymorphic)
-        try:
-            if strategy == OptimizationStrategy.GRADIENT_DESCENT:
-                gradients = self.compute_gradient(isa_state, objective)
-                modified_state = self.evolve_geometry_gradient(isa_state, gradients, objective, mutation_log)
-                success = True # Gradient always "runs", success checked by improvement downstream
+        logger.info(f"[EVOLUTION] Starting Evolutionary Run. Constraints: {len(constraints)}. Config: {config}")
+        
+        # 1. Initialize Population
+        population = self._initialize_population(constraints, pop_size, params)
+        
+        best_genome = None
+        best_fitness = float('-inf')
+        history_log = []
+        red_team_logs = []
+        
+        # 2. Evolution Loop
+        for gen in range(generations):
+            # Evaluate (Fast Pass - PINN)
+            scored_pop = []
+            for genome in population:
+                fitness = self._evaluate_fitness(genome, params)
+                scored_pop.append((genome, fitness))
                 
-            elif strategy == OptimizationStrategy.GENETIC_ALGORITHM:
-                modified_state = self.evolve_geometry_genetic(isa_state, objective, mutation_log)
-                success = True
-                
-            elif strategy == OptimizationStrategy.SIMULATED_ANNEALING:
-                modified_state = self.evolve_geometry_annealing(isa_state, objective, mutation_log)
-                success = True
-                
-        except Exception as e:
-            logger.error(f"Optimization failed: {e}")
-            modified_state = isa_state
-            success = False
+            # Sort by basic fitness
+            scored_pop.sort(key=lambda x: x[1], reverse=True)
             
-        # 4. Self-Evolution (Update Policy)
-        # Note: True "success" comes from the Critic telling us if result improved. 
-        # Here we just record runtime success. The global Critic loop handles long-term updates.
-        self.selector.update_policy(strategy, success, efficiency=1.0) # Placeholder efficiency
+            # ELITE ADVERSARIAL CHECK
+            # "What happens after adversary detects weakness?" -> We punish the weak.
+            # Only test the top 20% to save compute
+            if enable_red_team:
+                elite_count = max(1, int(pop_size * 0.2))
+                elites = scored_pop[:elite_count]
+                
+                # logger.info(f"[Gen {gen}] Red Team attacking top {elite_count} candidates...")
+                
+                new_scored_elites = []
+                for genome, base_fitness in elites:
+                    nodes_data = [attr['data'].dict() for attr in genome.graph.nodes.values()]
+                    
+                    # Run Stress Test (30 trials is enough for a quick check)
+                    stress_result = self.red_team.stress_test(nodes_data, constraints, trials=30)
+                    
+                    # Capture Data for Scientist
+                    if gen > generations * 0.5: # Only analyze mature designs
+                        # Extract basic metrics
+                        node_count = len(nodes_data)
+                        # Calc max dimension (approx)
+                        max_dim = 0
+                        for n in nodes_data:
+                            pos = n['transform']
+                            max_dim = max(max_dim, abs(pos[0]), abs(pos[1]), abs(pos[2]))
+                            
+                        red_team_logs.append({
+                            "node_count": float(node_count),
+                            "max_dim": float(max_dim),
+                            "failure_rate": float(stress_result['failure_rate']),
+                            "fitness": float(base_fitness)
+                        })
+                    
+                    if not stress_result['is_robust']:
+                        # Penalize! 
+                        # Fitness *= 0.1 (Severe penalty for failing Red Team)
+                        # We want Robustness to be a hard gate.
+                        new_fitness = base_fitness * 0.1
+                        # logger.info(f"Genome penalized: {base_fitness:.2f} -> {new_fitness:.2f} (Failure: {stress_result['failure_rate']*100:.0f}%)")
+                    else:
+                        # Bonus for robustness?
+                        new_fitness = base_fitness * 1.1 
+                        
+                    new_scored_elites.append((genome, new_fitness))
+                
+                # Update the population scores with new values
+                scored_pop[:elite_count] = new_scored_elites
+                # Re-sort after penalties
+                scored_pop.sort(key=lambda x: x[1], reverse=True)
+
+            # Update Best
+            current_best, current_score = scored_pop[0]
+            if current_score > best_fitness:
+                best_fitness = current_score
+                best_genome = current_best
+            
+            # Log progress
+            avg_fitness = sum(s[1] for s in scored_pop) / len(scored_pop)
+            history_log.append(f"Gen {gen}: Best={best_fitness:.4f}, Avg={avg_fitness:.4f}")
+            
+            # Selection (Elitism: Keep top 2)
+            next_generation = [g for g, s in scored_pop[:2]]
+            
+            # Breeding
+            while len(next_generation) < pop_size:
+                parent_a = self._tournament_selection(scored_pop)
+                parent_b = self._tournament_selection(scored_pop)
+                
+                # Crossover
+                if random.random() < crossover_rate:
+                    child = EvolutionaryCrossover.crossover(parent_a, parent_b)
+                else:
+                    child = parent_a.clone()
+                
+                # Mutation
+                EvolutionaryMutator.mutate_topology(
+                    child, 
+                    add_prob=config["topology_add_rate"], 
+                    remove_prob=config["topology_remove_rate"],
+                    available_assets=possible_assets
+                )
+                child.mutate_parameter(
+                    mutation_rate=mutation_rate, 
+                    strength=config["param_mutation_strength"]
+                )
+                
+                next_generation.append(child)
+            
+            population = next_generation
+            
+        logger.info(f"[EVOLUTION] Finished. Best Fitness: {best_fitness}")
+        
+        # SCIENTIST ANALYSIS
+        scientific_insight = "No Data"
+        if red_team_logs:
+             scientific_insight = self.scientist.discover_law(red_team_logs, "failure_rate")
+             logger.info(f"[SCIENTIST] Discovery: {scientific_insight}")
+             
+        # LATENT SPACE GENERATION
+        morph_sequence = []
+        try:
+            # 1. Learn Manifold from final population
+            self.latent_agent.learn_manifold(population)
+            
+            # 2. Interpolate between Top 2 (Winner vs Runner-Up)
+            if len(population) >= 2:
+                # Re-sort to find best two from final pop
+                final_scored = [(g, self._evaluate_fitness(g, params)) for g in population]
+                final_scored.sort(key=lambda x: x[1], reverse=True)
+                
+                winner = final_scored[0][0]
+                runner_up = final_scored[1][0]
+                
+                morph_sequence = self.latent_agent.interpolate(runner_up, winner, steps=5) # Morph from 2nd to 1st
+                logger.info("[LATENT] Generated Morph Sequence.")
+        except Exception as e:
+            logger.error(f"[LATENT] Failed to generate morph: {e}")
         
         return {
-            "success": success,
-            "strategy_used": strategy.value,
-            "original_state": params.get("isa_state", {}),
-            "optimized_state": modified_state,
-            "mutations": mutation_log
+            "success": True,
+            "strategy_used": "EVOLUTIONARY_TOPOLOGY_OPTIMIZATION + RED_TEAM_ADVERSARY",
+            "best_genome": best_genome.to_json() if best_genome else None,
+            "fitness_score": best_fitness,
+            "evolution_history": history_log,
+            "population_count": pop_size,
+            "config_used": config,
+            "scientific_insight": scientific_insight,
+            "morph_sequence": morph_sequence
         }
 
-    # --- STRATEGY 1: GRADIENT DESCENT ---
-    def compute_gradient(self, isa_state: Dict[str, Any], objective: ObjectiveFunction) -> Dict[str, float]:
-        """Calculates sensitivity gradient (J_perturbed - J) / epsilon"""
-        gradients = {}
-        constraints = isa_state.get('constraints', {})
+    def _initialize_population(self, constraints: Dict[str, Any], pop_size: int, params: Dict[str, Any]) -> List[GeometryGenome]:
+        """Seeds the population with random valid geometries, respecting user intent."""
+        seed_config = params.get("seed_config", {})
+        seed_type_str = seed_config.get("type", "CUBE").upper()
+        seed_dims = seed_config.get("dimensions", {})
         
-        for node_id, node in constraints.items():
-            val_obj = node.get('val', {})
-            if not isinstance(val_obj, dict) or 'value' not in val_obj or node.get('locked', False):
-                continue
-                
-            current_val = float(val_obj['value'])
-            
-            j_initial = self._query_surrogate_model(objective.metric, isa_state)
-            
-            val_obj['value'] = current_val + self.step_size
-            j_perturbed = self._query_surrogate_model(objective.metric, isa_state)
-            val_obj['value'] = current_val # Restore
-            
-            sensitivity = (j_perturbed - j_initial) / self.step_size
-            if abs(sensitivity) > 1e-6:
-                gradients[node_id] = sensitivity
-                
-        return gradients
-
-    def evolve_geometry_gradient(self, isa_state: Dict[str, Any], gradients: Dict[str, float], objective: ObjectiveFunction, log: List[str]) -> Dict[str, Any]:
-        """Standard Gradient Descent Step"""
-        alpha = 0.1
-        direction = -1.0 if objective.target == 'MINIMIZE' else 1.0
-        import copy
-        new_state = copy.deepcopy(isa_state)
-        
-        for node_id, grad in gradients.items():
-            mutation = direction * grad * alpha
-            current_val = new_state['constraints'][node_id]['val']['value']
-            new_val = max(0.001, current_val + mutation)
-            new_state['constraints'][node_id]['val']['value'] = new_val
-            log.append(f"Gradient Step {node_id}: {current_val:.4f} -> {new_val:.4f}")
-            
-        return new_state
-
-    # --- STRATEGY 2: GENETIC ALGORITHM ---
-    def evolve_geometry_genetic(self, isa_state: Dict[str, Any], objective: ObjectiveFunction, log: List[str]) -> Dict[str, Any]:
-        """
-        Population-based optimization.
-        Good for non-convex or discrete problems.
-        """
-        import copy
-        constraints = isa_state.get('constraints', {})
-        param_keys = [k for k, v in constraints.items() if not v.get('locked') and 'val' in v]
-        
-        if not param_keys: return isa_state
-        
-        # 1. Generate Population (Mutations)
-        population = []
-        pop_size = 10
-        best_score = float('inf') if objective.target == 'MINIMIZE' else float('-inf')
-        best_state = copy.deepcopy(isa_state)
-        
-        current_score = self._query_surrogate_model(objective.metric, isa_state)
-        log.append(f"GA Baseline: {current_score:.4f}")
-        
-        for i in range(pop_size):
-            candidate = copy.deepcopy(isa_state)
-            # Mutate random parameter
-            key = random.choice(param_keys)
-            curr = candidate['constraints'][key]['val']['value']
-            mutation = random.gauss(0, 0.2) * curr # 20% variance
-            candidate['constraints'][key]['val']['value'] = max(0.001, curr + mutation)
-            
-            score = self._query_surrogate_model(objective.metric, candidate)
-            
-            improved = (objective.target == 'MINIMIZE' and score < best_score) or \
-                       (objective.target == 'MAXIMIZE' and score > best_score)
-                       
-            if improved:
-                best_score = score
-                best_state = candidate
-                log.append(f"GA Gen 1 Winner: {key} -> {candidate['constraints'][key]['val']['value']:.4f} (Score: {score:.4f})")
-                
-        return best_state
-
-    # --- STRATEGY 3: SIMULATED ANNEALING ---
-    def evolve_geometry_annealing(self, isa_state: Dict[str, Any], objective: ObjectiveFunction, log: List[str]) -> Dict[str, Any]:
-        """
-        Probabilistic search to escape local optima.
-        """
-        import copy
-        current_state = copy.deepcopy(isa_state)
-        current_score = self._query_surrogate_model(objective.metric, current_state)
-        
-        T = 1.0 # Temperature
-        cooling_rate = 0.95
-        steps = 20
-        
-        constraints = isa_state.get('constraints', {})
-        param_keys = [k for k, v in constraints.items() if not v.get('locked') and 'val' in v]
-        
-        if not param_keys: return isa_state
-        
-        for i in range(steps):
-            # Neighbor
-            candidate = copy.deepcopy(current_state)
-            key = random.choice(param_keys)
-            val = candidate['constraints'][key]['val']['value']
-            candidate['constraints'][key]['val']['value'] = max(0.001, val + random.gauss(0, 0.05))
-            
-            candidate_score = self._query_surrogate_model(objective.metric, candidate)
-            
-            delta = candidate_score - current_score
-            if objective.target == 'MAXIMIZE': delta = -delta
-            
-            # Acceptance Probability
-            if delta < 0 or random.random() < math.exp(-delta / T):
-                current_state = candidate
-                current_score = candidate_score
-                log.append(f"SA Step {i}: Accepted (Score: {current_score:.4f}, T: {T:.2f})")
-            
-            T *= cooling_rate
-            
-        return current_state
-
-    def _query_surrogate_model(self, metric: str, state: Dict[str, Any]) -> float:
-        """
-        Fast Heuristic Surrogate for physical properties.
-        (Same as before, simplified for this refactor demo)
-        """
-        constraints = state.get('constraints', {})
-        radius = 0.5
-        width = 1.0
-        length = 1.0
-        
-        for k, v in constraints.items():
-            val = v.get('val', {}).get('value', 0)
-            if 'rad' in k.lower(): radius = val
-            if 'width' in k.lower(): width = val
-            
-        if metric == 'MASS': return length * width * radius
-        if metric == 'DRAG': return width * radius * 1.2
-        if metric == 'STRESS': return 1.0 / max(0.001, radius * width)
-        return 0.0
-
-    # --- GEOMETRIC EVOLUTION (Smart Snap) ---
-    def optimize_sketch_curve(self, points: List[List[float]], objective: ObjectiveFunction) -> List[List[float]]:
-        """
-        Adjoint-style "Smart Snap" for sketch curves.
-        Adjusts point positions to minimize an objective (e.g. curvature energy, drag).
-        """
-        # Convert to numpy for vector math
+        # Map string to Enum
         try:
-            current_points = np.array(points)
-        except:
-            return points # Fallback if malformed
+            from backend.agents.evolution import PrimitiveType
+            seed_type = PrimitiveType[seed_type_str]
+        except KeyError:
+            seed_type = PrimitiveType.CUBE
             
-        iterations = 20
-        learning_rate = 0.05
-        
-        for i in range(iterations):
-            gradients = np.zeros_like(current_points)
+        possible_assets = params.get("config", {}).get("available_assets", [])
             
-            # Finite Difference for each coordinate of each point
-            # (Simplified for performance - effectively a local smoothing + physics pull)
-            for idx in range(1, len(current_points) - 1): # Anchor endpoints
-                original_pos = current_points[idx].copy()
-                
-                # 1. Physics Pull (Mock Adjoint)
-                # If Drag, pull towards flow lines (e.g. align with X axis)
-                if objective.metric == 'DRAG':
-                    # Heuristic: Minimize Y/Z deviation from flow (X-axis)
-                    # J = y^2 + z^2
-                    gradients[idx][1] += 2 * original_pos[1] * 0.1 # dJ/dy
-                    gradients[idx][2] += 2 * original_pos[2] * 0.1 # dJ/dz
-                    
-                # 2. Smoothness (Curvature Energy)
-                # Minimize distance to average of neighbors (Laplacian smoothing)
-                # J = ||p_i - (p_{i-1} + p_{i+1})/2||^2
-                neighbor_avg = (current_points[idx-1] + current_points[idx+1]) * 0.5
-                smooth_grad = (original_pos - neighbor_avg)
-                gradients[idx] += smooth_grad * 0.5 # Weight for smoothness
-                
-            # Apply update
-            current_points -= learning_rate * gradients
+        pop = []
+        for _ in range(pop_size):
+            # Create a seeded genome
+            g = GeometryGenome(seed_params=seed_dims, seed_type=seed_type) 
             
-        return current_points.tolist()
+            # Randomly grow it a bit initially
+            for _ in range(random.randint(1, 5)):
+                 EvolutionaryMutator._add_random_primitive(g, possible_assets)
+            pop.append(g)
+        return pop
 
+    def _evaluate_fitness(self, genome: GeometryGenome, params: Dict[str, Any]) -> float:
+        """
+        The Judge.
+        Uses MultiPhysicsPINN to validate the design against Conservation Laws.
+        Also evaluates the specific Design Objective.
+        """
+        constraints = params.get("isa_state", {}).get("constraints", {})
+        objective_type = params.get("objective", {}).get("type", "VOLUME")
+        
+        # Serialize genome nodes for the PINN
+        nodes_data = [attr['data'].dict() for attr in genome.graph.nodes.values()]
+        
+        # Ask the Oracle (PINN) - Basic Check using Nominal Constraints
+        result = self.judge.validate_design(nodes_data, constraints)
+        physics_score = result['physics_score'] # 0.0 to 1.0
+        
+        # Objective Evaluation
+        objective_score = 0.0
+        
+        if objective_type == "VOLUME":
+            for n in nodes_data:
+                p = n.get('params', {})
+                if n['type'] == 'CUBE':
+                    w = p.get('width', {}).get('value', 1)
+                    h = p.get('height', {}).get('value', 1)
+                    d = p.get('depth', {}).get('value', 1)
+                    objective_score += w * h * d
+                    
+        elif objective_type == "SPREAD":
+            # Reward wide/tall structures (e.g. Drone Arms, Skyscrapers)
+            # Metric: Average distance from origin + Bounding Box Size
+            for n in nodes_data:
+                pos = n.get('transform', [0]*6)
+                dist = math.sqrt(pos[0]**2 + pos[1]**2 + pos[2]**2)
+                objective_score += dist
+                
+        elif objective_type == "HEIGHT":
+             # Reward Y-axis growth (Skyscraper)
+             for n in nodes_data:
+                pos = n.get('transform', [0]*6)
+                objective_score += pos[1] # Reward positive Y
+        
+        # Fitness = Validity * (1 + NormalizedObjective)
+        # We assume Physics is the "Gatekeeper" (Multiplier).
+        fitness = physics_score * (1.0 + objective_score)
+        
+        return fitness
+
+    def _tournament_selection(self, scored_population: List[Any], k=3) -> GeometryGenome:
+        """Selects the best individual from k random samples."""
+        tournament = random.sample(scored_population, k)
+        return max(tournament, key=lambda x: x[1])[0]

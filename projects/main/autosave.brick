@@ -1,6 +1,6 @@
 {
   "geometry": {
-    "id": "60153b10-ca7e-448d-a9f1-d8b68c7ae09e",
+    "id": "563603a2-712f-4628-9aab-fe528ab1a588",
     "name": "Project_Root",
     "constraints": {
       "mass_budget": 100
@@ -10,8 +10,7 @@
       "power_draw": 0,
       "bounding_volume": 0
     },
-    "children": [],
-    "operation": "DIFFERENCE"
+    "children": []
   },
   "physics": {
     "state": {
@@ -48,9 +47,9 @@
     "scenario": "none"
   },
   "sketch": [],
-  "timestamp": "2026-01-26T01:06:05.490Z",
+  "timestamp": "2026-01-26T11:29:06.923Z",
   "manifest": {
-    "last_saved": "2026-01-26T02:06:05.512094",
+    "last_saved": "2026-01-26T12:29:06.954447",
     "version": "1.0.0",
     "branch": "main"
   }

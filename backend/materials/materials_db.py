@@ -10,13 +10,13 @@ from typing import Dict, List, Optional, Any
 from .materials_api import UnifiedMaterialsAPI
 
 try:
-    from database.supabase_client import SupabaseClientWrapper
+    from database.supabase_client import SupabaseClient
 except ImportError:
     try:
-        from backend.database.supabase_client import SupabaseClientWrapper
+        from backend.database.supabase_client import SupabaseClient
     except ImportError:
         # Fallback to relative import if running as module
-        from ...database.supabase_client import SupabaseClientWrapper
+        from ...database.supabase_client import SupabaseClient
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ class MaterialsDatabase:
     def __init__(self, use_api: bool = True, api_key: str = None):
         self.use_api = use_api
         # Initialize Supabase
-        self.supabase = SupabaseClientWrapper()
+        self.supabase = SupabaseClient()
         
         # Initialize External API
         if use_api:

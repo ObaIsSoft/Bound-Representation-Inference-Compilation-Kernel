@@ -4,13 +4,13 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from agents.component_agent import ComponentAgent
-from database.supabase_client import SupabaseClientWrapper
+from database.supabase_client import SupabaseClient
 
 def verify():
     print("🔍 -- Verifying Universal Component Catalog --")
     
     # 1. Check DB Connection
-    db = SupabaseClientWrapper()
+    db = SupabaseClient()
     if not db.enabled:
         print("⚠️ Supabase not enabled. Skipping integration tests.")
         return

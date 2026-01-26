@@ -1218,9 +1218,9 @@ async def chat(request: ChatRequest):
     entities = result.get("entities", {})
 
     # [FIX] Override intent if we are already in a design gathering flow
-    # This prevents answers to questions (e.g. "250kmh") from being misclassified as "analysis_request"
-    if conversation.design_type and not conversation.ready_for_planning:
-        logger.info(f"Overriding intent to 'design_request' due to active gathering state (Original: {intent})")
+    # This prevents answers to questions (e.g. "250kmh") from being misclassified as "analysis_request" or "followup"
+    if conversation.design_type:
+        logger.info(f"Overriding intent to 'design_request' due to active design session (Original: {intent})")
         intent = "design_request"
 
     

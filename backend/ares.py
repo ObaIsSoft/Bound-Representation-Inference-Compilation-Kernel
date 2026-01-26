@@ -94,6 +94,35 @@ class AresMiddleware:
         # Track units used for each parameter to enforce consistency
         self.parameter_unit_lock: Dict[str, str] = {}
 
+    def validate_unit(self, input_data: Dict[str, Any], context_key: str = "unknown"):
+        """
+        Validates that a dictionary contains valid 'unit' and 'value' keys.
+        Example input constraint: {"value": 10, "unit": "kg"}
+        """
+        # If it's a nested dict like {"mass": {"value": 10, "unit": "kg"}}
+        target = input_data
+        
+        # If the input is the wrapper dict, peel it
+        if isinstance(input_data, dict) and context_key in input_data:
+             target = input_data[context_key]
+
+        if not isinstance(target, dict):
+             # Logic simplifies: if raw value, we assume standard unit or ignore
+             return True
+
+        # Check for 'unit'
+        if "unit" in target:
+             # Create a dummy UnitValue to trigger validator
+             try:
+                 # Minimal Construction 
+                 UnitValue(value=target.get("value", 0), unit=target["unit"])
+                 return True
+             except Exception as e:
+                 raise AresUnitError(f"Ares Validation Failed for '{context_key}': {e}")
+        
+        # If no unit key, maybe implicit? For now pass.
+        return True
+
     def validate_constraints(self, constraints: Dict[str, Any]) -> Dict[str, UnitValue]:
         validated = {}
         for key, raw_data in constraints.items():

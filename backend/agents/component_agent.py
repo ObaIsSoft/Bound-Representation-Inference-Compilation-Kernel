@@ -3,9 +3,9 @@ from typing import Dict, Any, List, Optional
 import logging
 import json
 try:
-    from database.supabase_client import SupabaseClientWrapper
+    from database.supabase_client import SupabaseClient
 except ImportError:
-    from backend.database.supabase_client import SupabaseClientWrapper
+    from backend.database.supabase_client import SupabaseClient
 
 try:
     from models.component import Component, ComponentInstance
@@ -24,7 +24,7 @@ class ComponentAgent:
     
     def __init__(self):
         self.name = "ComponentAgent"
-        self.db = SupabaseClientWrapper()
+        self.db = SupabaseClient()
 
     def run(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """

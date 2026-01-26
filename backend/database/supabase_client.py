@@ -5,7 +5,7 @@ from typing import List, Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
-class SupabaseClientWrapper:
+class SupabaseClient:
     """
     Wrapper for Supabase interaction.
     Handles connection and basic CRUD operations.

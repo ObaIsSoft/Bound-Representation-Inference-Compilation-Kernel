@@ -6,14 +6,14 @@ import json
 # Add backend to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from database.supabase_client import SupabaseClientWrapper
+from database.supabase_client import SupabaseClient
 from scripts.ingestors.parametric_generator import ParametricGenerator
 from scripts.ingestors.datasheet_ingestor import DatasheetIngestor
 
 def populate():
     print("🚀 Starting Universal Catalog Population...")
     
-    db = SupabaseClientWrapper()
+    db = SupabaseClient()
     if not db.enabled:
         print("❌ Supabase Client not enabled. Please check env variables.")
         return

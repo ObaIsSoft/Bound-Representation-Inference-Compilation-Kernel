@@ -144,9 +144,9 @@ def create_tables():
         try:
             # Fix import path since script is run as main
             sys.path.append(os.path.dirname(os.path.dirname(__file__))) # Add backend root
-            from database.supabase_client import SupabaseClientWrapper
+            from database.supabase_client import SupabaseClient
             
-            supa = SupabaseClientWrapper()
+            supa = SupabaseClient()
             if supa.enabled:
                 # Sync Monomers
                 monomers_payload = [

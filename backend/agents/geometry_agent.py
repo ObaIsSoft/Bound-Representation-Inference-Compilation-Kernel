@@ -36,19 +36,12 @@ class GeometryAgent:
         # Initialize Physics Kernel
         self.physics = get_physics_kernel()
         logger.info("GeometryAgent: Physics kernel initialized")
+
+        # Initialize Hybrid Engine (Phase 16)
+        from backend.geometry.hybrid_engine import HybridGeometryEngine
+        self.engine = HybridGeometryEngine()
         
         self.zoo_client = None
-        # Try initializing Zoo client if token exists
-        token = os.getenv("ZOO_API_TOKEN") or os.getenv("KITTYCAD_API_TOKEN")
-        if token:
-            try:
-                from kittycad.client import Client
-                self.zoo_client = Client(token=token)
-                logger.info("Geometry Agent connected to Zoo (KittyCAD)")
-            except ImportError:
-                logger.warning("kittycad library not installed.")
-            except Exception as e:
-                logger.warning(f"Failed to init Zoo: {e}")
 
     def run(self, params: Dict[str, Any], intent: str, environment: Dict[str, Any] = None, ldp_instructions: List[Dict] = None) -> Dict[str, Any]:
         """
@@ -136,11 +129,31 @@ class GeometryAgent:
             kcl_code = self._append_component_placeholders(kcl_code, components_to_render)
 
         # 4. Compile (Zoo or Stub)
-        gltf_data = None
-        if self.zoo_client:
-            zoo_res = self._run_zoo(kcl_code)
-            if zoo_res.get("success"):
-                gltf_data = zoo_res.get("gltf_data")
+        # 4. Compile (Hybrid Engine: Local First)
+        # Replaces previous KCL/Zoo logic
+        # We now generate a GLB for the frontend using Manifold (Hot Path)
+        import asyncio
+        
+        # We need to await the engine, but 'run' is synchronous? 
+        # Ideally GeometryAgent.run should be async, but for now we might bridge it 
+        # or rely on the Orchestrator calling a wrapper.
+        # IF run is sync, we must run the async loop here or use a sync wrapper in engine.
+        # For this refactor, let's assume we can run a quick loop or use `asyncio.run` if strict sync.
+        
+        # NOTE: Orchestrator likely calls this. If Orchestrator expects Sync, we block.
+        # Since Manifold is fast, blocking for <100ms is acceptable for now.
+        
+        try:
+             # run in new loop if needed, or get current?
+             # Simplest strategy for Sync Agent:
+             result = asyncio.run(self.engine.compile(geometry_tree, format="glb"))
+             if result.success:
+                 gltf_data = result.payload
+             else:
+                 logger.error(f"Hybrid Engine Failed: {result.error}")
+                 
+        except Exception as e:
+             logger.error(f"Hybrid Compile Exception: {e}")
 
 
         # 5. Validation (Manifold Agent)

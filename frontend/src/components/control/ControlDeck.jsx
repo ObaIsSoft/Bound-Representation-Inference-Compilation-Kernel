@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
     History, MessageSquarePlus, X, Send, Loader2, Undo2, Trash2,
-    SlidersHorizontal, ShieldCheck, Sparkles, ChevronDown, Pencil
+    SlidersHorizontal, ShieldCheck, Sparkles, ChevronDown, Pencil, Download
 } from 'lucide-react';
 import PanelHeader from '../shared/PanelHeader';
 import { useTheme } from '../../contexts/ThemeContext';
@@ -73,6 +73,7 @@ const ControlDeck = ({
     const activeReasoningStream = [...reasoningStream, ...(contextReasoningStream || [])];
     const [showHistory, setShowHistory] = useState(false);
     const [showModelMenu, setShowModelMenu] = useState(false);
+    const [showExportMenu, setShowExportMenu] = useState(false); // New Export Menu
     const [showViewMenu, setShowViewMenu] = useState(false); // Phase 10
 
     // Modal State
@@ -115,6 +116,56 @@ const ControlDeck = ({
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
             handleSend();
+        }
+    };
+
+    // Export Handler
+    const handleExport = async (format) => {
+        setShowExportMenu(false);
+        // Get the latest geometry tree from context (assuming it's in reasoningStream or session)
+        // For now, we'll try to find it in the last assistant message or query global state
+        // In a real app, DesignContext should hold `currentGeometry`
+
+        // Mock geometry fetch for now - we need DesignContext to expose this!
+        // Assuming user has a valid design loaded.
+
+        const tree = currentSession?.messages?.findLast(m => m.geometry_tree)?.geometry_tree || [];
+
+        if (!tree || tree.length === 0) {
+            alert("No geometry found to export.");
+            return;
+        }
+
+        try {
+            const res = await fetch('http://localhost:8000/api/geometry/compile', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    geometry_tree: tree,
+                    format: format,
+                    mode: format === 'step' ? 'export' : 'standard'
+                })
+            });
+
+            const data = await res.json();
+            if (data.success && data.payload_base64) {
+                // Trigger Download
+                const binary = atob(data.payload_base64);
+                const array = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) array[i] = binary.charCodeAt(i);
+
+                const blob = new Blob([array], { type: 'application/octet-stream' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `design_export.${format}`;
+                a.click();
+            } else {
+                alert("Export Failed: " + (data.error || "Unknown Error"));
+            }
+        } catch (e) {
+            console.error(e);
+            alert("Export Error");
         }
     };
 

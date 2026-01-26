@@ -795,9 +795,41 @@ class ExportRequest(BaseModel):
 @app.post("/api/geometry/export/stl")
 async def export_geometry_stl(request: ExportRequest):
     """
-    Exports the current geometry tree as a binary STL file using Marching Cubes.
+    Legacy STL export. Redirecting to Hybrid Engine.
     """
-    from agents.geometry_agent import GeometryAgent
+    from geometry.hybrid_engine import compile_geometry_task
+    
+    # Adapt request to new engine
+    result = await compile_geometry_task(
+        tree=request.geometry_tree,
+        format="stl",
+        mode="standard"
+    )
+    return result
+
+class CompileGeometryRequest(BaseModel):
+    geometry_tree: List[Dict[str, Any]]
+    format: str = "glb" # glb, step, stl
+    mode: str = "standard" # preview, standard, export
+
+@app.post("/api/geometry/compile")
+async def api_compile_geometry(req: CompileGeometryRequest):
+    """
+    Hybrid Geometry Engine Endpoint.
+    Returns Base64 encoded geometry or file path.
+    """
+    from geometry.hybrid_engine import compile_geometry_task
+    
+    result = await compile_geometry_task(
+        tree=req.geometry_tree,
+        format=req.format,
+        mode=req.mode
+    )
+    
+    if not result["success"]:
+        raise HTTPException(status_code=500, detail=result["error"])
+        
+    return result
     from utils.sdf_mesher import generate_mesh_from_sdf
     from fastapi.responses import Response
     import io

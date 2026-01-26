@@ -3,17 +3,18 @@ import { GitBranch, GitCommit, GitMerge, Clock, User } from 'lucide-react';
 import PanelHeader from '../shared/PanelHeader';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useSimulation } from '../../contexts/SimulationContext';
+import MorphPlayer from '../generative/MorphPlayer';
 
 const ForkPanel = ({ width }) => {
     const { theme } = useTheme();
     const simulation = useSimulation();
 
     // Safely extract design state (with fallbacks for undefined)
-
-    // Safely extract design state (with fallbacks for undefined)
     const isaTree = simulation?.isaTree || null;
     const geometryTree = simulation?.geometryTree || [];
     const sketchPoints = simulation?.sketchPoints || [];
+    const morphSequence = simulation?.morphSequence || null;
+    const setGeometryTree = simulation?.setGeometryTree || (() => { });
 
     const [commits, setCommits] = useState([]);
     const [branches, setBranches] = useState([]);
@@ -108,6 +109,17 @@ const ForkPanel = ({ width }) => {
         }
     };
 
+    // Callback for Morph Player
+    // When the frame changes, we update the Geometry Tree in the main context
+    // This triggers a re-render in UnifiedSDFRenderer
+    const handleMorphFrame = (genomeFrame) => {
+        // genomeFrame is expected to be { nodes: [...], fitness: ... }
+        // We need to extract the nodes which is the format setGeometryTree expects (list of node dicts)
+        if (genomeFrame && genomeFrame.nodes) {
+            setGeometryTree(genomeFrame.nodes);
+        }
+    };
+
     if (width <= 0) return null;
 
     return (
@@ -158,6 +170,16 @@ const ForkPanel = ({ width }) => {
             </div>
 
             <div className="flex-1 overflow-y-auto p-3 space-y-4">
+                {/* MORPH PLAYER INTEGRATION */}
+                {morphSequence && morphSequence.length > 0 && (
+                    <div className="mb-4">
+                        <MorphPlayer
+                            sequence={morphSequence}
+                            onFrameChange={handleMorphFrame}
+                        />
+                    </div>
+                )}
+
                 <div>
                     <h3 className="text-[10px] uppercase font-mono mb-2 flex items-center gap-2" style={{ color: theme.colors.text.muted }}>
                         <GitBranch size={12} /> Branches ({branches.length})

@@ -58,8 +58,32 @@ Return JSON:
     "next_strategic_question": "string" (Ask for missing critical info OR ask about secondary goals/improvements to broaden the scope.)
 }}
 """
+        schema = {
+            "type": "object",
+            "properties": {
+                "extracted": {
+                    "type": "object",
+                    "properties": {
+                        "mission": {"type": "string"},
+                        "secondary_goals": {"type": "string"},
+                        "environment": {"type": "string"},
+                        "constraints": {"type": "string"},
+                        "user_preferences": {"type": "string"}
+                    }
+                },
+                "missing": {"type": "array", "items": {"type": "string"}},
+                "is_ready": {"type": "boolean"},
+                "next_strategic_question": {"type": "string"}
+            },
+            "required": ["extracted", "missing", "is_ready", "next_strategic_question"]
+        }
+        
         try:
-            resp = llm_provider.generate_json(prompt, system_prompt="You are a Senior Design Engineer gathering requirements.")
+            resp = llm_provider.generate_json(
+                prompt=prompt, 
+                schema=schema, 
+                system_prompt="You are a Senior Design Engineer gathering requirements."
+            )
             
             # Update Context
             extracted = resp.get("extracted", {})

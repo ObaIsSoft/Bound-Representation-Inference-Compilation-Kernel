@@ -106,6 +106,9 @@ export const SimulationProvider = ({ children }) => {
         structural: { safety_factor: 10.0, stress: 0.0, deflection: 0.0 }
     });
 
+    // Phase 14: Generative Design State
+    const [morphSequence, setMorphSequence] = useState(null);
+
     // Phase 10: Trigger Analysis
     const runPhysicsAnalysis = React.useCallback(async (design) => {
         if (!design) return;
@@ -562,7 +565,36 @@ export const SimulationProvider = ({ children }) => {
         triggerCritique,
         // Phase 10
         physicsData,
-        runPhysicsAnalysis
+        runPhysicsAnalysis,
+        // Phase 14
+        morphSequence,
+        setMorphSequence,
+        // Helper to update geometry tree directly from MorphPlayer
+        setGeometryTree: (newNodes) => {
+            // newNodes is a flat list of node objects from the genome
+            // The ISA Tree expects a hierarchical structure or at least a standard format.
+            // If we just want to visualize, we might need a `visualizationOverride` state.
+            // But for now, let's try to map it to the ISA tree if possible.
+            // Actually, UnifiedSDFRenderer takes `geometryTree` as prop.
+            // If `App.jsx` passes `isaTree` to Renderer, then updating `isaTree` here works.
+
+            // Convert flat list to minimal tree for rendering
+            // This is a simplification for the MVP Morph Player
+            const root = newNodes.find(n => n.id === 'root') || newNodes[0];
+            if (root) {
+                // Construct a synthetic tree for the renderer
+                const syntheticTree = {
+                    id: root.id,
+                    name: root.type,
+                    params: Object.fromEntries(
+                        Object.entries(root.params).map(([k, v]) => [k, v.value])
+                    ),
+                    transform: root.transform,
+                    children: [] // MVP: Only morphing root for now or need full reconstruction
+                };
+                setIsaTree(syntheticTree);
+            }
+        },
     };
 
     return (

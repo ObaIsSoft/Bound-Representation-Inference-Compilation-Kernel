@@ -692,7 +692,7 @@ const UnifiedSDFRenderer = ({
     return (
         <div className={`w-full h-full ${className}`} style={style}>
             <Canvas
-                key={design?.id || 'sim-canvas'}
+                key="main-sim-canvas" // STATIC KEY: Critical for MorphPlayer 60fps (Prevents Re-Mount)
                 gl={{
                     antialias: true,
                     powerPreference: 'high-performance',

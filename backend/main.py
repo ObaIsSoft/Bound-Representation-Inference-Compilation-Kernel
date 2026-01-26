@@ -1130,17 +1130,7 @@ async def chat(request: ChatRequest):
     3. If design request: gather requirements through questions
     4. Only trigger orchestrator when requirements are complete
     """
-    # ... mock logic ...
-    
-    # Run Orchestrator (Ares/LDP/Geometry)
-    # Now passed 'request.focusedPodId' for scoped execution
-    result = run_orchestrator(
-        request.message, 
-        request.context, 
-        focused_pod_id=request.focusedPodId
-    )
-    
-    return result
+
     from agents.conversational_agent import ConversationalAgent
 
     from conversation_state import conversation_manager
@@ -1168,8 +1158,24 @@ async def chat(request: ChatRequest):
             provider = OllamaProvider(model_name="llama3.2")
         except ImportError:
             logger.error("OllamaProvider import failed.")
+    
+    # 2. Groq
+    elif request.aiModel == "groq":
+        try:
+            from llm.groq_provider import GroqProvider
+            provider = GroqProvider()
+        except ImportError:
+            logger.error("GroqProvider import failed.")
+
+    # 3. Hugging Face
+    elif request.aiModel == "huggingface":
+        try:
+            from llm.huggingface_provider import HuggingFaceProvider
+            provider = HuggingFaceProvider() # Uses default meta-llama/Meta-Llama-3-8B-Instruct
+        except ImportError:
+            logger.error("HuggingFaceProvider import failed.")
             
-    # 2. OpenAI
+    # 4. OpenAI
     elif request.aiModel == "openai":
         from llm.openai_provider import OpenAIProvider
         provider = OpenAIProvider()

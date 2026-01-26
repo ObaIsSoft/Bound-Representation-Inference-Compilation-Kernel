@@ -30,7 +30,7 @@ export default function App() {
     const { theme } = useTheme();
     const { fontSize, aiModel } = useSettings();
     const { isEditorVisible, createArtifactTab, setPendingPlanId } = useDesign();
-    const { isRunning, setIsRunning, metrics, setKclCode, setFocusedPodId, focusedPodId, setCompilationResult } = useSimulation(); // Phase 9: Added focusedPodId
+    const { isRunning, setIsRunning, metrics, setKclCode, setFocusedPodId, focusedPodId, setCompilationResult, setMorphSequence } = useSimulation(); // Phase 9: Added focusedPodId
     const [activeActivity, setActiveActivity] = useState('design');
     const [activeTab, setActiveTab] = useState('terminal');
 
@@ -135,6 +135,14 @@ export default function App() {
                         addReasoning("System", log);
                     }, idx * 100);
                 });
+            }
+
+            // Phase 14: Handle Morph Sequence (Latent Space Interpolation)
+            if (result.morph_sequence && result.morph_sequence.length > 0) {
+                 console.log("Receiving Morph Sequence:", result.morph_sequence.length, "frames");
+                 setMorphSequence(result.morph_sequence);
+                 // Auto-switch to Fork Panel to show the player
+                 setActiveActivity('fork');
             }
 
             // Update session with response

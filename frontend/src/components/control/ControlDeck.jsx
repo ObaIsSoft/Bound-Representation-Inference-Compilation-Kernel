@@ -678,8 +678,10 @@ const ControlDeck = ({
                                                 aiModel === 'gemini-3-flash' ? 'Gemini 3 Flash' :
                                                     aiModel === 'gemini-2.5-flash' ? 'Gemini 2.5 Flash' :
                                                         aiModel === 'gemini-2.5-pro' ? 'Gemini 2.5 Pro' :
-                                                            aiModel === 'ollama' ? 'Ollama (Llama 3.2)' :
-                                                                'Mock AI'}
+                                                            aiModel === 'groq' ? 'Groq (Llama 3 70B)' :
+                                                                aiModel === 'huggingface' ? 'Hugging Face' :
+                                                                    aiModel === 'ollama' ? 'Ollama (Llama 3.2)' :
+                                                                        'Mock AI'}
                                 </span>
                                 <ChevronDown size={8} className="opacity-50" />
                             </button>
@@ -695,6 +697,8 @@ const ControlDeck = ({
                                 >
                                     {[
                                         { id: 'mock', label: 'Mock (Offline)' },
+                                        { id: 'groq', label: 'Groq (Llama 3 70B)' },
+                                        { id: 'huggingface', label: 'Hugging Face (Llama 3 8B)' },
                                         { id: 'ollama', label: 'Ollama (Llama 3.2)' },
                                         { id: 'openai', label: 'OpenAI GPT-4' },
                                         { id: 'gemini-robotics', label: 'Gemini Robotics ER-1.5' },

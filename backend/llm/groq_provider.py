@@ -13,7 +13,7 @@ class GroqProvider(LLMProvider):
     Provider for Groq LPU-accelerated models (e.g., Llama 3, Mixtral).
     Supports both SDK (groq package) and REST API (requests) fallback.
     """
-    def __init__(self, model_name: str = "llama3-70b-8192"):
+    def __init__(self, model_name: str = "llama-3.3-70b-versatile"):
         self.model_name = model_name
         self.api_key = os.getenv("GROQ_API_KEY")
         self.api_url = "https://api.groq.com/openai/v1/chat/completions"

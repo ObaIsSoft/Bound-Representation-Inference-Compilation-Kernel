@@ -14,6 +14,8 @@ export const SettingsProvider = ({ children }) => {
     const [aiModel, setAiModel] = useState('mock'); // 'mock', 'openai', 'gemini-robotics', 'gemini-3-pro', 'gemini-3-flash', 'gemini-2.5-flash', 'gemini-2.5-pro'
     const [visualizationQuality, setVisualizationQualityState] = useState('HIGH'); // 'ULTRA', 'HIGH', 'MEDIUM', 'LOW'
     const [meshRenderingMode, setMeshRenderingMode] = useState('sdf'); // 'sdf' (boolean ops), 'preview' (fast mesh)
+    const [showGrid, setShowGrid] = useState(true);
+    const [showControlsHelp, setShowControlsHelp] = useState(false);
 
     // Load settings from localStorage on mount
     useEffect(() => {
@@ -32,6 +34,8 @@ export const SettingsProvider = ({ children }) => {
                 if (settings.aiModel) setAiModel(settings.aiModel);
                 if (settings.visualizationQuality) setVisualizationQualityState(settings.visualizationQuality);
                 if (settings.meshRenderingMode) setMeshRenderingMode(settings.meshRenderingMode);
+                if (settings.showGrid !== undefined) setShowGrid(settings.showGrid);
+                if (settings.showControlsHelp !== undefined) setShowControlsHelp(settings.showControlsHelp);
             } catch (e) {
                 console.error('Failed to load settings:', e);
             }
@@ -118,6 +122,8 @@ export const SettingsProvider = ({ children }) => {
         setShow3DThermometer(false);
         setVisualizationQualityState('HIGH');
         setMeshRenderingMode('sdf');
+        setShowGrid(true);
+        setShowControlsHelp(false);
         localStorage.removeItem('brick-settings');
     };
 
@@ -151,6 +157,18 @@ export const SettingsProvider = ({ children }) => {
                 setMeshRenderingMode: (mode) => {
                     setMeshRenderingMode(mode);
                     saveSettings({ meshRenderingMode: mode });
+                },
+
+                showGrid,
+                setShowGrid: (value) => {
+                    setShowGrid(value);
+                    saveSettings({ showGrid: value });
+                },
+
+                showControlsHelp,
+                setShowControlsHelp: (value) => {
+                    setShowControlsHelp(value);
+                    saveSettings({ showControlsHelp: value });
                 },
 
                 resetToDefaults

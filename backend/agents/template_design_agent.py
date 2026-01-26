@@ -16,12 +16,21 @@ class TemplateDesignAgent:
     
     def __init__(self):
         self.name = "TemplateDesignAgent"
-        self.library = {
-            "naca_0012": {"type": "airfoil", "symmetric": True, "thickness": 0.12},
-            "naca_2412": {"type": "airfoil", "symmetric": False, "camber": 0.02},
-            "quadcopter_frame_x": {"type": "chassis", "arms": 4, "layout": "X"},
-            "enclosure_ip67": {"type": "box", "features": ["gasket_groove", "screw_posts"]}
-        }
+        
+        # Load library from external JSON
+        import json
+        import os
+        try:
+            data_path = os.path.join(os.path.dirname(__file__), "../data/templates.json")
+            with open(data_path, 'r') as f:
+                self.library = json.load(f)
+        except Exception as e:
+            logger.error(f"Failed to load templates.json: {e}")
+            # Fallback
+            self.library = {
+                "naca_0012": {"type": "airfoil", "symmetric": True, "thickness": 0.12},
+                "soccer_ball": {"type": "sports_equipment", "file_path": "backend/templates/soccer_ball.scad"} 
+            }
         
         # Initialize Neural Surrogate
         try:
@@ -51,6 +60,7 @@ class TemplateDesignAgent:
         Returns:
             {
                 "template": Dict,
+                "scad_code": str (optional),
                 "geometry": Dict (mock),
                 "quality_scores": Dict (if surrogate available),
                 "logs": List[str]
@@ -74,6 +84,17 @@ class TemplateDesignAgent:
                     "logs": logs + ["\n[TEMPLATE] ✗ Template not found"]
                 }
         
+        # Load external file if present
+        scad_code = None
+        if "file_path" in template:
+            try:
+                import os
+                with open(template["file_path"], 'r') as f:
+                    scad_code = f.read()
+                logs.append(f"[TEMPLATE] Loaded SCAD from {template['file_path']}")
+            except Exception as e:
+                logs.append(f"[TEMPLATE] Error loading file: {e}")
+
         # Apply parameters
         logs.append(f"[TEMPLATE] Applying parameters: {custom_params}")
         
@@ -100,6 +121,7 @@ class TemplateDesignAgent:
         
         return {
             "template": template,
+            "scad_code": scad_code,
             "geometry": geometry,
             "quality_scores": quality_scores,
             "logs": logs

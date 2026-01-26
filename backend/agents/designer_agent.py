@@ -93,27 +93,37 @@ class DesignerAgent:
         Generates optional semantic sketch primitives based on style.
         Allows the agent to 'draw' initial concepts.
         """
+        # Load style config if needed (or rely on what was loaded in _generate_material_props)
+        # To be efficient, we should load it once or cache it.
+        # But _generate_material_props loads it fresh every time.
+        
+        # Let's reuse the loading logic or just call it to get the map.
+        # Ideally, we should refactor to load in __init__, but sticking to the current pattern:
+        
         primitives = []
         
-        # Example: If style is "organic", add some fluid capsules
-        if "organic" in style or "bio" in style:
-            primitives.append({
-                "type": "capsule",
-                "start": [-0.5, 0, 0],
-                "end": [0.5, 0.5, 0],
-                "radius": 0.2,
-                "blend": 0.3
-            })
+        # We need the full map, not just the props for one style.
+        # So we repeat the loading logic briefly here or abstract it.
+        import json
+        import os
+        
+        config_path = os.path.join(os.path.dirname(__file__), "../data/standards_config.json")
+        try:
+            with open(config_path, 'r') as f:
+                data = json.load(f)
+                styles_map = data.get("designer_styles", {})
+                
+            # Iterate through all styles in the map
+            # If the current 'style' param matches a key in the map (partial match),
+            # add its primitives if they exist.
             
-        # Example: If style is "constructivist", add structural beams
-        if "constructivist" in style:
-             primitives.append({
-                "type": "capsule",
-                "start": [-1, 0, 0],
-                "end": [1, 0, 0],
-                "radius": 0.05,
-                "blend": 0.01
-            })
+            for key, props in styles_map.items():
+                if key in style:
+                    if "primitives" in props:
+                        primitives.extend(props["primitives"])
+                        
+        except Exception as e:
+            logger.error(f"Failed to load primitives: {e}")
             
         return primitives
         

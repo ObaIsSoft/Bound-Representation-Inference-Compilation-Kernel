@@ -1,0 +1,28 @@
+{
+    "naca_0012": {
+        "type": "airfoil",
+        "symmetric": true,
+        "thickness": 0.12
+    },
+    "naca_2412": {
+        "type": "airfoil",
+        "symmetric": false,
+        "camber": 0.02
+    },
+    "quadcopter_frame_x": {
+        "type": "chassis",
+        "arms": 4,
+        "layout": "X"
+    },
+    "enclosure_ip67": {
+        "type": "box",
+        "features": [
+            "gasket_groove",
+            "screw_posts"
+        ]
+    },
+    "soccer_ball": {
+        "type": "sports_equipment",
+        "file_path": "backend/templates/soccer_ball.scad"
+    }
+}

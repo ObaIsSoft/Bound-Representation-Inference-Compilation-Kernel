@@ -500,17 +500,22 @@ const GhostMesh = ({ baseDims, theme, parentDims }) => {
 
 
 // Main exported component with Canvas wrapper
+// Main exported component with Canvas wrapper
 const UnifiedSDFRenderer = ({
     design = null,
     viewMode = 'realistic',
-    showGrid = true,
     clipPlane = null,
     physicsData = null,
     className = '',
     style = {}
 }) => {
     const { theme, currentTheme } = useTheme();
-    const { meshRenderingMode } = useSettings();
+    const {
+        meshRenderingMode,
+        showGrid,
+        showControlsHelp,
+        setShowControlsHelp
+    } = useSettings();
     const { sketchMode, sketchPoints, focusedPodId, isaTree } = useSimulation();
     const controlsRef = useRef();
     const cameraStateRef = useRef({ position: [4, 3, 4], target: [0, 0, 0] });
@@ -785,6 +790,69 @@ const UnifiedSDFRenderer = ({
                     onCancel={handleRegionCancel}
                 />
             )}
+
+            {/* 4. Region Selector Overlay (Outside Canvas) */}
+            {showRegionSelector && (
+                <RegionSelector
+                    onRegionSelected={handleRegionSelected}
+                    onCancel={handleRegionCancel}
+                />
+            )}
+
+            {/* 5. Interactive Tour / Controls Help */}
+            {showControlsHelp && <ControlsTour onClose={() => setShowControlsHelp(false)} />}
+        </div>
+    );
+};
+
+// Simple Help Overlay Component
+const ControlsTour = ({ onClose }) => {
+    return (
+        <div className="absolute top-16 right-4 z-50 w-64 p-4 bg-gray-900/95 text-gray-200 rounded-lg shadow-xl border border-gray-700 backdrop-blur-md animate-fade-in origin-top-right">
+            <div className="flex justify-between items-center mb-3 border-b border-gray-700 pb-2">
+                <h3 className="font-bold text-sm text-blue-400">Navigation Controls</h3>
+                <button onClick={onClose} className="text-gray-500 hover:text-white">✕</button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+                <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 flex items-center justify-center bg-gray-800 rounded border border-gray-600">
+                        <span className="font-mono">LMB</span>
+                    </div>
+                    <div>
+                        <p className="font-semibold text-gray-300">Rotate</p>
+                        <p className="text-gray-500">Orbit around object</p>
+                    </div>
+                </div>
+
+                <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 flex items-center justify-center bg-gray-800 rounded border border-gray-600">
+                        <span className="font-mono">RMB</span>
+                    </div>
+                    <div>
+                        <p className="font-semibold text-gray-300">Pan</p>
+                        <p className="text-gray-500">Move camera view</p>
+                    </div>
+                </div>
+
+                <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 flex items-center justify-center bg-gray-800 rounded border border-gray-600">
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                        </svg>
+                    </div>
+                    <div>
+                        <p className="font-semibold text-gray-300">Zoom</p>
+                        <p className="text-gray-500">Scroll wheel</p>
+                    </div>
+                </div>
+
+                <div className="mt-2 pt-2 border-t border-gray-700">
+                    <p className="text-gray-500 italic">
+                        Tip: Use <span className="text-blue-400">Shift + Drag</span> to Pan without RMB.
+                    </p>
+                </div>
+            </div>
         </div>
     );
 };

@@ -27,6 +27,10 @@ const SettingsPage = () => {
         setMeshRenderingMode,
         visualizationQuality,
         setVisualizationQuality,
+        showGrid,
+        setShowGrid,
+        showControlsHelp,
+        setShowControlsHelp,
         resetToDefaults
     } = useSettings();
 
@@ -129,6 +133,20 @@ const SettingsPage = () => {
             title: 'Rendering (Phase 8)',
             icon: Zap,
             settings: [
+                {
+                    label: 'Show Grid',
+                    type: 'toggle',
+                    value: showGrid || false,
+                    onChange: setShowGrid,
+                    description: 'Toggle visibility of the 3D reference grid'
+                },
+                {
+                    label: 'Show Controls Help',
+                    type: 'toggle',
+                    value: showControlsHelp || false,
+                    onChange: setShowControlsHelp,
+                    description: 'Show overlay with navigation controls'
+                },
                 {
                     label: 'Mesh Rendering Mode',
                     type: 'select',
@@ -388,6 +406,27 @@ const SettingsPage = () => {
                                     ].map((item, i) => (
                                         <div key={i} className="flex flex-col sm:flex-row sm:items-baseline gap-2 text-xs font-mono">
                                             <div className="sm:w-[180px] shrink-0 font-bold" style={{ color: theme.colors.status.success }}>{item.cmd}</div>
+                                            <div style={{ color: theme.colors.text.secondary }}>{item.desc}</div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* 3D Navigation */}
+                            <div className="p-4 border-b" style={{ borderColor: theme.colors.border.primary }}>
+                                <div className="flex items-center gap-2 text-sm font-bold mb-3 uppercase tracking-wider" style={{ color: theme.colors.accent.primary }}>
+                                    <span className="w-2 h-2 rounded-full" style={{ backgroundColor: theme.colors.accent.primary }} /> 3D Navigation
+                                </div>
+                                <div className="space-y-2">
+                                    {[
+                                        { cmd: 'LMB (Drag)', desc: 'Rotate / Orbit around object.' },
+                                        { cmd: 'RMB (Drag)', desc: 'Pan camera view.' },
+                                        { cmd: 'Scroll', desc: 'Zoom in / out.' },
+                                        { cmd: 'Shift + Drag', desc: 'Alternative Pan (without RMB).' },
+                                        { cmd: 'Double Click', desc: 'Focus on point.' },
+                                    ].map((item, i) => (
+                                        <div key={i} className="flex flex-col sm:flex-row sm:items-baseline gap-2 text-xs font-mono">
+                                            <div className="sm:w-[180px] shrink-0 font-bold" style={{ color: theme.colors.accent.primary }}>{item.cmd}</div>
                                             <div style={{ color: theme.colors.text.secondary }}>{item.desc}</div>
                                         </div>
                                     ))}

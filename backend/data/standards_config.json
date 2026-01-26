@@ -80,7 +80,46 @@
         "organic": {
             "finish": "satin",
             "roughness": 0.6,
-            "metalness": 0.0
+            "metalness": 0.0,
+            "primitives": [
+                {
+                    "type": "capsule",
+                    "start": [
+                        -0.5,
+                        0,
+                        0
+                    ],
+                    "end": [
+                        0.5,
+                        0.5,
+                        0
+                    ],
+                    "radius": 0.2,
+                    "blend": 0.3
+                }
+            ]
+        },
+        "constructivist": {
+            "finish": "matte",
+            "roughness": 0.7,
+            "metalness": 0.4,
+            "primitives": [
+                {
+                    "type": "capsule",
+                    "start": [
+                        -1,
+                        0,
+                        0
+                    ],
+                    "end": [
+                        1,
+                        0,
+                        0
+                    ],
+                    "radius": 0.05,
+                    "blend": 0.01
+                }
+            ]
         },
         "military": {
             "finish": "camo/flat",

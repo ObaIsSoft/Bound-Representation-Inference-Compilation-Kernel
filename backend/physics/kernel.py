@@ -55,6 +55,7 @@ class UnifiedPhysicsKernel:
         from backend.physics.domains.electromagnetism import ElectromagnetismDomain
         from backend.physics.domains.materials import MaterialsDomain
         from backend.physics.domains.multiphysics import MultiphysicsDomain
+        from backend.physics.domains.nuclear import NuclearDomain # New
         
         # Create domain instances
         mechanics = MechanicsDomain(self.providers)
@@ -63,6 +64,7 @@ class UnifiedPhysicsKernel:
         thermodynamics = ThermodynamicsDomain(self.providers)
         electromagnetism = ElectromagnetismDomain(self.providers)
         materials_domain = MaterialsDomain(self.providers)
+        nuclear = NuclearDomain(self.providers) # New
         
         self.domains = {
             "mechanics": mechanics,
@@ -70,7 +72,8 @@ class UnifiedPhysicsKernel:
             "fluids": fluids,
             "thermodynamics": thermodynamics,
             "electromagnetism": electromagnetism,
-            "materials": materials_domain
+            "materials": materials_domain,
+            "nuclear": nuclear # New
         }
         
         # Multiphysics needs all other domains
@@ -91,11 +94,13 @@ class UnifiedPhysicsKernel:
         from backend.physics.intelligence.equation_retrieval import EquationRetrieval
         from backend.physics.intelligence.multi_fidelity import MultiFidelityRouter
         from backend.physics.intelligence.surrogate_manager import SurrogateManager
+        from backend.physics.intelligence.symbolic_deriver import SymbolicDeriver # New
         
         self.intelligence = {
             "equation_retrieval": EquationRetrieval(llm_provider),
             "multi_fidelity": MultiFidelityRouter(self.providers),
-            "surrogate_manager": SurrogateManager()
+            "surrogate_manager": SurrogateManager(),
+            "symbolic_deriver": SymbolicDeriver() # New
         }
         
         logger.info("✓ Physics Kernel initialized - All operations now physics-grounded")

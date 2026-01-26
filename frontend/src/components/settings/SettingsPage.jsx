@@ -130,7 +130,7 @@ const SettingsPage = () => {
             ]
         },
         {
-            title: 'Rendering (Phase 8)',
+            title: 'Rendering',
             icon: Zap,
             settings: [
                 {

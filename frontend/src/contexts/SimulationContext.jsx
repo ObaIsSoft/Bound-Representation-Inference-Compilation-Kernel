@@ -100,6 +100,99 @@ export const SimulationProvider = ({ children }) => {
     // Critique / Reasoning Stream (Agent Feedback)
     const [reasoningStream, setReasoningStream] = useState([]);
 
+    // Phase 10: Physics Analysis State
+    const [physicsData, setPhysicsData] = useState({
+        thermal: { temp: 20.0, status: 'nominal' },
+        structural: { safety_factor: 10.0, stress: 0.0, deflection: 0.0 }
+    });
+
+    // Phase 10: Trigger Analysis
+    const runPhysicsAnalysis = React.useCallback(async (design) => {
+        if (!design) return;
+
+        console.log("Requesting Physics Analysis (Backend) for:", design.id);
+
+        try {
+            // Prepare Payload for Backend PhysicsAgent
+            let geometryTree = [];
+            let designParams = {};
+
+            // Extract content (handling both JSON and raw string)
+            let contentObj = {};
+            if (typeof design.content === 'string') {
+                try {
+                    contentObj = JSON.parse(design.content);
+                } catch (e) {
+                    contentObj = { raw: design.content };
+                }
+            } else {
+                contentObj = design.content;
+            }
+
+            // Simple geometry tree construction from design content
+            if (contentObj.type === 'primitive') {
+                geometryTree.push({
+                    name: "main_body",
+                    params: {
+                        shape: contentObj.geometry,
+                        // Map args to standard dimensions
+                        width: contentObj.args?.[0] || 1,
+                        height: contentObj.args?.[1] || 1,
+                        length: contentObj.args?.[2] || 1,
+                        radius: contentObj.args?.[0] || 0.5
+                    },
+                    material: { name: contentObj.material || "Generic" }
+                });
+            } else {
+                // Fallback for custom code / unknown structure
+                geometryTree.push({ name: "unknown_geometry", params: {} });
+            }
+
+            // Extract Params/Keywords
+            const contentStr = typeof design.content === 'string' ? design.content : JSON.stringify(design.content);
+            designParams = {
+                power_watts: contentStr.includes("power") ? 500.0 : 50.0,
+                g_loading: 3.0,
+                physics_domain: contentStr.includes("nuclear") ? "NUCLEAR" : null
+            };
+
+            const res = await fetch('http://localhost:8000/api/physics/analyze', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    geometry_tree: geometryTree,
+                    design_params: designParams,
+                    environment: {
+                        gravity: 9.81,
+                        temperature: 20.0,
+                        regime: "GROUND"
+                    }
+                })
+            });
+
+            if (!res.ok) throw new Error("Backend Analysis Failed");
+
+            const realResult = await res.json();
+            console.log("Physics Backend Result:", realResult);
+
+            // Map Backend Result to Frontend State Structure
+            // Backend returns: { physics_predictions, validation_flags, sub_agent_reports: { thermal, structural } }
+
+            const mappedData = {
+                thermal: realResult.sub_agent_reports?.thermal || { temp: 20.0, status: 'nominal' },
+                structural: realResult.sub_agent_reports?.structural || { safety_factor: 10.0, stress: 0.0 },
+                predictions: realResult.physics_predictions
+            };
+
+            setPhysicsData(mappedData);
+            return mappedData;
+
+        } catch (e) {
+            console.error("Physics Analysis Failed:", e);
+            return null;
+        }
+    }, []);
+
     // Helper to refresh ISA tree
     const refreshIsaTree = async () => {
         try {
@@ -466,7 +559,10 @@ export const SimulationProvider = ({ children }) => {
         // Phase 4: Intelligent Agents
         reasoningStream,
         setReasoningStream,
-        triggerCritique
+        triggerCritique,
+        // Phase 10
+        physicsData,
+        runPhysicsAnalysis
     };
 
     return (

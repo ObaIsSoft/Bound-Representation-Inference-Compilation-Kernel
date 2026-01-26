@@ -39,12 +39,21 @@ const SimulationBay = ({ activeActivity }) => {
     const { theme } = useTheme();
     const { activeTab } = useDesign();
     const { showTemperatureSensor } = useSettings();
-    const { isRunning, testParams, updateTestParam } = useSimulation();
+    const { isRunning, testParams, updateTestParam, runPhysicsAnalysis } = useSimulation();
     const [viewMode, setViewMode] = useState('wireframe');
     const [isExploded, setIsExploded] = useState(false);
     const [viewportMenuOpen, setViewportMenuOpen] = useState(false);
     const [showViewMenu, setShowViewMenu] = useState(false);
     const viewportMenuRef = useRef(null);
+
+    // Phase 10: Trigger Physics Analysis on Mode Switch
+    useEffect(() => {
+        if (viewMode === 'thermal' || viewMode === 'stress') {
+            if (activeTab) {
+                runPhysicsAnalysis(activeTab);
+            }
+        }
+    }, [viewMode, activeTab, runPhysicsAnalysis]);
 
     // 3D Thermometer Logic
     const isUntitled = activeTab?.name?.startsWith('Untitled Design');

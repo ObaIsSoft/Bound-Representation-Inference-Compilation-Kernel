@@ -74,6 +74,7 @@ const SDFKernel = ({
     clipOffset = 0,
     clipEnabled = false,
     physicsData = null,
+    contextPhysicsData = null, // Phase 10: Fix scope error
     onShaderError = null,
     theme = 'dark', // Default prop
     meshRenderingMode = 'sdf', // 'sdf' or 'preview'
@@ -214,34 +215,27 @@ const SDFKernel = ({
         }
     }, [viewModeInt, baseShape, baseDims, baseColor, metalness, roughness, clipPlane, clipOffset, clipEnabled, theme, meshRenderingMode, showGrid]);
 
-    // Phase 2: Update Stress Uniforms from Physics Data
+    // Phase 10: Update Physics Uniforms (Thermal & Stress)
     useEffect(() => {
         if (!materialRef.current) return;
 
-        // Extract Safety Factor / Stress Intesity
-        // Default to safe (0.0)
+        // Use context data if available, otherwise fallback to prop
+        const data = contextPhysicsData || physicsData;
+
+        // 1. Structural Analysis
         let stressLevel = 0.0;
         let deflection = 0.0;
 
-        if (physicsData) {
-            // Check for structural report (Phase 14 format)
-            const structural = physicsData.structural || physicsData.sub_agent_reports?.structural;
-
-            if (structural) {
-                // Safety Factor: < 1.0 is bad. 
-                // Map SF to 0..1 range. 
-                // SF = 1.0 -> Stress = 1.0
-                // SF = 2.0 -> Stress = 0.5
-                // SF = 100 -> Stress = 0.01
-                const sf = structural.safety_factor_yield || 100.0;
-                stressLevel = Math.min(2.0, 1.0 / Math.max(0.1, sf));
-
-                deflection = structural.max_deflection_m || 0.0;
-            }
+        if (data && (data.structural || data.sub_agent_reports?.structural)) {
+            const structural = data.structural || data.sub_agent_reports?.structural;
+            // Safety Factor: < 1.0 is bad. Map SF to 0..1 range for visualization intensity
+            // SF = 1.0 -> Stress = 1.0 (Critical)
+            // SF = 2.0 -> Stress = 0.5 (Safe)
+            const sf = structural.safety_factor || structural.safety_factor_yield || 100.0;
+            stressLevel = 1.0 / Math.max(0.1, sf); // Inverted SF
+            deflection = structural.max_deflection_m || structural.deflection || 0.0;
         }
 
-        // Inject into shader via specialized uniforms or reuse existing slots if needed.
-        // We added uStressLevel to shader in previous step.
         if (materialRef.current.uniforms.uStressLevel) {
             materialRef.current.uniforms.uStressLevel.value = stressLevel;
         }
@@ -249,7 +243,24 @@ const SDFKernel = ({
             materialRef.current.uniforms.uMaxDeflection.value = deflection;
         }
 
-    }, [physicsData]);
+        // 2. Thermal Analysis
+        let temp = 20.0; // Ambient
+        if (data && (data.thermal || data.sub_agent_reports?.thermal)) {
+            const thermal = data.thermal || data.sub_agent_reports?.thermal;
+            temp = thermal.equilibrium_temp_c || thermal.temp || 20.0;
+        }
+
+        if (materialRef.current.uniforms.uThermalTemp) {
+            materialRef.current.uniforms.uThermalTemp.value = temp;
+        }
+        if (materialRef.current.uniforms.uThermalEnabled) {
+            // Redundant with viewMode but good for explicit override
+            materialRef.current.uniforms.uThermalEnabled.value = (viewMode === 'thermal');
+        }
+
+    }, [physicsData, contextPhysicsData, viewMode]);
+
+
 
     // Animate time, resolution, and camera position per frame
     useFrame((state) => {
@@ -516,7 +527,13 @@ const UnifiedSDFRenderer = ({
         showControlsHelp,
         setShowControlsHelp
     } = useSettings();
-    const { sketchMode, sketchPoints, focusedPodId, isaTree } = useSimulation();
+    const {
+        sketchMode,
+        sketchPoints,
+        focusedPodId,
+        isaTree,
+        physicsData: contextPhysicsData // Phase 10: From Context
+    } = useSimulation();
     const controlsRef = useRef();
     const cameraStateRef = useRef({ position: [4, 3, 4], target: [0, 0, 0] });
 
@@ -739,6 +756,7 @@ const UnifiedSDFRenderer = ({
                     clipOffset={clipPlane?.offset || 0}
                     clipEnabled={!!clipPlane?.enabled}
                     physicsData={physicsData}
+                    contextPhysicsData={contextPhysicsData} // Phase 10: Pass context data
                     onShaderError={handleShaderError}
                     theme={theme}
                     meshRenderingMode={sdfOverride ? 'sdf' : meshRenderingMode} // Auto-switch to SDF if data exists

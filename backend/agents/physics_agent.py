@@ -645,7 +645,7 @@ class PhysicsAgent:
                      "source": "Neural Surrogate (Student)"
                  }
                  
-        # 2. Ask the Teacher (Analytic / Oracle)
+        # 2. Ask the Teacher (Analytic / Kernel)
         # L = W -> 0.5 * rho * v^2 * Cl * A = m * g
         weight_N = mass * g
         hover_thrust = weight_N
@@ -655,22 +655,18 @@ class PhysicsAgent:
         except ValueError:
             stall_speed = 0.0
             
-        # 3. Opportunistic Teaching (Active Learning)
-        # If we had a brain but didn't trust it (or it didn't exist), we now have a Truth label.
-        # We can queue this for training.
-        # In this implementation, 'evolve' is called explicitly by Critic, but we could buffer here.
-        
         return {
             "weight_N": round(weight_N, 2),
             "required_thrust_N": round(hover_thrust, 2),
             "est_stall_speed_mps": round(stall_speed, 1),
             "drag_coefficient": 0.04,  # Generic streamlined
-            "source": "Analytic Physics (Teacher)" 
+            "source": "Analytic Physics (Kernel Teacher)" 
         }
 
     def _solve_nuclear_dynamics(self, params: Dict[str, Any]) -> Dict[str, float]:
         """
-        Solves Nuclear physics (Fusion/Fission) using Neural Student or Oracle Teacher.
+        Solves Nuclear physics (Fusion/Fission) using Neural Student or KERNEL Teacher.
+        Oracle Fallback removed in Phase 10.
         """
         import numpy as np
         
@@ -687,12 +683,7 @@ class PhysicsAgent:
         if self.has_nuclear_brain and self.nuclear_student:
             pred, confidence = self.nuclear_student.predict_performance(inputs)
             
-            # Unpack (NN predicts log10(Power) and Q)
-            # This is a simplification.
-            # Let's assume NN outputs normalized factors.
-            
             if confidence > 0.8:
-                # Mock result from confident student
                 return {
                      "source": "Nuclear Surrogate (Student)",
                      "fusion_power_density_MW_m3": float(pred[0][1]) * 100.0,
@@ -700,21 +691,22 @@ class PhysicsAgent:
                      "ignition": float(pred[0][0]) * 10.0 > 1.0
                 }
         
-        # 2. Ask Teacher (Oracle)
-        try:
-            from agents.physics_oracle.physics_oracle import PhysicsOracle
-            oracle = PhysicsOracle()
-            # Explicitly request Fusion/Fission based on context or default to Fusion
-            params["type"] = params.get("type", "FUSION") 
+        # 2. Ask Teacher (Physics Kernel Domain)
+        sim_type = params.get("type", "FUSION").upper()
+        
+        if sim_type == "FUSION":
+            res = self.physics.domains["nuclear"].solve_fusion_lawson(
+                density=density, temp_kev=temp, confinement_time=tau, fuel=params.get("fuel", "DT")
+            )
+            res["source"] = "Physics Kernel (Nuclear Domain)"
+            return res
             
-            oracle_result = oracle.solve("Simulate", "NUCLEAR", params)
-            
-            if oracle_result.get("status") == "solved":
-                res = oracle_result.get("result", {})
-                res["source"] = "Nuclear Oracle (Teacher)"
-                return res
-        except Exception as e:
-            return {"error": str(e)}
+        elif sim_type == "FISSION":
+            res = self.physics.domains["nuclear"].solve_fission_kinetics(
+                reactivity=params.get("reactivity", 0.0)
+            )
+            res["source"] = "Physics Kernel (Nuclear Domain)"
+            return res
             
         return {"error": "All solvers failed"}
         

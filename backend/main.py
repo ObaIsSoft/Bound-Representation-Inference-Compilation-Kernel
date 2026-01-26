@@ -396,20 +396,34 @@ class PhysicsRequest(BaseModel):
 @app.post("/api/physics/solve")
 async def solve_physics(request: PhysicsRequest):
     """
-    Direct access to the Theory of Everything (Physics Oracle).
-    Domains: NUCLEAR, OPTICS, ASTROPHYSICS, THERMODYNAMICS, FLUID, CIRCUIT, EXOTIC.
+    Direct access to Physikel Kernel via Physics Agent.
+    Previously delegated to PhysicsOracle.
     """
-    from agents.physics_oracle.physics_oracle import PhysicsOracle
+    from agents.physics_agent import PhysicsAgent
     try:
-        oracle = PhysicsOracle()
-        result = oracle.solve(
-            query=request.query,
-            domain=request.domain,
-            params=request.params
-        )
-        return result
+        agent = PhysicsAgent()
+        
+        # Determine intended solver based on domain
+        # Map legacy Oracle domains to Agent/Kernel logic
+        
+        if request.domain == "NUCLEAR":
+            return agent._solve_nuclear_dynamics(request.params or {})
+        
+        elif request.domain == "EXOTIC":
+            # Symbolic Deriver via Intelligence
+            return agent.physics.intelligence["symbolic_deriver"].derive(
+                request.params.get("equation_type", "unknown"),
+                request.params
+            )
+            
+        else:
+            # General Kernel Query? 
+            # For now return a generic run, or specific domain solve if params match
+            # This endpoint might be deprecated in future for specific analyze routes
+            return {"status": "redirected", "message": "Please use /api/physics/analyze for full simulation."}
+
     except Exception as e:
-        logger.error(f"Physics Oracle Error: {e}")
+        logger.error(f"Physics Solve Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 class PhysicsValidationRequest(BaseModel):
@@ -605,6 +619,36 @@ async def analyze_chemistry(request: ChemistryAnalysisRequest):
     from agents.chemistry_agent import ChemistryAgent
     agent = ChemistryAgent()
     return agent.run(request.materials, request.environment)
+
+
+class PhysicsAnalyzeRequest(BaseModel):
+    geometry_tree: List[Dict[str, Any]]
+    design_params: Dict[str, Any]
+    environment: Optional[Dict[str, Any]] = None
+
+@app.post("/api/physics/analyze")
+async def analyze_full_physics(req: PhysicsAnalyzeRequest):
+    """
+    Full Physics Analysis (Thermal, Stress, etc.) for Phase 10.
+    Wraps PhysicsAgent.run().
+    """
+    try:
+        from agents.physics_agent import PhysicsAgent
+        agent = PhysicsAgent()
+        
+        # Default environment if None
+        env = req.environment or {"gravity": 9.81, "temperature": 20.0, "regime": "GROUND"}
+        
+        result = agent.run(
+            environment=env,
+            geometry_tree=req.geometry_tree,
+            design_params=req.design_params
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Full Physics Analysis Failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 class ChemistryStepRequest(BaseModel):
     state: Dict[str, Any]

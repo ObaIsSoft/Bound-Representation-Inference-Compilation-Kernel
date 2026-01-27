@@ -39,7 +39,7 @@ const SimulationBay = ({ activeActivity }) => {
     const { theme } = useTheme();
     const { activeTab } = useDesign();
     const { showTemperatureSensor } = useSettings();
-    const { isRunning, testParams, updateTestParam, runPhysicsAnalysis } = useSimulation();
+    const { isRunning, setIsRunning, paused, setPaused, setTestScenario, runPhysicsAnalysis } = useSimulation();
     const [viewMode, setViewMode] = useState('wireframe');
     const [isExploded, setIsExploded] = useState(false);
     const [viewportMenuOpen, setViewportMenuOpen] = useState(false);
@@ -387,7 +387,7 @@ const PhysicsOverlay = ({ theme, active, onResult, activeTab }) => {
             {/* Header / Mode Switch - Compact */}
             <div className="flex items-center justify-between p-2 border-b" style={{ borderColor: theme.colors.border.secondary }}>
                 <div className="flex gap-2 bg-black/20 p-0.5 rounded-md">
-                    {['VALIDATE', 'ORACLE'].map(m => (
+                    {['VALIDATE'].map(m => (
                         <button
                             key={m}
                             onClick={() => { setMode(m); setResult(null); }}
@@ -407,30 +407,6 @@ const PhysicsOverlay = ({ theme, active, onResult, activeTab }) => {
             </div>
 
             <div className="p-2 space-y-2">
-                {mode === 'ORACLE' && (
-                    <div className="flex gap-1">
-                        <input
-                            type="text"
-                            value={query}
-                            onChange={e => setQuery(e.target.value)}
-                            placeholder="Ask Physics Oracle..."
-                            className="flex-1 text-[10px] px-2 py-1 rounded border outline-none bg-transparent"
-                            style={{
-                                borderColor: theme.colors.border.secondary,
-                                color: theme.colors.text.primary
-                            }}
-                            onKeyDown={e => e.key === 'Enter' && runOracle()}
-                        />
-                        <button
-                            onClick={runOracle}
-                            className="p-1 rounded hover:bg-white/10"
-                            style={{ color: theme.colors.accent.primary }}
-                        >
-                            <Zap size={12} fill="currentColor" />
-                        </button>
-                    </div>
-                )}
-
                 {mode === 'VALIDATE' && (
                     <div>
                         <div className="grid grid-cols-2 gap-2 text-[9px] mb-2 font-mono">

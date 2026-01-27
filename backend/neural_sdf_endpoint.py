@@ -40,7 +40,7 @@ async def train_neural_sdf(request: NeuralSDFTrainingRequest):
         
         # Train network
         logger.info(f"Training Neural SDF for {content.get('geometry', 'unknown')} geometry")
-        weights = train_from_design(content, region=request.region)
+        weights, transform = train_from_design(content, region=request.region)
         
         training_time = time.time() - start_time
         
@@ -51,7 +51,8 @@ async def train_neural_sdf(request: NeuralSDFTrainingRequest):
                 "shape": content.get("geometry", "custom"),
                 "dims": content.get("args", []),
                 "training_time": round(training_time, 2),
-                "region": request.region
+                "region": request.region,
+                "transform": transform
             }
         }
         

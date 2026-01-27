@@ -791,3 +791,8 @@ class OpenSCADParser:
             flatten(node)
         
         return flat
+
+def parse_scad(scad_code: str) -> List[ASTNode]:
+    """Helper function to parse OpenSCAD code (wrapper for OpenSCADParser)"""
+    parser = OpenSCADParser()
+    return parser.parse(scad_code)

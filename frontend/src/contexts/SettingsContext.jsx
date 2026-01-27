@@ -16,6 +16,7 @@ export const SettingsProvider = ({ children }) => {
     const [meshRenderingMode, setMeshRenderingMode] = useState('sdf'); // 'sdf' (boolean ops), 'preview' (fast mesh)
     const [showGrid, setShowGrid] = useState(true);
     const [showControlsHelp, setShowControlsHelp] = useState(false);
+    const [showEditor, setShowEditor] = useState(true);
 
     // Load settings from localStorage on mount
     useEffect(() => {
@@ -36,6 +37,7 @@ export const SettingsProvider = ({ children }) => {
                 if (settings.meshRenderingMode) setMeshRenderingMode(settings.meshRenderingMode);
                 if (settings.showGrid !== undefined) setShowGrid(settings.showGrid);
                 if (settings.showControlsHelp !== undefined) setShowControlsHelp(settings.showControlsHelp);
+                if (settings.showEditor !== undefined) setShowEditor(settings.showEditor);
             } catch (e) {
                 console.error('Failed to load settings:', e);
             }
@@ -124,6 +126,7 @@ export const SettingsProvider = ({ children }) => {
         setMeshRenderingMode('sdf');
         setShowGrid(true);
         setShowControlsHelp(false);
+        setShowEditor(true);
         localStorage.removeItem('brick-settings');
     };
 
@@ -169,6 +172,12 @@ export const SettingsProvider = ({ children }) => {
                 setShowControlsHelp: (value) => {
                     setShowControlsHelp(value);
                     saveSettings({ showControlsHelp: value });
+                },
+
+                showEditor,
+                setShowEditor: (value) => {
+                    setShowEditor(value);
+                    saveSettings({ showEditor: value });
                 },
 
                 resetToDefaults

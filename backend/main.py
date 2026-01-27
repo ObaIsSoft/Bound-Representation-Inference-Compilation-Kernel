@@ -709,21 +709,87 @@ async def analyze_cost(request: CostAnalysisRequest):
 def compile_openscad(request: Dict[str, Any]):
     """
     Compile OpenSCAD code to renderable mesh geometry.
-    Supports Thingiverse imports and community CAD.
+    Supports "stl" (default) or "sdf_grid" (Phase 17).
     """
     from agents.openscad_agent import OpenSCADAgent
+    from geometry.manifold_engine import ManifoldEngine, GeometryRequest
+    import base64
     
     scad_code = request.get("code", "")
+    out_format = request.get("format", "stl")
     
     if not scad_code:
         return {"success": False, "error": "No OpenSCAD code provided"}
     
     try:
+        # Phase 17: Full SDF Support via Manifold Engine directly
+        # This bypasses the old OpenSCADAgent process wrapper for SDF generation
+        # because we need the Mesh Object in Python RAM to feed Trimesh.
+        
+        if out_format == "sdf_grid":
+            # 1. Compile SCAD -> CSG Tree (using Parser? or Manifold direct?)
+            # Wait, ManifoldEngine expects a Tree, not Raw SCAD.
+            # But we have `OpenSCADParser` (Phase 4).
+            
+            # Let's use the parser to convert SCAD -> Manifold Tree
+            from agents.openscad_parser import parse_scad # Assuming it exists from Phase 4
+            
+            # Note: If parser is limited, we might need a fallback:
+            # OpenSCAD process -> STL -> Trimesh -> SDF.
+            # Let's try the Robust Path: OpenSCAD -> STL (via Agent) -> SDF (via Generator)
+            
+            agent = OpenSCADAgent()
+            # Compile to STL first (using OpenSCAD CLI)
+            result = agent.compile_to_stl(scad_code)
+            
+            if not result.get("success"):
+                return result
+                
+            # Now we have STL Path or Content. OpenSCADAgent usually returns path or base64.
+            # Let's inspect result.
+            
+            # Optimization: Can we load STL bytes directly? 
+            # Assuming result contains "data" (base64) or "file".
+            
+            # Let's stick to the Robust path for "Any Shape":
+            # 1. SCAD -> STL (OpenSCAD CLI)
+            # 2. STL -> Trimesh
+            # 3. Trimesh -> SDF Volume
+            
+            import trimesh
+            from geometry.processors.sdf_generator import generate_sdf_volume
+            
+            # Load STL from result
+            if "data" in result:
+                # Base64 decode
+                stl_bytes = base64.b64decode(result["data"])
+                mesh = trimesh.load(io.BytesIO(stl_bytes), file_type="stl")
+            elif "file" in result:
+                mesh = trimesh.load(result["file"])
+            else:
+                 # Fallback/Error
+                 return {"success": False, "error": "No output data from OpenSCAD compiler"}
+            
+            # Generate SDF
+            res = request.get("resolution", 64)
+            sdf_bytes = generate_sdf_volume(mesh, resolution=res)
+            
+            # Return as Base64 encoded payload to fit in JSON
+            return {
+                "success": True, 
+                "format": "sdf_grid",
+                "sdf_data": base64.b64encode(sdf_bytes).decode('utf-8'),
+                "resolution": res,
+                "bounds": [mesh.bounds[0].tolist(), mesh.bounds[1].tolist()]
+            }
+
+        # Default Legacy Path (STL)
         agent = OpenSCADAgent()
         result = agent.compile_to_stl(scad_code)
         
         return result
     except Exception as e:
+        logger.error(f"Compilation Error: {e}")
         return {"success": False, "error": f"Compilation error: {str(e)}"}
 
 @app.get("/api/openscad/info")

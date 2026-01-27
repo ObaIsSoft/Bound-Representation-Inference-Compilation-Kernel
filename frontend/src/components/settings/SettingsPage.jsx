@@ -29,6 +29,8 @@ const SettingsPage = () => {
         setVisualizationQuality,
         showGrid,
         setShowGrid,
+        showEditor,
+        setShowEditor,
         showControlsHelp,
         setShowControlsHelp,
         resetToDefaults
@@ -69,6 +71,13 @@ const SettingsPage = () => {
             title: 'Editor',
             icon: Code2,
             settings: [
+                {
+                    label: 'Show Code Editor',
+                    type: 'toggle',
+                    value: showEditor,
+                    onChange: setShowEditor,
+                    description: 'Toggle visibility of the code editor pane'
+                },
                 {
                     label: 'Auto Save',
                     type: 'toggle',

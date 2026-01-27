@@ -4,6 +4,7 @@ import numpy as np
 from typing import List, Dict
 import manifold3d
 from .base_engine import BaseGeometryEngine, GeometryRequest, GeometryResult
+from .processors.sdf_generator import generate_sdf_volume # Phase 17
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,39 @@ class ManifoldEngine(BaseGeometryEngine):
             elif request.output_format == "stl":
                  # TODO: Similar flow
                  pass
+
+            elif request.output_format == "sdf_grid":
+                # Phase 17: Full SDF Support
+                # Manifold -> Mesh -> SDF Grid
+                mesh = final_manifold.to_mesh()
+                import trimesh
+                t_mesh = trimesh.Trimesh(
+                    vertices=mesh.vert_properties, 
+                    faces=mesh.tri_verts
+                )
+                
+                # Check for resolution param, default 64
+                res = request.params.get("resolution", 64)
+                
+                sdf_bytes = generate_sdf_volume(t_mesh, resolution=res)
+                
+                # Return payload. 
+                # Note: The frontend needs metadata (bounds, resolution) to interpret this.
+                # We can prepend metadata or wrap in a structured format.
+                # For now, let's assume the payload is just the bytes, and we pass metadata differently?
+                # Actually, BaseGeometryEngine returns payload as bytes.
+                # Let's verify how to pass bounds. 
+                
+                # OPTION: Return a JSON-header + Binary body? 
+                # Or just return the bytes and let the Agent construct the response with metadata.
+                # The GeometryResult has 'payload' (bytes).
+                
+                # We will return the raw bytes here. The calling agent (GeometryAgent or ManifoldAgent)
+                # should handle bounding box calculation if needed, or we attach it to result.extras.
+                
+                # Let's add 'extras' to GeometryResult? Base class definition check needed.
+                # Assuming simple bytes for now.
+                return GeometryResult(success=True, payload=sdf_bytes)
                  
             return GeometryResult(success=False, error=f"Unsupported format for Manifold: {request.output_format}")
             

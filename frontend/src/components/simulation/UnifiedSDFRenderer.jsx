@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls, PerspectiveCamera } from '@react-three/drei';
 import * as THREE from 'three';
@@ -582,58 +582,178 @@ const UnifiedSDFRenderer = ({
             roughness: 0.5
         };
 
-        // Check for OpenSCAD or Raw Code first
-        let isRawCode = false;
+        // STRICT MODE: No heuristics to hide.
+        // Instead, try to parse simple geometry to show SOMETHING better than a generic box.
+
+        // Simple Parser for Live SDF Preview
+        // Supported: cube(), sphere(), cylinder()
+        // This maps the first valid command it finds to the uBaseShape logic for immediate feedback
+
         if (design?.content && typeof design.content === 'string') {
-            const trimmed = design.content.trim();
-            if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
-                isRawCode = true;
+            const c = design.content;
+
+            // [Phase 17 Fix] Check for Complexity FIRST
+            // If the code contains structural keywords, it implies a CSG tree that requires
+            // the backend SDF Grid generator. Do NOT try to match primitives here.
+            const isComplex = c.includes('module ') ||
+                c.includes('difference') ||
+                c.includes('union') ||
+                c.includes('intersection') ||
+                c.includes('hull') ||
+                c.includes('import');
+
+            if (isComplex) {
+                // Return default state (Box) but let useEffect fetch the real grid
+                return state;
             }
-        }
 
-        if (isRawCode || design?.type === 'openscad') {
-            // If OpenSCAD, hide the SDF primitive box
-            state.baseShape = 0; // 0 = None/Empty in SDF Shader
-            return state;
-        }
+            // Sphere Detection
+            // Examples: sphere(10); sphere(r=5);
+            const sphereMatch = c.match(/sphere\s*\(\s*(?:r\s*=\s*)?([0-9.]+)\s*\)/);
+            if (sphereMatch) {
+                state.baseShape = 2; // 2 = Sphere
+                const r = parseFloat(sphereMatch[1]);
+                state.baseDims = [r, r, r];
+                return state;
+            }
 
-        // design is activeTab which has .content as JSON string
-        if (design?.content) {
-            try {
-                const asset = (typeof design.content === 'string' && design.content.trim().startsWith('{'))
-                    ? JSON.parse(design.content)
-                    : (typeof design.content === 'object' ? design.content : {});
-
-                if (asset.type === 'primitive') {
-                    const { geometry, args = [], material = {} } = asset;
-
-                    if (geometry === 'box') {
-                        state.baseShape = 1;
-                        state.baseDims = args.length >= 3 ? args.slice(0, 3) : [1, 1, 1];
-                    } else if (geometry === 'sphere') {
-                        state.baseShape = 2;
-                        state.baseDims = [args[0] || 0.5, 0, 0];
-                    } else if (geometry === 'cylinder') {
-                        state.baseShape = 3;
-                        state.baseDims = [args[0] || 0.5, args[1] || 1, 0];
-                    }
-
-                    if (material.color) {
-                        const color = new THREE.Color(material.color);
-                        state.baseColor = [color.r, color.g, color.b];
-                    }
-                    state.metalness = material.metalness ?? 0.5;
-                    state.roughness = material.roughness ?? 0.5;
-                } else if (asset.type === 'openscad') {
-                    state.baseShape = 0; // Hide SDF logic if explicitly openscad type
+            // Cube Detection
+            // Examples: cube([10, 20, 30]); cube(10);
+            const cubeMatch = c.match(/cube\s*\(\s*(?:size\s*=\s*)?(?:\[([0-9.,\s]+)\]|([0-9.]+))\s*\)/);
+            if (cubeMatch) {
+                state.baseShape = 1; // 1 = Box
+                if (cubeMatch[1]) {
+                    // Vector [x, y, z]
+                    const dims = cubeMatch[1].split(',').map(s => parseFloat(s.trim()));
+                    state.baseDims = [dims[0] || 1, dims[1] || 1, dims[2] || 1];
+                } else if (cubeMatch[2]) {
+                    // Scalar length
+                    const s = parseFloat(cubeMatch[2]);
+                    state.baseDims = [s, s, s];
                 }
-            } catch (e) {
-                console.warn('[UnifiedSDFRenderer] Failed to parse design content:', e);
+                return state;
+            }
+
+            // Cylinder Detection (Mapped to Capsule for now, or new Cylinder shape id)
+            // cylinder(h=10, r=5)
+            if (c.includes('cylinder')) {
+                state.baseShape = 3; // 3 = Cylinder/Capsule
+                // Default dims for cylinder
+                state.baseDims = [1, 5, 1]; // r, h, r
+
+                const rMatch = c.match(/r\s*=\s*([0-9.]+)/) || c.match(/r1\s*=\s*([0-9.]+)/);
+                const hMatch = c.match(/h\s*=\s*([0-9.]+)/);
+
+                if (rMatch) state.baseDims[0] = parseFloat(rMatch[1]);
+                if (hMatch) state.baseDims[1] = parseFloat(hMatch[1]);
+
+                return state;
             }
         }
 
         return state;
-    }, [design]);
+    }, [design?.content, design?.type]);
+
+    // Phase 17: Full SDF Support - Fetch SDF Grid for complex code
+    const [localSDFData, setLocalSDFData] = useState(null);
+    const [isFetchingSDF, setIsFetchingSDF] = useState(false);
+
+    // Phase 9: Real-Time SDF Baking Support (Moved up to fix ReferenceError)
+    const [sdfOverride, setSdfOverride] = useState(null);
+
+    const handleSDFLoaded = useCallback((data) => {
+        console.log('[UnifiedSDFRenderer] Received baked SDF data from OpenSCAD:', data);
+        setSdfOverride(data);
+    }, []);
+
+    useEffect(() => {
+        // Reset local data when design changes
+        setLocalSDFData(null);
+    }, [design?.id]);
+
+    useEffect(() => {
+        // Condition: 
+        // 1. SDF Mode is Active
+        // 2. We have content (code)
+        // 3. It's NOT a primitive (baseShape is 1=Box by default or 0)
+        // 4. We don't have pre-baked mesh_sdf_data
+
+        if (meshRenderingMode !== 'sdf') return;
+        if (!design?.content) return;
+        if (design.mesh_sdf_data) return; // Already has it
+
+        // If primitive parser found a shape matches (Sphere=2, Cylinder=3), we likely don't need grid
+        // But if it's Box (1), it might be default? 
+        // Actually, primitive parser returns 1 for Cube. Default is also 1. 
+        // Let's assume if it contains '{' or 'module' it needs Grid.
+
+        const isComplex = typeof design.content === 'string' && (
+            design.content.includes('module ') ||
+            design.content.includes('difference') ||
+            design.content.includes('union') ||
+            design.content.includes('intersection') ||
+            design.content.includes('import')
+        );
+
+        if (!isComplex) return;
+
+        // Debounce fetch
+        const timer = setTimeout(async () => {
+            if (isFetchingSDF) return;
+            setIsFetchingSDF(true);
+            console.log('[UnifiedSDF] Fetching SDF Grid for design...');
+
+            try {
+                const res = await fetch('http://localhost:8000/api/openscad/compile', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        code: design.content,
+                        format: 'sdf_grid',
+                        resolution: 64 // Start with 64 for speed
+                    })
+                });
+
+                const data = await res.json();
+                if (data.success && data.sdf_data) {
+                    console.log('[UnifiedSDF] Received SDF Grid');
+                    setLocalSDFData(data);
+                }
+            } catch (e) {
+                console.error('[UnifiedSDF] Failed to fetch SDF:', e);
+            } finally {
+                setIsFetchingSDF(false);
+            }
+        }, 1000);
+
+        return () => clearTimeout(timer);
+    }, [design?.content, meshRenderingMode, design?.mesh_sdf_data]);
+
+    // Merge Local Data into Helper for Texture Loading
+    const effectiveDesign = useMemo(() => {
+        let base = { ...design };
+
+        // Merge fetched SDF (Phase 17)
+        if (localSDFData) {
+            base = {
+                ...base,
+                mesh_sdf_data: localSDFData.sdf_data,
+                sdf_resolution: localSDFData.resolution,
+                sdf_bounds: localSDFData.bounds
+            };
+        }
+
+        // Merge override (Phase 9 - e.g. from OpenSCADMesh bake)
+        if (sdfOverride) {
+            base = { ...base, ...sdfOverride };
+        }
+
+        return base;
+    }, [design, localSDFData, sdfOverride]);
+
+    // Re-use logic for effectiveDesign below...
+
+
 
     // Handle camera state persistence
     const handleCameraChange = useCallback(() => {
@@ -676,18 +796,30 @@ const UnifiedSDFRenderer = ({
         // TODO: Exit Micro-Machining mode or show alternate message
     }, []);
 
-    // Phase 9: Real-Time SDF Baking Support
-    const [sdfOverride, setSdfOverride] = React.useState(null);
+    // (Moved sdfOverride state to top)
 
-    const handleSDFLoaded = React.useCallback((data) => {
-        console.log('[UnifiedSDFRenderer] Received baked SDF data from OpenSCAD:', data);
-        setSdfOverride(data);
-    }, []);
+    // Merge duplicate effectiveDesign logic
+    // We already defined effectiveDesign above (Phase 17), so we don't redeclare it here.
+    // However, we need to ensure THAT definition included sdfOverride.
+    // Since I cannot edit the previous block easily without context, I will COMMENT OUT this one
+    // and rely on the fact that I will update the FIRST definition to include sdfOverride.
 
-    // Merge design with override
-    const effectiveDesign = useMemo(() => {
-        return { ...design, ...sdfOverride };
-    }, [design, sdfOverride]);
+    // WAIT: I should just replace this block with NOTHING if I update the first one.
+    // Or, better, I will replace THIS block with a comment, and update the FIRST block (in a separate call if needed, or I can try to find where it is).
+
+    // Actually, I should update the FIRST definition to:
+    // const effectiveDesign = useMemo(() => { ... merge localSDFData AND sdfOverride ... }, [design, localSDFData, sdfOverride]);
+
+    // Since I can't reach the first definition in this tool call (it's at line ~712), I will delete this redeclaration first.
+    // Then I will update the first one.
+
+    // Replacement for lines 804-815:
+    // Just keep the state and handler, remove effectiveDesign.
+
+    /* 
+       Merged effectiveDesign logic is handled in Phase 17 block above.
+       We keep state/handlers here.
+    */
 
     return (
         <div className={`w-full h-full ${className}`} style={style}>
@@ -772,6 +904,7 @@ const UnifiedSDFRenderer = ({
                         design={design}
                         viewMode={viewMode}
                         theme={theme}
+                        physicsData={physicsData || contextPhysicsData} // Phase 18: Pass physics data
                         onSDFLoaded={handleSDFLoaded}
                     />
                 )}

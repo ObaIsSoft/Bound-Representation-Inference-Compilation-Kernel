@@ -92,7 +92,9 @@ The brain of the operation.
     *   `*critics/*.py`: Sub-directory for Meta-Critics.
 *   **`backend/utils/`**:
     *   `sdf_mesher.py`: Marching Cubes implementation.
+    *   `sdf_mesher.py`: Marching Cubes implementation.
     *   `geometry_fitting.py`: PCA/SVD stroke fitting.
+    *   `processors/sdf_generator.py`: **[New]** Trimesh Voxelizer for generic SDF generation.
 
 ### 1.1.2 Frontend (`/frontend`)
 The face of the machine.
@@ -102,7 +104,11 @@ The face of the machine.
     *   `UnifiedSDFRenderer.jsx`: The WebGPU Engine.
     *   `AerodynamicsView.jsx`: Custom Shader visualizations.
     *   `ProceduralEngine.jsx`: Parametric generation.
+    *   `AerodynamicsView.jsx`: Custom Shader visualizations.
+    *   `ProceduralEngine.jsx`: Parametric generation.
     *   `StrokeCapture.jsx`: Input handling.
+    *   `NeuralSDF.jsx`: **[New]** SIREN Network Visualization.
+    *   `RegionInteraction.jsx`: **[New]** 3D Volume Selector.
 *   **`frontend/src/components/panels/`**: 15+ Panels (ISA Browser, Manufacturing, Debug).
 *   **`frontend/src/shaders/`**: Raw GLSL/WGSL shader files for `TypeGPU`.
 
@@ -375,6 +381,7 @@ The `UnifiedSDFRenderer` is a high-performance WebGPU-based graphics engine desi
 *   **Shader Language**: WGSL (WebGPU Shading Language) or GLSL (via compatibility wrapper).
 *   **Raymarching**: The core loop uses Sphere Tracing to find the intersection surface `d(p) < epsilon`.
 *   **Primitives**: Hardcoded SDF/GLSL functions for `sdBox`, `sdSphere`, `sdCapsule`, `sdTorus`.
+*   **Generic Shapes**: **[New]** Supports arbitrary meshes via `sdf_generator.py` (Voxel Grid -> 3D Texture).
 *   **Lattice Support**: Custom shader functions (`sdGyroid`) to render TPMS structures dynamically.
 
 ### 6.1.2 View Modes (`VIEW_MODES` Enum)
@@ -384,6 +391,7 @@ The renderer supports 12 distinct inspection modes:
 3.  **XRAY**: Transmission accumulation based on density.
 4.  **THERMAL**: False-color heatmap using `uThermalTemp` uniforms from the `ThermalAgent`. Colors map from Blue ($20^\circ C$) to Red ($>200^\circ C$).
 5.  **STRESS**: Visualizes Finite Element Analysis (FEA) results. Maps `uStressLevel` (inverse Safety Factor) to color intensity.
+    *   *Update*: Now supported in **Mesh Preview** mode via `MeshPhysicsMaterial`.
 6.  **MICRO**: Neural SDF mode for viewing nanometer-scale surface features (zoomed in).
 7.  **FLOW**: Streamline visualization.
 
@@ -563,6 +571,13 @@ The `backend/main.py` file serves as the gateway to the BRICK OS kernel. It is a
 ### `POST /api/compile`
 *   **Description**: Legacy entry point for one-shot compilation.
 *   **Returns**: `kcl_code`, `glsl_code`, `physics_predictions`.
+
+## 10.7 Neural Geometry API
+### `POST /api/neural_sdf/train`
+*   **Description**: Trains a SIREN (Sinusoidal Representation Network) on a specific 3D region of the design.
+*   **Input**: `{"design": {...}, "region": {min: [x,y,z], max: [x,y,z]}}`.
+*   **Output**: `{"status": "success", "weights": [...], "metadata": {...}}`.
+*   **Use Case**: Micro-Machining / Nanometer surface inspection.
 
 ---
 
@@ -798,6 +813,26 @@ class AgentState(TypedDict):
     # Core Data
     environment: Dict[str, Any]
     geometry_tree: List[Dict[str, Any]]
+
+# 15. The Neural Geometry Engine (Phase 19)
+
+## 15.1 Concept
+Traditional CAD uses B-Rep. BRICK OS V1 uses SDFs. BRICK OS V2 (Experimental) uses **Neural Fields**.
+Instead of storing geometry as data, we store it as the **weights of a neural network**.
+
+## 15.2 Implementation
+*   **Architecture**: SIREN (Implicit Neural Representations with Periodic Activation Functions).
+*   **Network**: 3 Hidden Layers, 32 Neurons each, Sine activation.
+*   **Training**:
+    1.  Frontend selects a 3D Region of Interest (ROI).
+    2.  Backend `train_siren.py` samples the CSG/SDF ground truth in that region.
+    3.  Optimizes weights to minimize `(Pred_Dist - Real_Dist)^2`.
+    4.  Returns weights to Frontend.
+*   **Rendering**: Frontend `NeuralSDF.jsx` runs the Neural Network **per-pixel** in a fragment shader to reconstruct the surface.
+
+## 15.3 Benefits
+*   **Compression**: A 3D mesh of 1GB can be compressed into a few KB of weights.
+*   **Differentiability**: The surface is infinitely differentiable, allowing for gradient-based physics optimization directly on the geometry.
     physics_predictions: Dict[str, Any]
     material_props: Dict[str, Any]
     

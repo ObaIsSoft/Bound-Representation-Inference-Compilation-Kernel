@@ -1,25 +1,84 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useRef } from 'react';
 import * as THREE from 'three';
+import { useFrame } from '@react-three/fiber';
 import { OpenSCADMesh } from './OpenSCADMesh';
+
+// Physics Shaders (Phase 18)
+import vertexShader from '../../shaders/mesh_physics_vertex.glsl?raw';
+import fragmentShader from '../../shaders/mesh_physics_fragment.glsl?raw';
 
 /**
  * Standard Mesh Preview Component
  * 
- * Renders geometry using standard WebGL rasterization (triangles) instead of SDF Raymarching.
- * - Much faster for complex meshes
- * - Supports primitives (Box, Sphere, Cylinder)
- * - Supports OpenSCAD results
+ * Renders geometry using standard WebGL rasterization (triangles).
+ * UPGRADED: Now supports Thermal, Stress, and X-Ray via MeshPhysicsMaterial.
  */
 export const StandardMeshPreview = ({
     design,
     viewMode = 'realistic',
     theme,
-    onSDFLoaded // New callback
+    physicsData, // Phase 18: Backend Data
+    onSDFLoaded
 }) => {
 
-    // Helper to determine material based on view mode
+    // Shader Material Ref
+    const shaderRef = useRef();
+
+    useFrame(({ clock }) => {
+        if (shaderRef.current) {
+            shaderRef.current.uniforms.uTime.value = clock.elapsedTime;
+        }
+    });
+
+    // Extract Physics Values Helper
+    const physicsUniforms = useMemo(() => {
+        let temp = 20.0;
+        let stress = 0.0;
+
+        if (physicsData) {
+            // Thermal
+            const therm = physicsData.metrics?.thermal || physicsData.sub_agent_reports?.thermal;
+            if (therm?.equilibrium_temp_c !== undefined) temp = therm.equilibrium_temp_c;
+
+            // Structural
+            const struct = physicsData.metrics?.structural || physicsData.sub_agent_reports?.structural;
+            // Map Safety Factor to Stress Level (Inverse)
+            if (struct?.safety_factor) {
+                stress = 1.0 / Math.max(0.1, struct.safety_factor);
+            }
+        }
+
+        return { temp, stress };
+    }, [physicsData]);
+
     const getMaterial = (color = '#cccccc', metalness = 0.5, roughness = 0.5) => {
         const baseColor = new THREE.Color(color);
+
+        // Advanced Views use Custom Shader
+        if (['thermal', 'stress', 'xray', 'heatmap'].includes(viewMode)) {
+            let modeInt = 0;
+            if (viewMode === 'xray') modeInt = 2;
+            if (viewMode === 'thermal' || viewMode === 'heatmap') modeInt = 4;
+            if (viewMode === 'stress') modeInt = 7;
+
+            return <shaderMaterial
+                ref={shaderRef}
+                vertexShader={vertexShader}
+                fragmentShader={fragmentShader}
+                uniforms={{
+                    uViewMode: { value: modeInt },
+                    uBaseColor: { value: baseColor },
+                    uMetalness: { value: metalness },
+                    uRoughness: { value: roughness },
+                    uThermalTemp: { value: physicsUniforms.temp },
+                    uStressLevel: { value: physicsUniforms.stress },
+                    uTime: { value: 0 }
+                }}
+                transparent={viewMode === 'xray'}
+                depthWrite={viewMode !== 'xray'}
+                side={THREE.DoubleSide}
+            />;
+        }
 
         switch (viewMode) {
             case 'wireframe':
@@ -28,12 +87,8 @@ export const StandardMeshPreview = ({
                 return <meshStandardMaterial color={baseColor} roughness={1.0} metalness={0.0} />;
             case 'solid':
                 return <meshStandardMaterial color="#888888" />;
-            case 'xray':
-                return <meshStandardMaterial color={baseColor} transparent opacity={0.3} depthWrite={false} />;
             case 'hidden_line':
-                return <meshBasicMaterial color="#222" polygonOffset polygonOffsetFactor={1} />; // Simplified
-            case 'heatmap':
-                return <meshNormalMaterial />; // Placeholder for heatmap
+                return <meshBasicMaterial color="#222" polygonOffset polygonOffsetFactor={1} />;
             default: // realistic
                 return <meshStandardMaterial
                     color={baseColor}

@@ -489,7 +489,6 @@ export const SimulationProvider = ({ children }) => {
         viewMode,
         setViewMode,
         sketchPoints,
-        sketchPoints,
         setSketchPoints,
         // System Status
         solverStatus,

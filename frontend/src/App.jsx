@@ -11,6 +11,7 @@ import IntegratedTerminal from './components/terminal/IntegratedTerminal';
 import BootSequence from './components/ui/BootSequence';
 
 import SettingsPage from './components/settings/SettingsPage';
+import AccountPage from './components/settings/AccountPage';
 import SearchPanel from './components/panels/SearchPanel';
 import ComponentPanel from './components/panels/ComponentPanel';
 import RunDebugPanel from './components/panels/RunDebugPanel';
@@ -566,8 +567,9 @@ export default function App() {
 
                 <ActivityBar activeTab={activeActivity} setActiveTab={setActiveActivity} />
 
-                {activeActivity === 'settings' || activeActivity === 'docs' ? (
-                    activeActivity === 'settings' ? <SettingsPage /> : null
+                {activeActivity === 'settings' || activeActivity === 'account' || activeActivity === 'docs' ? (
+                    activeActivity === 'settings' ? <SettingsPage /> :
+                        activeActivity === 'account' ? <AccountPage /> : null
                 ) : (
                     <>
                         {renderLeftPanel()}

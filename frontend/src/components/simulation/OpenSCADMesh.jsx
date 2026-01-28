@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader';
 import { Html } from '@react-three/drei';
 import { AlertTriangle, X } from 'lucide-react';
+import { SimulationLoadingOverlay } from './SimulationLoadingOverlay';
 
 /**
  * OpenSCAD Mesh Renderer
@@ -43,6 +44,15 @@ export const OpenSCADMesh = ({ scadCode, viewMode = 'realistic', theme, onSDFLoa
         }
 
         if (!scadCode || scadCode.trim() === '') return;
+
+        // Check if code is only comments/whitespace
+        const effectiveCode = scadCode.replace(/\/\/.*/g, '').replace(/\/\*[\s\S]*?\*\//g, '').trim();
+        if (effectiveCode === '') {
+            setGeometry(null);
+            setParts([]);
+            setError(null);
+            return;
+        }
 
         // Debounce compilation by 1500ms to allow typing to finish
         debounceTimeoutRef.current = setTimeout(() => {
@@ -270,38 +280,12 @@ export const OpenSCADMesh = ({ scadCode, viewMode = 'realistic', theme, onSDFLoa
     // Render progressive parts or monolithic geometry
     if (loading) {
         return (
-            <Html center>
-                <div style={{
-                    background: 'rgba(0,0,0,0.8)',
-                    color: '#fff',
-                    padding: '20px',
-                    borderRadius: '8px',
-                    textAlign: 'center'
-                }}>
-                    <div>Compiling OpenSCAD...</div>
-                    {progress > 0 && (
-                        <div style={{ marginTop: '10px' }}>
-                            <div style={{
-                                width: '200px',
-                                height: '4px',
-                                background: '#333',
-                                borderRadius: '2px',
-                                overflow: 'hidden'
-                            }}>
-                                <div style={{
-                                    width: `${progress * 100}%`,
-                                    height: '100%',
-                                    background: theme?.colors?.accent || '#00ff88',
-                                    transition: 'width 0.3s'
-                                }} />
-                            </div>
-                            <div style={{ marginTop: '5px', fontSize: '12px' }}>
-                                {Math.round(progress * 100)}%
-                            </div>
-                        </div>
-                    )}
-                </div>
-            </Html>
+            <SimulationLoadingOverlay
+                message="COMPILING OPENSCAD..."
+                showProgress={progress > 0}
+                progress={progress}
+                subMessage="Generating Mesh Geometry"
+            />
         );
     }
 

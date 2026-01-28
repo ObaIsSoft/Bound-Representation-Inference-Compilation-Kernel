@@ -1,15 +1,18 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { OrbitControls, PerspectiveCamera } from '@react-three/drei';
+import { OrbitControls, PerspectiveCamera, Html } from '@react-three/drei';
 import * as THREE from 'three';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useSettings } from '../../contexts/SettingsContext';
 import { StandardMeshPreview } from './StandardMeshPreview';
+import { ProgressiveSDFRenderer } from './ProgressiveSDFRenderer';
 import { NeuralSDF } from './NeuralSDF';
 import { StrokeCapture } from './StrokeCapture'; // New
 import { RegionSelector } from './RegionSelector'; // Phase 8.4
 import { RegionInteraction } from './RegionInteraction'; // Phase 8.5
 import { useSimulation } from '../../contexts/SimulationContext';
+import { SimulationLoadingOverlay } from './SimulationLoadingOverlay';
+import { ZoomLevelMeter } from './ZoomLevelMeter';
 // import PhysicsOverlays from './PhysicsOverlays'; // Disabled temporarily
 
 // Import shaders as raw strings (Vite handles this with ?raw)
@@ -26,21 +29,8 @@ import fragmentShader from '../../shaders/unified_sdf.glsl?raw';
  * - TypeGPURaymarch.jsx
  */
 
-// View Mode Enum (matches shader)
-export const VIEW_MODES = {
-    REALISTIC: 0,
-    WIREFRAME: 1,
-    XRAY: 2,
-    MATTE: 3,
-    THERMAL: 4,  // Renamed from HEATMAP (Phase 10)
-    CUTAWAY: 5,
-    SOLID: 6,
-    STRESS: 7,
-    HIDDEN_LINE: 8,
-    SHADED: 9,
-    INTERIOR: 10,
-    FLOW: 11
-};
+// (Moved to utils/visualizationConfig.js to fix HMR)
+import { VIEW_MODES } from '../../utils/visualizationConfig';
 
 // Map string modes to enum
 const MODE_MAP = {
@@ -535,7 +525,22 @@ const UnifiedSDFRenderer = ({
         physicsData: contextPhysicsData // Phase 10: From Context
     } = useSimulation();
     const controlsRef = useRef();
-    const cameraStateRef = useRef({ position: [4, 3, 4], target: [0, 0, 0] });
+    // Camera State Persistence (Prevent resets)
+    const cameraStateRef = useRef({
+        position: [5, 5, 5],
+        target: [0, 0, 0]
+    });
+
+    // Safety: Check if camera is effectively zero/stuck and reset
+    useEffect(() => {
+        const [x, y, z] = cameraStateRef.current.position;
+        const distSq = x * x + y * y + z * z;
+        if (distSq < 0.01 || !Number.isFinite(distSq)) {
+            console.warn('[UnifiedSDF] Camera state corrupted/zero. Resetting to defaults.');
+            cameraStateRef.current.position = [5, 5, 5];
+            cameraStateRef.current.target = [0, 0, 0];
+        }
+    }, []);
 
     // Helper: Find parent of focused pod to get dimensions
     const getParentDims = () => {
@@ -567,15 +572,32 @@ const UnifiedSDFRenderer = ({
 
     const parentDims = getParentDims();
 
-
     // Phase 8.4: Region Selection State
     const [showRegionSelector, setShowRegionSelector] = React.useState(false);
     const [selectedRegion, setSelectedRegion] = React.useState(null);
 
+    // Phase 17: Full SDF Support - Fetch SDF Grid for complex code
+    const [localSDFData, setLocalSDFData] = useState(null);
+    const [isFetchingSDF, setIsFetchingSDF] = useState(false);
+    const [sdfError, setSdfError] = useState(null); // Fix silent failure
+
+    // Phase 9: Real-Time SDF Baking Support
+    const [sdfOverride, setSdfOverride] = useState(null);
+
+    const handleSDFLoaded = useCallback((data) => {
+        console.log('[UnifiedSDFRenderer] Received baked SDF data from OpenSCAD:', data);
+        setSdfOverride(data);
+    }, []);
+
+    useEffect(() => {
+        // Reset local data when design changes
+        setLocalSDFData(null);
+    }, [design?.id]);
+
     // Extract geometry from design
     const geometryState = useMemo(() => {
         const state = {
-            baseShape: 1, // Default to Box
+            baseShape: 0, // Default to None (Was 1/Box). Fixes ghost box.
             baseDims: [1, 1, 1],
             baseColor: [0.8, 0.8, 0.8],
             metalness: 0.5,
@@ -592,23 +614,43 @@ const UnifiedSDFRenderer = ({
         if (design?.content && typeof design.content === 'string') {
             const c = design.content;
 
+            if (localSDFData || sdfOverride) {
+                // Phase 17: If we have an SDF Grid, force parsing to return 'None' (0)
+                // This ensures the Unified Shader uses the Map Texture instead of Primitive logic.
+                state.baseShape = 0;
+                return state;
+            }
+
+            // [Phase 17 Fix] Loading State - Hide Placeholder
+            if (isFetchingSDF) {
+                state.baseShape = 0;
+                return state;
+            }
+
             // [Phase 17 Fix] Check for Complexity FIRST
             // If the code contains structural keywords, it implies a CSG tree that requires
             // the backend SDF Grid generator. Do NOT try to match primitives here.
+
+            // We use this check to BLOCK naive primitive detection, but we still allow fetching in useEffect.
             const isComplex = c.includes('module ') ||
                 c.includes('difference') ||
                 c.includes('union') ||
                 c.includes('intersection') ||
                 c.includes('hull') ||
-                c.includes('import');
+                c.includes('import') ||
+                c.includes('for(') ||  // Loops are complex
+                c.includes('for (');
 
             if (isComplex) {
-                // Return default state (Box) but let useEffect fetch the real grid
-                return state;
+                // Return default state (Box) - acting as a "Loading..." placeholder
+                // [UPDATE] Actually, showing nothing is better than a random box if we are about to fetch.
+                // But we don't know if we ARE fetching yet (useEffect triggers later).
+                // However, the user complained about the box.
+                // Let's rely on isFetchingSDF check above.
+                return state; // Still returns Box (1) if not fetching yet, which is fine for <1s
             }
 
             // Sphere Detection
-            // Examples: sphere(10); sphere(r=5);
             const sphereMatch = c.match(/sphere\s*\(\s*(?:r\s*=\s*)?([0-9.]+)\s*\)/);
             if (sphereMatch) {
                 state.baseShape = 2; // 2 = Sphere
@@ -618,27 +660,22 @@ const UnifiedSDFRenderer = ({
             }
 
             // Cube Detection
-            // Examples: cube([10, 20, 30]); cube(10);
             const cubeMatch = c.match(/cube\s*\(\s*(?:size\s*=\s*)?(?:\[([0-9.,\s]+)\]|([0-9.]+))\s*\)/);
             if (cubeMatch) {
                 state.baseShape = 1; // 1 = Box
                 if (cubeMatch[1]) {
-                    // Vector [x, y, z]
                     const dims = cubeMatch[1].split(',').map(s => parseFloat(s.trim()));
                     state.baseDims = [dims[0] || 1, dims[1] || 1, dims[2] || 1];
                 } else if (cubeMatch[2]) {
-                    // Scalar length
                     const s = parseFloat(cubeMatch[2]);
                     state.baseDims = [s, s, s];
                 }
                 return state;
             }
 
-            // Cylinder Detection (Mapped to Capsule for now, or new Cylinder shape id)
-            // cylinder(h=10, r=5)
+            // Cylinder Detection
             if (c.includes('cylinder')) {
                 state.baseShape = 3; // 3 = Cylinder/Capsule
-                // Default dims for cylinder
                 state.baseDims = [1, 5, 1]; // r, h, r
 
                 const rMatch = c.match(/r\s*=\s*([0-9.]+)/) || c.match(/r1\s*=\s*([0-9.]+)/);
@@ -652,27 +689,10 @@ const UnifiedSDFRenderer = ({
         }
 
         return state;
-    }, [design?.content, design?.type]);
-
-    // Phase 17: Full SDF Support - Fetch SDF Grid for complex code
-    const [localSDFData, setLocalSDFData] = useState(null);
-    const [isFetchingSDF, setIsFetchingSDF] = useState(false);
-
-    // Phase 9: Real-Time SDF Baking Support (Moved up to fix ReferenceError)
-    const [sdfOverride, setSdfOverride] = useState(null);
-
-    const handleSDFLoaded = useCallback((data) => {
-        console.log('[UnifiedSDFRenderer] Received baked SDF data from OpenSCAD:', data);
-        setSdfOverride(data);
-    }, []);
+    }, [design?.content, design?.type, localSDFData, sdfOverride, isFetchingSDF]);
 
     useEffect(() => {
-        // Reset local data when design changes
-        setLocalSDFData(null);
-    }, [design?.id]);
-
-    useEffect(() => {
-        // Condition: 
+        // Condition:
         // 1. SDF Mode is Active
         // 2. We have content (code)
         // 3. It's NOT a primitive (baseShape is 1=Box by default or 0)
@@ -682,20 +702,15 @@ const UnifiedSDFRenderer = ({
         if (!design?.content) return;
         if (design.mesh_sdf_data) return; // Already has it
 
-        // If primitive parser found a shape matches (Sphere=2, Cylinder=3), we likely don't need grid
-        // But if it's Box (1), it might be default? 
-        // Actually, primitive parser returns 1 for Cube. Default is also 1. 
-        // Let's assume if it contains '{' or 'module' it needs Grid.
+        // Always fetch SDF for custom code to ensure correctness (e.g. transforms, colored primitives)
+        // unless it's empty.
+        if (design.content.length < 3) return;
 
-        const isComplex = typeof design.content === 'string' && (
-            design.content.includes('module ') ||
-            design.content.includes('difference') ||
-            design.content.includes('union') ||
-            design.content.includes('intersection') ||
-            design.content.includes('import')
-        );
+        // DISABLE Legacy Fetch if Progressive Loader is active (baseShape === 0)
+        // The ProgressiveSDFRenderer handles its own fetching.
+        if (geometryState.baseShape === 0) return;
 
-        if (!isComplex) return;
+        // const isComplex = ... (Removed to fix "nothing in sdf" bug for simple pasted code)
 
         // Debounce fetch
         const timer = setTimeout(async () => {
@@ -715,12 +730,18 @@ const UnifiedSDFRenderer = ({
                 });
 
                 const data = await res.json();
-                if (data.success && data.sdf_data) {
+
+                if (data.success && data.sdf_data && data.sdf_data.length > 0) {
                     console.log('[UnifiedSDF] Received SDF Grid');
                     setLocalSDFData(data);
+                    setSdfError(null);
+                } else {
+                    console.warn('[UnifiedSDF] Backend returned success but no SDF data', data);
+                    setSdfError(data.error || "Geometry too complex for automatic SDF generation.");
                 }
             } catch (e) {
                 console.error('[UnifiedSDF] Failed to fetch SDF:', e);
+                setSdfError("Network or Backend Error");
             } finally {
                 setIsFetchingSDF(false);
             }
@@ -739,7 +760,7 @@ const UnifiedSDFRenderer = ({
                 ...base,
                 mesh_sdf_data: localSDFData.sdf_data,
                 sdf_resolution: localSDFData.resolution,
-                sdf_bounds: localSDFData.bounds
+                sdf_bounds: localSDFData.sdf_bounds || localSDFData.bounds
             };
         }
 
@@ -750,10 +771,6 @@ const UnifiedSDFRenderer = ({
 
         return base;
     }, [design, localSDFData, sdfOverride]);
-
-    // Re-use logic for effectiveDesign below...
-
-
 
     // Handle camera state persistence
     const handleCameraChange = useCallback(() => {
@@ -770,56 +787,6 @@ const UnifiedSDFRenderer = ({
     const handleShaderError = useCallback((error) => {
         console.error('[UnifiedSDFRenderer] Shader compilation error:', error);
     }, []);
-
-    // Phase 8.4: Show Region Selector on Micro-Machining Mode Entry
-    React.useEffect(() => {
-        const isMicroMode = viewMode === 'micro' || viewMode === 'micro_wgsl';
-
-        // Reset when leaving only
-        if (!isMicroMode) {
-            setSelectedRegion(null);
-        } else {
-            // Show selector if not selected
-            setShowRegionSelector(!selectedRegion);
-        }
-    }, [viewMode, selectedRegion]);
-    const handleRegionSelected = React.useCallback((region) => {
-        console.log('[MicroMachining] Region selected:', region);
-        setSelectedRegion(region);
-        setShowRegionSelector(false);
-        // TODO: Trigger API call to train neural network for this region
-    }, []);
-
-    const handleRegionCancel = React.useCallback(() => {
-        console.log('[MicroMachining] Region selection cancelled');
-        setShowRegionSelector(false);
-        // TODO: Exit Micro-Machining mode or show alternate message
-    }, []);
-
-    // (Moved sdfOverride state to top)
-
-    // Merge duplicate effectiveDesign logic
-    // We already defined effectiveDesign above (Phase 17), so we don't redeclare it here.
-    // However, we need to ensure THAT definition included sdfOverride.
-    // Since I cannot edit the previous block easily without context, I will COMMENT OUT this one
-    // and rely on the fact that I will update the FIRST definition to include sdfOverride.
-
-    // WAIT: I should just replace this block with NOTHING if I update the first one.
-    // Or, better, I will replace THIS block with a comment, and update the FIRST block (in a separate call if needed, or I can try to find where it is).
-
-    // Actually, I should update the FIRST definition to:
-    // const effectiveDesign = useMemo(() => { ... merge localSDFData AND sdfOverride ... }, [design, localSDFData, sdfOverride]);
-
-    // Since I can't reach the first definition in this tool call (it's at line ~712), I will delete this redeclaration first.
-    // Then I will update the first one.
-
-    // Replacement for lines 804-815:
-    // Just keep the state and handler, remove effectiveDesign.
-
-    /* 
-       Merged effectiveDesign logic is handled in Phase 17 block above.
-       We keep state/handlers here.
-    */
 
     return (
         <div className={`w-full h-full ${className}`} style={style}>
@@ -866,6 +833,8 @@ const UnifiedSDFRenderer = ({
                 {/* 0. Sketch Layer */}
                 <StrokeCapture enabled={sketchMode} />
 
+
+
                 {/* 0.5 Region Selection Layer */}
                 {showRegionSelector && (
                     <RegionInteraction
@@ -875,7 +844,28 @@ const UnifiedSDFRenderer = ({
                     />
                 )}
 
+                {/* 0.6 Loading Overlay for SDF Generation */}
+                {isFetchingSDF && (
+                    <SimulationLoadingOverlay
+                        message="GENERATING SDF GRID..."
+                        subMessage="High-Fidelity Voxelization"
+                    />
+                )}
+
+                {/* 0.7 Error Overlay */}
+                {sdfError && !isFetchingSDF && meshRenderingMode === 'sdf' && (
+                    <Html center>
+                        <div className="flex flex-col items-center justify-center p-6 bg-red-900/90 rounded-xl backdrop-blur-md shadow-2xl border border-red-500/30 min-w-[300px]">
+                            <div className="text-red-400 mb-2 font-bold tracking-widest uppercase">SDF Generation Failed</div>
+                            <div className="text-white text-sm font-mono text-center max-w-xs">{sdfError}</div>
+                            <div className="mt-4 text-xs text-red-300">Try switching to Preview Mode</div>
+                        </div>
+                    </Html>
+                )}
+
                 {/* 1. SDF Background & Kernel (Always rendered for background/grid) */}
+                {/* We ALWAYS render the kernel now to ensure the Grid/Environment is visible. */}
+                {/* If Progressive Renderer is active, this kernel acts as the background layer. */}
                 <SDFKernel
                     viewMode={viewMode}
                     showGrid={showGrid}
@@ -888,18 +878,31 @@ const UnifiedSDFRenderer = ({
                     clipOffset={clipPlane?.offset || 0}
                     clipEnabled={!!clipPlane?.enabled}
                     physicsData={physicsData}
-                    contextPhysicsData={contextPhysicsData} // Phase 10: Pass context data
+                    contextPhysicsData={contextPhysicsData}
                     onShaderError={handleShaderError}
                     theme={theme}
-                    meshRenderingMode={sdfOverride ? 'sdf' : meshRenderingMode} // Auto-switch to SDF if data exists
-                    design={effectiveDesign} // [FIX] Passing design prop
-                    sketchPoints={sketchPoints} // Phase 9.3
+                    meshRenderingMode={meshRenderingMode}
+                    design={effectiveDesign}
+                    sketchPoints={sketchPoints}
                 />
+
+                {/* 1.1 Progressive Streamer (Overlay) */}
+                {/* If active, it renders generic geometry on top of the kernel environment */}
+                {(geometryState.baseShape === 0 && meshRenderingMode === 'sdf' && design?.content) && (
+                    <ProgressiveSDFRenderer
+                        scadCode={design.content}
+                        resolution={64}
+                        viewMode={viewMode}
+                        baseColor={geometryState.baseColor}
+                        opacity={1.0}
+                        baseDims={geometryState.baseDims} // Pass for bounds fallback
+                    />
+                )}
 
                 {/* 2. Preview Mode Overlays (Standard Mesh Rasterization) */}
                 {/* Fallback to Mesh if explicitly requested OR if SDF cannot handle the geometry (baseShape === 0) */}
                 {/* AND if we don't have an SDF override yet */}
-                {(!sdfOverride && (meshRenderingMode === 'preview' || geometryState.baseShape === 0)) && (
+                {(!sdfOverride && !localSDFData && meshRenderingMode === 'preview') && (
                     <StandardMeshPreview
                         design={design}
                         viewMode={viewMode}
@@ -923,6 +926,9 @@ const UnifiedSDFRenderer = ({
                         theme={theme}
                     />
                 )}
+
+                {/* 5. UI Overlays (Inside Canvas for Performance/Context) */}
+                <ZoomLevelMeter baseDims={geometryState.baseDims} />
 
 
                 {/* PhysicsOverlays disabled temporarily - will fix later

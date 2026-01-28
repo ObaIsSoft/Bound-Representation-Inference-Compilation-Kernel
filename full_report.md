@@ -1,9 +1,9 @@
 # BRICK OS: The "Bible" - Extreme Technical Reference Manual (Tier 6)
-**Version**: 2026.01.5 (Production Candidate)
-**Date**: 2026-01-26
+**Version**: 2026.01.6 (Agent Evolution Update)
+**Date**: 2026-01-28
 **Author**: Antigravity (Deepmind)
 **Scope**: 100% Codebase Coverage (Frontend, Backend, Kernels, Agents, Tests, Configuration)
-**Status**: "De-mocked" & Fully Operational
+**Status**: "De-mocked", Self-Evolving & Fully Operational
 
 ---
 
@@ -331,6 +331,7 @@ The Swarm is managed by a `langgraph` StateGraph.
 *   **Costing**: Granular model ($ Material + Energy + MachineTime + Labor $).
 *   **BOM**: Generates nested Bill of Materials.
 *   **Toolpaths**: Verifies gouging and collision.
+*   **Intelligence**: **[New]** Uses `ManufacturingSurrogate` (Neural Net) to predict defect probability from geometric features (Deep Evolution).
 
 ## 5.3 Specialized Agents
 ### 5.3.1 GNC Agent (Guidance, Navigation, Control)
@@ -444,7 +445,11 @@ The codebase contains a dedicated suite of tests designed to prove that the syst
 *   **Surrogate Training**: Tests the back-propagation loop of the `ManufacturingSurrogate`.
 *   **Defect Prediction**: Verifies that "Bad Features" (e.g., small radius) trigger high defect probability in the neural net.
 
-### 7.1.4 `verify_replication.py`
+### 7.1.4 `test_fluid_agent.py`
+*   **Hybrid Solver**: Verifies Potential Flow drag estimation for simple bodies (Cube, Cylinder).
+*   **Regime Check**: Ensures high aspect ratio computations yield lower drag coefficients.
+
+### 7.1.5 `verify_replication.py`
 *   **Self-Replication**: A "Von Neumann" test where the system attempts to design a machine capable of manufacturing itself. (Experimental).
 
 ## 7.2 Verification Protocols
@@ -661,7 +666,11 @@ The `backend/main.py` file serves as the gateway to the BRICK OS kernel. It is a
 45. **Designer Agent** (`designer_agent.py`): Initial sketch generation.
 46. **Diagnostic Agent** (`diagnostic_agent.py`): System health checks.
 47. **Doctor Agent** (`doctor_agent.py`): Self-healing triggers.
-48. **Fluid Agent** (`fluid_agent.py`): CFD setup.
+48. **Fluid Agent** (`fluid_agent.py`):
+    *   **Role**: Aerodynamics & CFD.
+    *   **Hybrid Solver**:
+        *   **Mode A**: Potential Flow (Panel Method) for real-time interactivity.
+        *   **Mode B**: OpenFOAM Adapter for high-fidelity simulation.
 49. **Generic Agent** (`generic_agent.py`): Fallback logic.
 50. **Network Agent** (`network_agent.py`): Distributed comms.
 51. **Nexus Agent** (`nexus_agent.py`): Knowledge Graph manager.

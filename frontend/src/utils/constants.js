@@ -29,13 +29,6 @@ export const LOWER_PANEL_TABS = {
   KCL: 'kcl'
 };
 
-export const DEFAULT_FILE_CONTENT = JSON.stringify({
-  type: 'primitive',
-  geometry: 'box',
-  args: [1, 1, 1], // Unit Cube
-  material: {
-    color: '#94a3b8',
-    roughness: 0.5,
-    metalness: 0.5
-  }
-}, null, 2);
+export const DEFAULT_FILE_CONTENT = `// Enter your OpenSCAD code here...
+// BRICK OS v1.0
+`;

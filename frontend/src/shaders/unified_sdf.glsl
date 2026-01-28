@@ -353,22 +353,28 @@ vec3 getBackground(vec3 rd) {
             // Note: ro is uCameraPos. 
             // Since we render object at 0,0,0, floor should be below uBaseDims.y
             
-            float floorY = -uBaseDims.y * 0.7 - 2.0; // Dynamic floor position
+            // Fixed Grid at Y = 0.0 (Origin)
+            // This ensures (0,0,0) is always on the grid pattern.
+            float floorY = -0.01; 
             float tFloor = (floorY - uCameraPos.y) / rd.y;
             
             if (tFloor > 0.0 && tFloor < 100.0) {
                 vec3 pFloor = uCameraPos + rd * tFloor;
                 
                 // Grid Pattern
-                float gridSize = 2.0;
+                float gridSize = 2.0; // Restore original 2m Grid
                 vec2 gridUV = abs(fract(pFloor.xz / gridSize) - 0.5);
+                
+                // Original thinner lines
                 float line = smoothstep(0.45, 0.48, max(gridUV.x, gridUV.y));
                 
-                // Fade out
-                float alpha = exp(-length(pFloor.xz) * 0.05);
+                // Fade out at distance - Extended Horizon (User Request: "Plentier")
+                // Reduced falloff from 0.05 to 0.02 for ~2.5x view distance
+                float alpha = exp(-length(pFloor.xz) * 0.02); 
                 
-                // Subtler grid (0.15 opacity instead of 0.5)
-                bg = mix(bg, uGridColor, line * alpha * 0.15);
+                // Original subtle theme-based color
+                // This respects the 'Show Grid' color from Settings (uGridColor)
+                bg = mix(bg, uGridColor, line * alpha * 0.2); // Slightly boosted from 0.15 for visibility
             }
         }
     }

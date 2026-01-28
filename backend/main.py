@@ -1770,9 +1770,135 @@ async def train_neural_sdf(request: NeuralSDFTrainingRequest):
             }
 
         
+
     except Exception as e:
         logger.error(f"Neural SDF training failed: {e}")
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Training failed: {str(e)}")
+
+
+# ============================================================================
+# Streaming SDF Endpoint
+# ============================================================================
+
+class OpenSCADStreamRequest(BaseModel):
+    code: str
+    resolution: int = 64
+    use_winding_number: bool = True
+
+@app.post("/api/openscad/compile-stream")
+async def compile_openscad_stream(request: OpenSCADStreamRequest):
+    """
+    Compiles OpenSCAD code and streams the resulting SDF grid progressively.
+    """
+    from fastapi.responses import StreamingResponse
+    import json
+    import asyncio
+    import trimesh
+    from agents.openscad_agent import OpenSCADAgent
+    from geometry.processors.mesh_voxelizer import MeshVoxelizer
+    
+    async def event_generator():
+        try:
+            # 1. Compile SCAD -> STL
+            agent = OpenSCADAgent()
+            result = agent.compile_to_stl(request.code, timeout=120)
+            
+            if not result['success']:
+                yield _sse_event("error", {"error": f"OpenSCAD Compilation Failed: {result.get('error')}"})
+                return
+            
+            stl_path = result.get("stl_path")
+            if not stl_path:
+                yield _sse_event("error", {"error": "No STL path returned"})
+                return
+                
+            # 2. Load Mesh
+            mesh = trimesh.load(stl_path)
+            
+            # Robustness: Check watertight
+            if not mesh.is_watertight:
+                logger.warning("Mesh is not watertight. Auto-repairing before stream...")
+                trimesh.repair.fill_holes(mesh)
+                trimesh.repair.fix_normals(mesh)
+            
+            # 3. Voxelize & Stream
+            resolution = request.resolution
+            voxelizer = MeshVoxelizer(resolution=resolution)
+            
+            # Compute bounds first
+            min_xyz, max_xyz = voxelizer._compute_bounds(mesh.vertices)
+            
+            # Yield Start Event
+            yield _sse_event("start", {
+                "total_slices": resolution,
+                "bounds": {
+                    "min": min_xyz.tolist(),
+                    "max": max_xyz.tolist()
+                }
+            })
+            
+            # Stream the slices
+            # Note: For efficiency in production, we should compute slice-by-slice.
+            # Here we compute all (to reuse robust logic) and stream result.
+            sdf_grid, _ = voxelizer.voxelize(
+                mesh.vertices,
+                mesh.faces,
+                use_winding_number=request.use_winding_number
+            )
+            
+            logger.info("Streaming SDF slices...")
+            for z in range(resolution):
+                slice_data = sdf_grid[:, :, z].tolist()
+                
+                yield _sse_event("slice", {
+                    "slice_index": z,
+                    "slice_data": slice_data,
+                    "progress": (z + 1) / resolution
+                })
+                
+                # Small yield to let event loop breathe
+                await asyncio.sleep(0.005)
+                
+            # Completion
+            metadata = {
+                "num_vertices": len(mesh.vertices),
+                "num_faces": len(mesh.faces),
+                "sdf_range": [float(np.min(sdf_grid)), float(np.max(sdf_grid))]
+            }
+            
+            yield _sse_event("complete", {"metadata": metadata})
+            
+            logger.info("SDF Stream Complete")
+            
+            # Cleanup STL
+            if os.path.exists(stl_path):
+                os.remove(stl_path)
+
+        except Exception as e:
+            logger.error(f"Stream Failed: {e}", exc_info=True)
+            yield _sse_event("error", {"error": str(e)})
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
+def _sse_event(event_type: str, data: Dict) -> str:
+    """Format SSE event"""
+    return f"event: {event_type}\\ndata: {json.dumps(data)}\\n\\n"
+
+if __name__ == "__main__":
+    import uvicorn
+    # Use environment variables for host/port if available
+    host = os.getenv("HOST", "0.0.0.0")
+    port = int(os.getenv("PORT", "8000"))
+    logger.info(f"Starting server on {host}:{port}")
+    uvicorn.run(app, host=host, port=port)
 

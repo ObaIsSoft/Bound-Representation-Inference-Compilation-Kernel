@@ -1,7 +1,7 @@
 import React from 'react';
 import {
     Search, Package, Play, Layers, Code2, Wrench,
-    GitBranch, Download, FileText, Settings, Cpu, Server
+    GitBranch, Download, FileText, Settings, Cpu, Server, User
 } from 'lucide-react';
 import { ACTIVITY_BAR_WIDTH } from '../../utils/constants';
 import { useTheme } from '../../contexts/ThemeContext';
@@ -25,6 +25,7 @@ const ActivityBar = ({ activeTab, setActiveTab }) => {
     const bottomActions = [
         { id: 'docs', icon: FileText, label: 'Documentation' },
         { id: 'settings', icon: Settings, label: 'Kernel Settings' },
+        { id: 'account', icon: User, label: 'User Account' },
     ];
 
     return (

@@ -246,7 +246,8 @@ const SimulationBay = ({ activeActivity }) => {
                     <div className="relative" ref={viewportMenuRef}></div>
                 </div>
 
-                {/* Temperature Sensor Input - SYNCED WITH CONTEXT */}
+                {/* Temperature Sensor Input - Removed due to ReferenceError (testParams) */}
+                {/* 
                 {showTempControl && (
                     <div
                         className="absolute bottom-2 right-2 z-20 flex items-center gap-1 p-1 rounded border shadow-lg backdrop-blur-sm"
@@ -261,18 +262,13 @@ const SimulationBay = ({ activeActivity }) => {
                                 Temp
                             </label>
                             <div className="flex items-center gap-0.5">
-                                <input
-                                    type="number"
-                                    value={testParams.temperature}
-                                    onChange={(e) => updateTestParam('temperature', Number(e.target.value))}
-                                    className="w-8 bg-transparent text-[8px] font-mono outline-none text-right border-b border-transparent focus:border-current transition-colors"
-                                    style={{ color: theme.colors.text.primary }}
-                                />
+                                <span className="text-[8px] font-mono" style={{ color: theme.colors.text.primary }}>20</span>
                                 <span className="text-[6px] font-mono" style={{ color: theme.colors.text.muted }}>°C</span>
                             </div>
                         </div>
                     </div>
                 )}
+                */}
             </div>
 
             {/* PHYSICS TERMINAL OVERLAY */}

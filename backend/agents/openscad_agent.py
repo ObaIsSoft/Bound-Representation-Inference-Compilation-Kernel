@@ -92,6 +92,7 @@ class OpenSCADAgent:
             stl_file = tempfile.NamedTemporaryFile(suffix='.stl', delete=False)
             stl_path = stl_file.name
             stl_file.close()
+            os.unlink(stl_path) # Ensure OpenSCAD creates it
         else:
             stl_path = output_path
         
@@ -135,6 +136,10 @@ class OpenSCADAgent:
             
             # Check if STL file was actually created
             if not os.path.exists(stl_path):
+                print(f"[OpenSCAD] ERROR: Output file not created at {stl_path}")
+                print(f"[OpenSCAD] Command: {' '.join(cmd)}")
+                print(f"[OpenSCAD] STDOUT: {result.stdout}")
+                print(f"[OpenSCAD] STDERR: {result.stderr}")
                 return {
                     "success": False,
                     "error": f"OpenSCAD did not generate output file. STDERR: {result.stderr}"
@@ -209,18 +214,37 @@ class OpenSCADAgent:
                 
                 # 2. Compute Signed Distance
                 try:
-                    # check if scene is watertight? Trimesh signed distance works best on watertight.
-                    # Warning: This is O(N*M).
                     print(f"[OpenSCAD] Baking SDF ({resolution}^3) for {vertex_count} vertices...")
+                    
+                    # Check for basic validity
+                    if mesh.is_empty:
+                        raise ValueError("Mesh is empty")
+                        
+                    # For non-watertight meshes, signed_distance can be flaky.
+                    # We can try to use 'scan' method if available or just proceed.
+                    # Trimesh signed_distance usually handles non-watertight by ray casting, 
+                    # but can be wrong.
+                    
+                    # ensure we are using the robust method
                     sdf_values = trimesh.proximity.signed_distance(mesh, grid_points)
                     
+                    # Check if we got valid values
+                    if sdf_values is None or len(sdf_values) == 0:
+                        raise ValueError("Trimesh returned empty SDF")
+                        
                     sdf_flat = sdf_values.astype(float).tolist()
                     sdf_min = float(np.min(sdf_values))
                     sdf_max = float(np.max(sdf_values))
-                    print("[OpenSCAD] SDF Bake Complete.")
+                    
+                    # If dynamics range is 0, something is wrong (unless flat plane?)
+                    if sdf_min == sdf_max:
+                        print(f"[OpenSCAD] Warning: SDF constant value {sdf_min}. Mesh might be invalid/2D.")
+                        
+                    print(f"[OpenSCAD] SDF Bake Complete. Range: [{sdf_min:.3f}, {sdf_max:.3f}]")
                     
                 except Exception as sdf_err:
-                    print(f"SDF generation failed: {sdf_err}")
+                    print(f"[OpenSCAD] SDF generation failed: {sdf_err}")
+                    # Don't fail the whole compile, but maybe return error metadata
                     sdf_flat = []
             else:
                 # Fallback bounds for non-SDF return

@@ -5,6 +5,22 @@
  * across different hardware capabilities.
  */
 
+// View Mode Enum (matches shader)
+export const VIEW_MODES = {
+    REALISTIC: 0,
+    WIREFRAME: 1,
+    XRAY: 2,
+    MATTE: 3,
+    THERMAL: 4,  // Renamed from HEATMAP (Phase 10)
+    CUTAWAY: 5,
+    SOLID: 6,
+    STRESS: 7,
+    HIDDEN_LINE: 8,
+    SHADED: 9,
+    INTERIOR: 10,
+    FLOW: 11
+};
+
 export const QUALITY_PRESETS = {
     ULTRA: {
         particleCount: 500,

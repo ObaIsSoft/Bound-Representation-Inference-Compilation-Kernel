@@ -531,7 +531,7 @@ const Mavic3Pro = () => {
             {/* SENSORS */}
             <mesh position={[0, 8, 0]}>
                 <boxGeometry args={[10, 2, 10]} />
-                <MetallicMaterial color="#orange" />
+                <MetallicMaterial color="#FFA500" />
             </mesh>
         </group>
     );

@@ -1239,58 +1239,71 @@ async def critique_design(request: CritiqueRequest):
     return {"critiques": critiques}
 
 
-# --- Shell API ---
+# --- Shell API (SECURE) ---
+# SECURITY NOTICE: This endpoint executes system commands.
+# Restrictions:
+#   1. WHITELIST-ONLY: Only safe, pre-approved commands allowed
+#   2. NO INJECTION: Uses argument lists (shell=False always)
+#   3. NO SHELL OPERATORS: Pipes, redirects, semicolons rejected
+#   4. AUDIT LOGGING: All commands logged with timestamp
 
-# Global state for shell persistence (single-user mode)
-import os
-SHELL_CWD = os.getcwd()
+import subprocess
+
+# Whitelist of safe commands that can be executed
+ALLOWED_COMMANDS = {
+    "pwd", "ls", "find", "cat", "mkdir", "touch", "whoami", "uname",
+}
 
 class ShellCommand(BaseModel):
     cmd: str
     args: List[str] = []
 
+def _validate_shell_command(cmd: str, args: List[str]) -> tuple:
+    """Validate shell command for safety. Returns (is_valid, error_message)"""
+    if cmd not in ALLOWED_COMMANDS:
+        return False, f"Command not whitelisted. Allowed: {', '.join(ALLOWED_COMMANDS)}"
+    
+    dangerous_chars = [";", "|", "&", ">", "<", "$(", "`", "\n", "\r"]
+    for arg in args:
+        for char in dangerous_chars:
+            if char in arg:
+                return False, f"Dangerous character in arguments"
+    
+    return True, ""
+
 @app.post("/api/shell/execute")
 async def execute_shell(command: ShellCommand):
-    """
-    Executes raw shell commands with full system access.
-    Maintains CWD state across calls.
-    """
-    import subprocess
-    global SHELL_CWD
+    """Execute whitelisted shell commands safely (WHITELIST-ONLY)."""
+    is_valid, error = _validate_shell_command(command.cmd, command.args)
+    if not is_valid:
+        logger.warning(f"[SHELL] BLOCKED: {error}")
+        raise HTTPException(status_code=403, detail=f"Command not allowed: {error}")
     
-    full_cmd = f"{command.cmd} {' '.join(command.args)}".strip()
-
     try:
-        # Handle Directory Navigation (Stateful)
-        if command.cmd == "cd":
-            target = command.args[0] if command.args else os.path.expanduser("~")
-            
-            # Handle relative paths
-            new_path = os.path.abspath(os.path.join(SHELL_CWD, target))
-            
-            if os.path.isdir(new_path):
-                SHELL_CWD = new_path
-                return {"type": "res", "text": f"cd {new_path}"}
-            else:
-                return {"type": "err", "text": f"cd: no such file or directory: {target}"}
-
-        # Execute Arbitrary Command
+        cmd_list = [command.cmd] + command.args
+        logger.info(f"[SHELL] Executing: {' '.join(cmd_list)}")
+        
         result = subprocess.run(
-            full_cmd,
-            shell=True,
+            cmd_list,
+            shell=False,
             capture_output=True,
             text=True,
-            cwd=SHELL_CWD,
-            env=os.environ.copy() # Pass full system env
+            timeout=30
         )
         
-        if result.returncode == 0:
-            return {"type": "res", "text": result.stdout}
-        else:
-            return {"type": "err", "text": result.stderr or result.stdout}
-
+        logger.info(f"[SHELL] Exit code: {result.returncode}")
+        return {
+            "type": "res" if result.returncode == 0 else "err",
+            "text": result.stdout if result.returncode == 0 else result.stderr,
+            "returncode": result.returncode
+        }
+        
+    except subprocess.TimeoutExpired:
+        logger.error(f"[SHELL] Command timeout: {command.cmd}")
+        return {"type": "err", "text": "Command timed out", "returncode": -1}
     except Exception as e:
-        return {"type": "err", "text": f"Shell Error: {str(e)}"}
+        logger.error(f"[SHELL] Error: {str(e)}")
+        return {"type": "err", "text": f"Execution error: {str(e)}", "returncode": -1}
 
 # --- Conversational API ---
 

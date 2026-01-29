@@ -81,10 +81,12 @@ class ShellAgent:
                         "logs": logs + [f"[SHELL] ✗ Invalid directory"]
                     }
             
-            # Execute command
+            # SECURITY: Use argument list instead of shell string to prevent injection.
+            # Do NOT use shell=True.
+            cmd_list = [cmd] + args
             result = subprocess.run(
-                full_cmd,
-                shell=True,
+                cmd_list,
+                shell=False,
                 capture_output=True,
                 text=True,
                 cwd=cwd,

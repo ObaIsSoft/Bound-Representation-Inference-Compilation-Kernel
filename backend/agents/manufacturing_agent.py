@@ -142,12 +142,7 @@ class ManufacturingAgent:
                 
                 if current_pod:
                     for sub_key, sub_pod in current_pod.sub_pods.items():
-                        # We treat sub-pods as "Assemblies" in the BOM
-                        # Ideally, we'd recursively call ManufacturingAgent on them,
-                        # but for now we assume they have 'exports' populated or we just list them.
-                        # Phase 10: We list them as Line Items.
-                        
-                        # Check if sub-pod has exported cost/mass (cached from previous runs)
+                        # ... sub-pod logic ...
                         sub_cost = sub_pod.exports.get("cost", 0.0)
                         sub_mass = sub_pod.exports.get("mass", 0.0)
                         
@@ -164,11 +159,36 @@ class ManufacturingAgent:
                         total_cost += sub_cost
                         total_mass += sub_mass
 
+                    # [PHASE 22/23] Handle Linked Components (Internal Files)
+                    if current_pod.is_folder_linked:
+                        for comp in current_pod.linked_components:
+                            if not comp.get("active", True): continue
+                            
+                            comp_id = comp.get("id")
+                            comp_path = comp.get("path")
+                            
+                            # Heuristic costing for linked files if not already simulated
+                            # In real loop, these would have their own computed constraints
+                            c_mass = current_pod.constraints.get(f"{comp_id}_mass", 0.1)
+                            c_cost = current_pod.constraints.get(f"{comp_id}_cost", 10.0)
+                            
+                            bom_items.append({
+                                "id": f"{current_pod.id}_{comp_id}",
+                                "name": f"{comp_id} (Part: {comp_path})",
+                                "material": material,
+                                "process": "Hardware Compilation",
+                                "mass_kg": round(c_mass, 3),
+                                "cost": round(c_cost, 2),
+                                "type": "linked_component"
+                            })
+                            total_mass += c_mass
+                            total_cost += c_cost
+
                     # [NEW] Commit to System Registry (Recursive ISA State)
                     # This allows 'converge_up' to work for parents.
                     current_pod.exports["mass"] = total_mass
                     current_pod.exports["cost"] = total_cost
-                    current_pod.is_dirty = False # Mark as clean/computed
+                    current_pod.is_dirty = False 
                         
             except ImportError:
                 pass # Registry not ready or circular import

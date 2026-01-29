@@ -39,6 +39,7 @@ const Modal = ({ isOpen, onClose, title, content }) => {
 
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import IntentInput from './IntentInput';
 
 const ControlDeck = ({
     width,
@@ -58,7 +59,6 @@ const ControlDeck = ({
     historyLabel = "Historical Branches",
     untitledLabel = "Untitled Intent",
     processingMessage = "Agents Negotiating Constraints...",
-    verificationLabel = "Formal Verification Active",
     aiLabel = "Gemini 2.5 Logic",
     // Input config
     minRows = 2,
@@ -653,147 +653,16 @@ const ControlDeck = ({
             )}
 
             {/* Input Area */}
-            <div
-                className="p-3 shrink-0"
-                style={{
-                    backgroundColor: theme.colors.bg.primary,
-                    borderTop: `1px solid ${theme.colors.border.primary}`
-                }}
-            >
-                {/* Auto-growing Input Box with Nested Controls */}
-                <div className="relative group">
-                    <textarea
-                        value={inputText}
-                        onChange={(e) => setInputText(e.target.value)}
-                        onKeyDown={handleKeyDown}
-                        placeholder={placeholderText}
-                        disabled={isProcessing}
-                        rows={textareaRows}
-                        className="w-full rounded-lg p-3 pb-8 text-[11px] font-mono focus:outline-none resize-none transition-all placeholder:opacity-40"
-                        style={{
-                            backgroundColor: theme.colors.bg.secondary,
-                            border: `1px solid ${theme.colors.border.primary}`,
-                            color: theme.colors.text.primary,
-                            boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.02)'
-                        }}
-                    />
-
-                    {/* Nested Status & Controls Row (Bottom Left of Input) */}
-                    <div className="absolute bottom-2.5 left-3 flex items-center gap-3 opacity-60 group-hover:opacity-100 transition-opacity">
-
-                        {/* Sketch Mode Toggle */}
-                        <button
-                            onClick={() => setSketchMode(!sketchMode)}
-                            className={`flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-wider transition-all border px-1.5 py-0.5 rounded cursor-pointer ${sketchMode ? 'bg-opacity-20 border-opacity-50' : 'bg-transparent border-transparent opacity-60 hover:opacity-100'}`}
-                            style={{
-                                color: sketchMode ? theme.colors.accent.primary : theme.colors.text.tertiary,
-                                backgroundColor: sketchMode ? theme.colors.accent.primary + '1A' : 'transparent',
-                                borderColor: sketchMode ? theme.colors.accent.primary : 'transparent'
-                            }}
-                            title="Toggle Semantic Sketch Mode"
-                        >
-                            <Pencil size={11} className={sketchMode ? "animate-pulse" : ""} />
-                            <span>Draw</span>
-                        </button>
-
-                        {/* Divider */}
-                        <div className="h-2 w-px bg-current opacity-20" />
-
-
-
-                        {/* Formal Verification Indicator (Tiny) */}
-                        <div
-                            className="flex items-center gap-1 text-[8px] font-mono font-bold uppercase tracking-wider cursor-help"
-                            title="Formal Verification: Ensures mathematical proof of correctness for critical logic."
-                            style={{ color: theme.colors.text.tertiary }}
-                        >
-                            <ShieldCheck size={10} />
-                            <span className="scale-[0.85] origin-left">{verificationLabel}</span>
-                        </div>
-
-                        {/* Divider */}
-                        <div className="h-2 w-px bg-current opacity-20" />
-
-                        {/* Model Selector Dropdown (Tiny) */}
-                        <div className="relative">
-                            <button
-                                onClick={() => setShowModelMenu(!showModelMenu)}
-                                className="flex items-center gap-1 text-[8px] font-mono font-bold uppercase tracking-wider cursor-pointer hover:text-opacity-80 transition-colors"
-                                style={{ color: theme.colors.accent.primary }}
-                            >
-                                <Sparkles size={10} />
-                                <span className="scale-[0.85] origin-left">
-                                    {aiModel === 'openai' ? 'OpenAI GPT-4' :
-                                        aiModel === 'gemini-robotics' ? 'Gemini Robotics' :
-                                            aiModel === 'gemini-3-pro' ? 'Gemini 3 Pro' :
-                                                aiModel === 'gemini-3-flash' ? 'Gemini 3 Flash' :
-                                                    aiModel === 'gemini-2.5-flash' ? 'Gemini 2.5 Flash' :
-                                                        aiModel === 'gemini-2.5-pro' ? 'Gemini 2.5 Pro' :
-                                                            aiModel === 'groq' ? 'Groq (Llama 3 70B)' :
-                                                                aiModel === 'huggingface' ? 'Hugging Face' :
-                                                                    aiModel === 'ollama' ? 'Ollama (Llama 3.2)' :
-                                                                        'Mock AI'}
-                                </span>
-                                <ChevronDown size={8} className="opacity-50" />
-                            </button>
-
-                            {/* Dropdown Menu (Popup) */}
-                            {showModelMenu && (
-                                <div
-                                    className="absolute bottom-full left-0 mb-1 min-w-[120px] rounded-md border shadow-xl z-50 overflow-hidden flex flex-col backdrop-blur-sm"
-                                    style={{
-                                        backgroundColor: theme.colors.bg.primary + 'F0',
-                                        borderColor: theme.colors.border.primary
-                                    }}
-                                >
-                                    {[
-                                        { id: 'mock', label: 'Mock (Offline)' },
-                                        { id: 'groq', label: 'Groq (Llama 3 70B)' },
-                                        { id: 'huggingface', label: 'Hugging Face (Llama 3 8B)' },
-                                        { id: 'ollama', label: 'Ollama (Llama 3.2)' },
-                                        { id: 'openai', label: 'OpenAI GPT-4' },
-                                        { id: 'gemini-robotics', label: 'Gemini Robotics ER-1.5' },
-                                        { id: 'gemini-3-pro', label: 'Gemini 3 Pro (Preview)' },
-                                        { id: 'gemini-3-flash', label: 'Gemini 3 Flash (Preview)' },
-                                        { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
-                                        { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' }
-                                    ].map(m => (
-                                        <button
-                                            key={m.id}
-                                            onClick={() => {
-                                                setAiModel(m.id);
-                                                setShowModelMenu(false);
-                                            }}
-                                            className="px-2 py-1.5 text-left text-[9px] hover:bg-white/5 flex items-center gap-2 transition-colors"
-                                            style={{
-                                                color: aiModel === m.id ? theme.colors.accent.primary : theme.colors.text.secondary
-                                            }}
-                                        >
-                                            <div className={`w-1 h-1 rounded-full ${aiModel === m.id ? 'opacity-100' : 'opacity-0'}`} style={{ backgroundColor: theme.colors.accent.primary }} />
-                                            {m.label}
-                                        </button>
-                                    ))}
-                                </div>
-                            )}
-                        </div>
-                    </div>
-
-                    {/* Send Button (Bottom Right) */}
-                    <button
-                        onClick={handleSend}
-                        disabled={isProcessing || !inputText.trim()}
-                        className="absolute bottom-2 right-2 p-1.5 rounded-md transition-all shadow-sm disabled:opacity-30 disabled:cursor-not-allowed hover:scale-105 active:scale-95"
-                        style={{
-                            backgroundColor: (isProcessing || !inputText.trim())
-                                ? theme.colors.bg.tertiary
-                                : theme.colors.accent.primary,
-                            color: theme.colors.text.primary
-                        }}
-                    >
-                        {isProcessing ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
-                    </button>
-                </div>
-            </div>
+            <IntentInput
+                value={inputText}
+                onChange={setInputText}
+                onSend={handleSend}
+                isProcessing={isProcessing}
+                aiModel={aiModel}
+                setAiModel={setAiModel}
+                sketchMode={sketchMode}
+                setSketchMode={setSketchMode}
+            />
             <Modal
                 isOpen={modalOpen}
                 onClose={() => setModalOpen(false)}

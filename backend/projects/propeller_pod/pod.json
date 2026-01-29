@@ -1,0 +1,127 @@
+{
+  "name": "Propeller Assembly",
+  "is_merged": true,
+  "assembly_pattern": "RADIAL",
+  "pattern_params": {
+    "axis": [
+      0,
+      0,
+      1
+    ],
+    "radius": 0.0
+  },
+  "files": [
+    {
+      "id": "p001",
+      "path": "hub.kcl",
+      "type": "cylinder",
+      "active": true,
+      "transform": {
+        "translate": [
+          0,
+          0,
+          0
+        ],
+        "rotate": [
+          0,
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "id": "p002",
+      "path": "blade.kcl",
+      "type": "plate",
+      "active": true,
+      "transform": {
+        "translate": [
+          0,
+          0,
+          0
+        ],
+        "rotate": [
+          0,
+          0,
+          0.0
+        ]
+      }
+    },
+    {
+      "id": "p003",
+      "path": "blade.kcl",
+      "type": "plate",
+      "active": true,
+      "transform": {
+        "translate": [
+          0,
+          0,
+          0
+        ],
+        "rotate": [
+          0,
+          0,
+          120.0
+        ]
+      }
+    },
+    {
+      "id": "p004",
+      "path": "blade.kcl",
+      "type": "plate",
+      "active": true,
+      "transform": {
+        "translate": [
+          0,
+          0,
+          0
+        ],
+        "rotate": [
+          0,
+          0,
+          240.0
+        ]
+      }
+    },
+    {
+      "id": "p005",
+      "path": "extra_1.kcl",
+      "type": "box",
+      "active": false,
+      "transform": {
+        "translate": [
+          0,
+          0,
+          0
+        ],
+        "rotate": [
+          0,
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "id": "p006",
+      "path": "extra_2.kcl",
+      "type": "box",
+      "active": false,
+      "transform": {
+        "translate": [
+          0,
+          0,
+          0
+        ],
+        "rotate": [
+          0,
+          0,
+          0
+        ]
+      }
+    }
+  ],
+  "metadata": {
+    "version": "1.1.0",
+    "is_auto_generated": true
+  }
+}

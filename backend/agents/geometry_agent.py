@@ -72,12 +72,16 @@ class GeometryAgent:
                 if pod:
                     logger.info(f"GeometryAgent: SCOPED EXECUTION -> {pod.name}")
                     # Merge constraints into params (High Priority)
-                    # This allows the Pod's state to drive the geometry
                     params.update(pod.constraints)
-                    
-                    # Also set a context flag
                     params["context_name"] = pod.name
-                    
+
+                    # Phase 22: Modular Pod Assembly (Linked Files)
+                    if pod.is_folder_linked:
+                        logger.info(f"GeometryAgent: Assembly detected -> Joining {len(pod.linked_files)} files")
+                        # This flag tells the generator to use the assembly flow
+                        params["is_assembly"] = True
+                        params["linked_pod"] = pod
+                        
             except ImportError:
                  logger.warning("System Registry not available for Scoped Geometry.")
 
@@ -94,20 +98,25 @@ class GeometryAgent:
         include_scad = False
 
         if mode == "parametric":
-            # --- HWC KERNEL INTEGRATION ---
-            from hwc_kernel import HighFidelityKernel, OpType
-            hwc = HighFidelityKernel()
-            
-            # New Step: Check for LDP Instructions
-            # If present, use the Hardware Compiler Loop
-            ldp_instructions = params.get("ldp_instructions", [])
-            if ldp_instructions:
-                logger.info(f"GeometryAgent: Driving HWC via {len(ldp_instructions)} LDP Instructions")
-                geometry_tree = self._run_hardware_compiler_loop(ldp_instructions)
+            # --- PHASE 22: ASSEMBLY JOINING ---
+            if params.get("is_assembly"):
+                pod = params.get("linked_pod")
+                geometry_tree = self._run_assembly_joining(pod)
             else:
-                # Fallback to Legacy Heuristic
-                regime = environment.get("regime", "AERIAL")
-                geometry_tree = self._estimate_geometry_tree(regime, params)
+                # --- HWC KERNEL INTEGRATION ---
+                from hwc_kernel import HighFidelityKernel, OpType
+                hwc = HighFidelityKernel()
+                
+                # New Step: Check for LDP Instructions
+                # If present, use the Hardware Compiler Loop
+                ldp_instructions = params.get("ldp_instructions", [])
+                if ldp_instructions:
+                    logger.info(f"GeometryAgent: Driving HWC via {len(ldp_instructions)} LDP Instructions")
+                    geometry_tree = self._run_hardware_compiler_loop(ldp_instructions)
+                else:
+                    # Fallback to Legacy Heuristic
+                    regime = environment.get("regime", "AERIAL")
+                    geometry_tree = self._estimate_geometry_tree(regime, params)
             
             # Compile ISA
             isa = hwc.synthesize_isa("current_project", [], geometry_tree)
@@ -580,3 +589,37 @@ class GeometryAgent:
         except Exception as e:
             logger.error(f"Zoo Compilation Failed: {e}")
             return {"success": False, "error": str(e)}
+
+    def _run_assembly_joining(self, pod) -> List[Dict[str, Any]]:
+        """
+        Phase 22: Joins independent linked files into a single geometry tree.
+        Resolves each linked component and applies its specific offset.
+        """
+        tree = []
+        logger.info(f"GeometryAgent: Joining assembly '{pod.name}' with {len(pod.linked_components)} components.")
+        
+        for comp in pod.linked_components:
+            if not comp.get("active", True): continue
+            
+            comp_id = comp.get("id", "unnamed")
+            rel_path = comp.get("path", "")
+            transform = comp.get("transform", {})
+            
+            # Extract Translate/Rotate
+            translate = transform.get("translate", [0.0, 0.0, 0.0])
+            rotate = transform.get("rotate", [0.0, 0.0, 0.0])
+            
+            # Use manifest-driven geometry hint (Phase 24)
+            ptype = comp.get("type", "box")
+            
+            tree.append({
+                "id": f"asm_{comp_id}",
+                "type": ptype,
+                "params": {"length": 0.1, "width": 0.1, "height": 0.02, "radius": 0.05},
+                "transform": {
+                    "translate": translate,
+                    "rotate": rotate
+                }
+            })
+            
+        return tree

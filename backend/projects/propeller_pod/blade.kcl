@@ -1,0 +1,2 @@
+// blade.kcl
+const blade = startSketchOn('XY') |> startProfileAt([0,0], %) |> line([200, 0], %) |> line([0, 40], %) |> close(%) |> extrude(5, %)

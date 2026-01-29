@@ -1,0 +1,9 @@
+{
+  "name": "Admin User",
+  "email": "user@example.com",
+  "role": "BRICK Architect",
+  "avatar_initials": "AU",
+  "plan": "Pro License",
+  "theme_preference": "dark",
+  "created_at": "2026-01-01T00:00:00Z"
+}

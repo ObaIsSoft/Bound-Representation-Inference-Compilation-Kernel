@@ -15,6 +15,16 @@ class ModularISA(BaseModel):
     # Internal Logic (Private State)
     constraints: Dict[str, Any] = {}
     
+    # Linked Folder Architecture (Phase 22/23)
+    linked_components: List[Dict[str, Any]] = [] # [{"id": "...", "path": "...", "transform": {...}}]
+    is_folder_linked: bool = False
+    is_merged: bool = False 
+    source_folder: Optional[str] = None # Relative path to folder (e.g. 'projects/propeller_pod')
+    
+    # Assembly Patterns (Phase 24)
+    assembly_pattern: str = "MANUAL" # MANUAL, RADIAL, LINEAR, STACK
+    pattern_params: Dict[str, Any] = {} # {"axis": [0,0,1], "radius": 0.0, "spacing": 0.0}
+    
     # Nested Sub-Branches (The 'Component' tree)
     sub_pods: Dict[str, 'ModularISA'] = {}
     
@@ -22,7 +32,8 @@ class ModularISA(BaseModel):
     exports: Dict[str, float] = {
         "mass": 0.0,
         "power_draw": 0.0,
-        "bounding_volume": 0.0
+        "bounding_volume": 0.0,
+        "cost": 0.0
     }
     
     # Dirty Flag for Lazy Evaluation
@@ -75,6 +86,13 @@ class HierarchicalResolver:
             total_power += sub.exports.get("power_draw", 0.0)
             total_cost += sub.exports.get("cost", 0.0)
         
+        # Phase 23: Aggregate metrics from linked components if merged
+        if pod.is_merged and pod.linked_components:
+             # We rely on constraints being updated by PodManager/Agents during Merge
+             total_mass += pod.constraints.get("assembly_mass", 0.0)
+             total_power += pod.constraints.get("assembly_power", 0.0)
+             total_cost += pod.constraints.get("assembly_cost", 0.0)
+
         # Add local mass of the 'Chassis' of this pod
         local_mass = pod.constraints.get("local_mass", 0.0)
         local_power = pod.constraints.get("local_power", 0.0)

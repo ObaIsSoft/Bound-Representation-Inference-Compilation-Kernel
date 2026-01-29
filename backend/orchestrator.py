@@ -57,6 +57,7 @@ from agents.devops_agent import DevOpsAgent
 from agents.remote_agent import RemoteAgent
 from agents.pvc_agent import PvcAgent
 from agents.nexus_agent import NexusAgent
+from agents.stt_agent import get_stt_agent
 
 from ares import AresMiddleware, AresUnitError
 import logging
@@ -164,6 +165,23 @@ def get_agent_registry():
     }
 
 # --- Nodes ---
+
+def stt_node(state: AgentState) -> Dict[str, Any]:
+    """
+    Handles speech-to-text transcription within the graph.
+    If voice_data is provided, it populates user_intent.
+    """
+    voice_data = state.get("voice_data")
+    user_intent = state.get("user_intent", "")
+    
+    if voice_data and not user_intent:
+        logger.info(f"STT Node: Transcribing {len(voice_data)} bytes...")
+        agent = get_stt_agent()
+        transcript = agent.transcribe(voice_data)
+        logger.info(f"STT Node: Transcript: {transcript}")
+        return {"user_intent": transcript}
+    
+    return {}
 
 def dreamer_node(state: AgentState) -> Dict[str, Any]:
     """
@@ -834,6 +852,7 @@ def build_graph():
     workflow = StateGraph(AgentState)
 
     # 1. Add Nodes
+    workflow.add_node("stt_node", stt_node)
     workflow.add_node("dreamer_node", dreamer_node) # NEW Entry Point
     workflow.add_node("environment_agent", environment_node)
     workflow.add_node("topological_agent", topological_node) # NEW
@@ -849,8 +868,9 @@ def build_graph():
     workflow.add_node("optimization_agent", optimization_node)
 
     # 2. Add Edges
-    # Start -> Dreamer -> Environment
-    workflow.set_entry_point("dreamer_node")
+    # Start -> STT -> Dreamer -> Environment
+    workflow.set_entry_point("stt_node")
+    workflow.add_edge("stt_node", "dreamer_node")
     workflow.add_edge("dreamer_node", "environment_agent")
     
     # Environment -> Topological -> Planning
@@ -948,7 +968,8 @@ async def run_orchestrator(
     context: List[Dict] = [],  # Added context for chat history
     mode: str = "plan", 
     initial_state_override: Dict = None,
-    focused_pod_id: Optional[str] = None # Phase 9: Recursive ISA
+    focused_pod_id: Optional[str] = None, # Phase 9: Recursive ISA
+    voice_data: Optional[bytes] = None # Phase 27: Integrated STT
 ) -> AgentState:
     """
     Main entry point.
@@ -964,6 +985,7 @@ async def run_orchestrator(
 
     initial_state = {
         "user_intent": user_intent,
+        "voice_data": voice_data,
         "project_id": project_id,
         "iteration_count": 0,
         "messages": [],

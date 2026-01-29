@@ -1,6 +1,6 @@
 {
   "geometry": {
-    "id": "39333d47-310b-4ec6-9fd4-d6182dd301ec",
+    "id": "3e3f654b-db62-4337-b1cd-eeb66e6643f8",
     "name": "Project_Root",
     "constraints": {
       "mass_budget": 100
@@ -8,8 +8,11 @@
     "exports": {
       "mass": 0,
       "power_draw": 0,
-      "bounding_volume": 0
+      "bounding_volume": 0,
+      "cost": 0
     },
+    "is_merged": false,
+    "is_folder_linked": false,
     "children": []
   },
   "physics": {
@@ -47,9 +50,9 @@
     "scenario": "none"
   },
   "sketch": [],
-  "timestamp": "2026-01-28T15:20:13.130Z",
+  "timestamp": "2026-01-28T22:32:26.503Z",
   "manifest": {
-    "last_saved": "2026-01-28T16:20:13.177743",
+    "last_saved": "2026-01-28T23:35:12.908428",
     "version": "1.0.0",
     "branch": "main"
   }

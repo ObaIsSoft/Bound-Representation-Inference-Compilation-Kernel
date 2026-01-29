@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Dict, Any, List, Optional
 from pydantic import BaseModel
@@ -179,6 +179,28 @@ async def get_system_profile(profile_id: str):
         raise HTTPException(status_code=404, detail="Profile not found")
     return profile
 
+# --- User Management API ---
+class UpdateProfileRequest(BaseModel):
+    name: Optional[str] = None
+    email: Optional[str] = None
+    theme_preference: Optional[str] = None
+
+@app.get("/api/user/profile")
+async def get_user_profile():
+    """Get the current user profile (Single User Mode)."""
+    from agents.user_agent import UserAgent
+    agent = UserAgent()
+    return agent.get_profile()
+
+@app.put("/api/user/profile")
+async def update_user_profile(req: UpdateProfileRequest):
+    """Update user profile details."""
+    from agents.user_agent import UserAgent
+    agent = UserAgent()
+    # Filter None values
+    updates = {k: v for k, v in req.dict().items() if v is not None}
+    return agent.update_profile(updates)
+
 # --- Agent Metrics ---
 @app.get("/api/agents/metrics")
 async def get_agent_metrics():
@@ -186,6 +208,27 @@ async def get_agent_metrics():
     from core.agent_registry import AgentVersionRegistry
     registry = AgentVersionRegistry()
     return {"metrics": registry.get_all_metrics()}
+
+# --- STT API ---
+
+@app.post("/api/stt/transcribe")
+async def transcribe_audio(file: UploadFile = File(...)):
+    """
+    Transcribes uploaded audio file using STTAgent (Whisper).
+    """
+    from agents.stt_agent import get_stt_agent
+    stt_agent = get_stt_agent()
+    
+    audio_content = await file.read()
+    if not audio_content:
+        raise HTTPException(status_code=400, detail="Empty audio file")
+        
+    transcript = stt_agent.transcribe(audio_content, filename=file.filename)
+    
+    return {
+        "text": transcript,
+        "success": "[Error" not in transcript
+    }
 
 
 # --- Recursive ISA Resolver (Phase 9) ---
@@ -248,12 +291,58 @@ async def get_isa_tree():
             "name": pod.name,
             "constraints": pod.constraints,
             "exports": pod.exports,
+            "is_merged": pod.is_merged,
+            "is_folder_linked": pod.is_folder_linked,
+            "assembly_pattern": pod.assembly_pattern,
+            "pattern_params": pod.pattern_params,
+            "component_count": len(pod.linked_components),
+            "active_count": len([c for c in pod.linked_components if c.get("active", True)]),
             "children": [serialize_pod(sub) for sub in pod.sub_pods.values()]
         }
     
     return {
         "tree": serialize_pod(registry.root)
     }
+
+class PodActionRequest(BaseModel):
+    pod_id: str
+
+@app.post("/api/pods/merge")
+async def merge_pod_action(req: PodActionRequest):
+    """Triggers snapping and consolidates folder-linked files into an assembly."""
+    from core.system_registry import get_system_registry
+    from pod_manager import PodManager
+    
+    registry = get_system_registry()
+    pod = registry.get_pod(req.pod_id)
+    if not pod:
+        raise HTTPException(status_code=404, detail="Pod not found")
+        
+    project_root = os.path.join(os.path.dirname(__file__), "projects")
+    pm = PodManager(project_root)
+    
+    success = pm.merge_pod(pod)
+    if success:
+        return {"status": "success", "message": f"Merged {pod.name} assembly."}
+    else:
+        return {"status": "error", "message": "Merging failed. Ensure folder is linked."}
+
+@app.post("/api/pods/unmerge")
+async def unmerge_pod_action(req: PodActionRequest):
+    """Reverts a merged assembly to independent files."""
+    from core.system_registry import get_system_registry
+    from pod_manager import PodManager
+    
+    registry = get_system_registry()
+    pod = registry.get_pod(req.pod_id)
+    if not pod:
+        raise HTTPException(status_code=404, detail="Pod not found")
+        
+    project_root = os.path.join(os.path.dirname(__file__), "projects")
+    pm = PodManager(project_root)
+    
+    pm.unmerge_pod(pod)
+    return {"status": "success", "message": f"Unmerged {pod.name} assembly."}
 
 class CreatePodRequest(BaseModel):
     name: str
@@ -1218,39 +1307,54 @@ class ChatRequest(BaseModel):
     focusedPodId: Optional[str] = None # Phase 9: Recursive ISA
 
 @app.post("/api/chat")
-async def chat(request: ChatRequest):
+async def chat(
+    message: str = Form(""),
+    context: str = Form("[]"),
+    aiModel: str = Form("mock"),
+    conversation_id: Optional[str] = Form(None),
+    language: str = Form("en"),
+    focusedPodId: Optional[str] = Form(None),
+    voice: Optional[UploadFile] = File(None)
+):
     """
     Conversational Interface with Multi-Turn Requirement Gathering.
-    
-    Flow:
-    1. Get/create conversation state
-    2. Run conversational agent to understand intent
-    3. If design request: gather requirements through questions
-    4. Only trigger orchestrator when requirements are complete
+    Supports both text and voice input (transcribed via STTAgent).
     """
-
+    import json
     from agents.conversational_agent import ConversationalAgent
-
+    from agents.stt_agent import get_stt_agent
     from conversation_state import conversation_manager
     from requirement_gatherer import RequirementGatherer
     import uuid
     
-    # Ensure envs are loaded
-    from dotenv import load_dotenv
-    load_dotenv()
-    
+    # Optional STT Processing
+    voice_data = None
+    if voice:
+        logger.info(f"[CHAT] Processing voice input: {voice.filename}")
+        stt_agent = get_stt_agent()
+        voice_data = await voice.read()
+        transcript = stt_agent.transcribe(voice_data, filename=voice.filename)
+        logger.info(f"[CHAT] Voice Transcript: '{transcript}'")
+        message = transcript # Use transcript as the message for the conversational agent
+
+    # Parse context from JSON string (sent via Form)
+    try:
+        context_list = json.loads(context)
+    except:
+        context_list = []
+
     # Get or create conversation
-    conv_id = request.conversation_id or str(uuid.uuid4())
-    conversation = conversation_manager.get_or_create(conv_id, request.language)
+    conv_id = conversation_id or str(uuid.uuid4())
+    conversation = conversation_manager.get_or_create(conv_id, language)
     
     # Add user message to history
-    conversation.add_message("user", request.message)
+    conversation.add_message("user", message)
     
     # Initialize provider
     provider = None
     
     # 1. Ollama
-    if request.aiModel == "ollama":
+    if aiModel == "ollama":
         try:
             from llm.ollama_provider import OllamaProvider
             provider = OllamaProvider(model_name="llama3.2")
@@ -1258,7 +1362,7 @@ async def chat(request: ChatRequest):
             logger.error("OllamaProvider import failed.")
     
     # 2. Groq
-    elif request.aiModel == "groq":
+    elif aiModel == "groq":
         try:
             from llm.groq_provider import GroqProvider
             provider = GroqProvider()
@@ -1266,7 +1370,7 @@ async def chat(request: ChatRequest):
             logger.error("GroqProvider import failed.")
 
     # 3. Hugging Face
-    elif request.aiModel == "huggingface":
+    elif aiModel == "huggingface":
         try:
             from llm.huggingface_provider import HuggingFaceProvider
             provider = HuggingFaceProvider() # Uses default meta-llama/Meta-Llama-3-8B-Instruct
@@ -1274,12 +1378,12 @@ async def chat(request: ChatRequest):
             logger.error("HuggingFaceProvider import failed.")
             
     # 4. OpenAI
-    elif request.aiModel == "openai":
+    elif aiModel == "openai":
         from llm.openai_provider import OpenAIProvider
         provider = OpenAIProvider()
         
     # 3. Gemini (multiple variants)
-    elif request.aiModel.startswith("gemini"):
+    elif aiModel.startswith("gemini"):
         from llm.gemini_provider import GeminiProvider
         
         model_map = {
@@ -1290,13 +1394,12 @@ async def chat(request: ChatRequest):
             "gemini-2.5-pro": "gemini-2.5-pro"
         }
         
-        model_name = model_map.get(request.aiModel, "gemini-3-flash-preview")
+        model_name = model_map.get(aiModel, "gemini-3-flash-preview")
         provider = GeminiProvider(model_name=model_name)
         
     # Default / Fallback
-    # Default / Fallback
     if not provider:
-        logger.info(f"No specific provider request. Using Factory default (requested: {request.aiModel})")
+        logger.info(f"No specific provider request. Using Factory default (requested: {aiModel})")
         from llm.factory import get_llm_provider
         provider = get_llm_provider()
 
@@ -1307,9 +1410,9 @@ async def chat(request: ChatRequest):
     
     # Run conversational agent to understand intent
     result = agent.run({
-        "input_text": request.message,
+        "input_text": message,
         "mode": "chat",
-        "context": request.context
+        "context": context_list
     })
     
     intent = result.get("intent", "unknown")
@@ -1328,14 +1431,14 @@ async def chat(request: ChatRequest):
         
         # Identify design type if not already set
         if not conversation.design_type:
-            design_type = gatherer.identify_design_type(request.message, intent, entities)
+            design_type = gatherer.identify_design_type(message, intent, entities)
             if design_type:
                 conversation.design_type = design_type
                 logger.info(f"Identified design type: {design_type}")
         
         # Extract any requirements from current message
         if conversation.design_type:
-            extracted = gatherer.extract_answers(request.message, conversation)
+            extracted = gatherer.extract_answers(message, conversation)
             for key, value in extracted.items():
                 conversation.update_requirement(key, value)
                 logger.info(f"Extracted requirement: {key} = {value}")
@@ -1380,7 +1483,9 @@ async def chat(request: ChatRequest):
         orchestrator_result = await run_orchestrator(
             user_intent=f"{intent}: {conversation.design_type}",
             project_id=conv_id,
-            mode="plan"
+            mode="plan",
+            focused_pod_id=focusedPodId,
+            voice_data=voice_data # Pass raw audio to swarm (Phase 27)
         )
         
         # Combine responses
@@ -1889,6 +1994,26 @@ async def compile_openscad_stream(request: OpenSCADStreamRequest):
             "X-Accel-Buffering": "no"
         }
     )
+
+class ComplianceCheckRequest(BaseModel):
+    regime: str
+    design_params: Dict[str, Any]
+
+@app.post("/api/compliance/check")
+async def check_compliance(request: ComplianceCheckRequest):
+    """
+    Check design parameters against regulatory standards.
+    """
+    from agents.compliance_agent import ComplianceAgent
+    agent = ComplianceAgent()
+    try:
+        results = agent.run({
+            "regime": request.regime,
+            "design_params": request.design_params
+        })
+        return results
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 def _sse_event(event_type: str, data: Dict) -> str:
     """Format SSE event"""

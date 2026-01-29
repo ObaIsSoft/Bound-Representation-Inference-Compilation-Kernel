@@ -40,6 +40,7 @@ class AgentState(TypedDict):
     # Core
     project_id: str
     user_intent: str
+    voice_data: Optional[bytes] # Raw audio for integrated STT (Phase 27)
     messages: List[str]
     errors: List[str]
     iteration_count: int # For Orchestrator loop limit

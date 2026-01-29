@@ -20,8 +20,10 @@ import CompilePanel from './components/panels/CompilePanel';
 import ManufacturingPanel from './components/panels/ManufacturingPanel';
 import ForkPanel from './components/panels/ForkPanel';
 import ExportPanel from './components/panels/ExportPanel';
+import CompliancePanel from './components/panels/CompliancePanel';
 import { ACTIVITY_BAR_WIDTH, DEFAULT_PANEL_SIZES } from './utils/constants';
 import ISABrowserPanel from './components/panels/ISABrowserPanel';
+import DocsPage from './components/docs/DocsPage';
 import { useTheme } from './contexts/ThemeContext';
 import { useSettings } from './contexts/SettingsContext';
 import { useDesign } from './contexts/DesignContext';
@@ -103,28 +105,32 @@ export default function App() {
     };
 
     // Handle sending intent
-    const handleSendIntent = async (text) => {
+    const handleSendIntent = async (text, voiceBlob = null) => {
         setIsProcessingIntent(true);
 
         // Add user message
         setSessions(prev => prev.map(s => {
             if (s.id === currentSessionId) {
-                return { ...s, messages: [...s.messages, { role: 'user', text }] };
+                return { ...s, messages: [...s.messages, { role: 'user', text: text || (voiceBlob ? "[Voice Intent]" : "") }] };
             }
             return s;
         }));
 
         try {
-            // Call Backend API
+            // Call Backend API using FormData for multipart support
+            const formData = new FormData();
+            formData.append('message', text || "");
+            formData.append('context', JSON.stringify(currentSession.messages.map(m => ({ role: m.role, text: m.text }))));
+            formData.append('aiModel', aiModel);
+            formData.append('focusedPodId', focusedPodId || "");
+
+            if (voiceBlob) {
+                formData.append('voice', voiceBlob, 'voice_intent.wav');
+            }
+
             const response = await fetch('http://localhost:8000/api/chat', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    message: text,
-                    context: currentSession.messages.map(m => ({ role: m.role, text: m.text })),
-                    aiModel: aiModel, // Pass selected model (mock, ollama, etc.)
-                    focusedPodId: focusedPodId // Phase 9: Recursive ISA Context
-                })
+                body: formData // Fetch handles Content-Type for FormData
             });
 
             const result = await response.json();
@@ -539,6 +545,8 @@ export default function App() {
                 return <CompilePanel width={leftWidth} />;
             case 'mfg':
                 return <ManufacturingPanel width={leftWidth} />;
+            case 'compliance':
+                return <CompliancePanel width={leftWidth} />;
             case 'fork':
                 return <ForkPanel width={leftWidth} />;
             case 'export':
@@ -569,7 +577,8 @@ export default function App() {
 
                 {activeActivity === 'settings' || activeActivity === 'account' || activeActivity === 'docs' ? (
                     activeActivity === 'settings' ? <SettingsPage /> :
-                        activeActivity === 'account' ? <AccountPage /> : null
+                        activeActivity === 'account' ? <AccountPage /> :
+                            activeActivity === 'docs' ? <DocsPage /> : null
                 ) : (
                     <>
                         {renderLeftPanel()}

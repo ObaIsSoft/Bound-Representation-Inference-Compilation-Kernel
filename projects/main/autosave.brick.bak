@@ -1,6 +1,6 @@
 {
   "geometry": {
-    "id": "39333d47-310b-4ec6-9fd4-d6182dd301ec",
+    "id": "0160e5e7-55ac-46d8-ad73-66e4bae91aef",
     "name": "Project_Root",
     "constraints": {
       "mass_budget": 100
@@ -8,7 +8,8 @@
     "exports": {
       "mass": 0,
       "power_draw": 0,
-      "bounding_volume": 0
+      "bounding_volume": 0,
+      "cost": 0
     },
     "children": []
   },
@@ -47,9 +48,9 @@
     "scenario": "none"
   },
   "sketch": [],
-  "timestamp": "2026-01-28T15:03:14.164Z",
+  "timestamp": "2026-01-28T22:20:43.221Z",
   "manifest": {
-    "last_saved": "2026-01-28T16:03:15.580596",
+    "last_saved": "2026-01-28T23:20:43.267096",
     "version": "1.0.0",
     "branch": "main"
   }

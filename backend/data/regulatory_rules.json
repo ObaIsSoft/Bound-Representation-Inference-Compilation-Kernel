@@ -2,6 +2,7 @@
     "AERIAL": [
         {
             "id": "FAA_PART_107_WEIGHT",
+            "name": "FAA Part 107 (Weight)",
             "logic": {
                 "<=": [
                     {
@@ -10,49 +11,60 @@
                     25.0
                 ]
             },
-            "violation_msg": "Exceeds FAA Part 107 max weight (25kg)"
+            "violation_msg": "Exceeds FAA Part 107 max weight (25kg)",
+            "citation": "14 CFR Part 107.3",
+            "regulation_text": "Small unmanned aircraft must weigh less than 55 pounds (25 kg) on takeoff, including everything that is on board or otherwise attached to the aircraft.",
+            "official_link": "https://www.ecfr.gov/current/title-14/chapter-I/subchapter-F/part-107"
         },
         {
-            "id": "FAA_NIGHT_LIGHTS",
-            "logic": {
-                "or": [
-                    {
-                        "!": {
-                            "var": "is_night_operation"
-                        }
-                    },
-                    {
-                        "and": [
-                            {
-                                "var": "has_anti_collision_lights"
-                            },
-                            {
-                                ">=": [
-                                    {
-                                        "var": "light_visibility_miles"
-                                    },
-                                    3.0
-                                ]
-                            }
-                        ]
-                    }
-                ]
-            },
-            "violation_msg": "Night cooling operation requires anti-collision lights visible for 3 miles"
-        }
-    ],
-    "MEDICAL": [
-        {
-            "id": "ISO_10993_BIOCOMPAT",
+            "id": "FCC_PART_15_TRANSCORE",
+            "name": "FCC Regulations (Transmitter)",
             "logic": {
                 "==": [
                     {
-                        "var": "is_biocompatible"
+                        "var": "is_fcc_certified"
                     },
                     true
                 ]
             },
-            "violation_msg": "Material must be ISO 10993 certified for medical use"
+            "violation_msg": "Unlicensed transmitters must be FCC Part 15 certified",
+            "citation": "47 CFR Part 15",
+            "regulation_text": "Radio frequency devices must be certified to ensure they do not cause harmful interference to authorized radio services.",
+            "official_link": "https://www.fcc.gov/engineering-technology/laboratory-division/general/equipment-authorization"
+        },
+        {
+            "id": "CE_MARKING",
+            "name": "CE Marking (EMC)",
+            "logic": {
+                "==": [
+                    {
+                        "var": "emc_test_passed"
+                    },
+                    true
+                ]
+            },
+            "violation_msg": "Pending Electromagnetic Compatibility (EMC) testing for CE mark",
+            "citation": "Directive 2014/30/EU",
+            "regulation_text": "Equipment must be designed and manufactured to ensure that the electromagnetic disturbance generated does not exceed the level above which radio and telecommunications equipment cannot operate.",
+            "official_link": "https://ec.europa.eu/growth/single-market/ce-marking_en"
+        }
+    ],
+    "TERRESTRIAL": [
+        {
+            "id": "UNIBIKE_SAE_STABILITY",
+            "name": "SAE J706 (Stability)",
+            "logic": {
+                ">=": [
+                    {
+                        "var": "static_stability_factor"
+                    },
+                    1.2
+                ]
+            },
+            "violation_msg": "Static stability factor too low for terrestrial operation",
+            "citation": "SAE J706",
+            "regulation_text": "Standard for measuring and reporting the static stability of single-track vehicles.",
+            "official_link": "https://www.sae.org/standards/content/j706_200407/"
         }
     ]
 }

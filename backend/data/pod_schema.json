@@ -1,0 +1,139 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Modular Pod Manifest",
+    "type": "object",
+    "required": [
+        "name",
+        "files"
+    ],
+    "properties": {
+        "name": {
+            "type": "string",
+            "description": "Human-readable name of the assembly pod."
+        },
+        "description": {
+            "type": "string"
+        },
+        "assembly_pattern": {
+            "type": "string",
+            "enum": [
+                "MANUAL",
+                "RADIAL",
+                "LINEAR",
+                "STACK"
+            ],
+            "default": "MANUAL",
+            "description": "The logic used to automatically position active components."
+        },
+        "pattern_params": {
+            "type": "object",
+            "properties": {
+                "axis": {
+                    "type": "array",
+                    "items": {
+                        "type": "number"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "default": [
+                        0,
+                        0,
+                        1
+                    ]
+                },
+                "radius": {
+                    "type": "number",
+                    "default": 0.0
+                },
+                "spacing": {
+                    "type": "number",
+                    "default": 0.0
+                }
+            }
+        },
+        "files": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": [
+                    "id",
+                    "path"
+                ],
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "description": "Unique identifier for this component in the assembly."
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Relative path to the design file (.kcl, .py)."
+                    },
+                    "type": {
+                        "type": "string",
+                        "enum": [
+                            "box",
+                            "cylinder",
+                            "sphere",
+                            "plate",
+                            "custom"
+                        ],
+                        "default": "box",
+                        "description": "Geometric hint for the assembly renderer."
+                    },
+                    "transform": {
+                        "type": "object",
+                        "properties": {
+                            "translate": {
+                                "type": "array",
+                                "items": {
+                                    "type": "number"
+                                },
+                                "minItems": 3,
+                                "maxItems": 3,
+                                "default": [
+                                    0,
+                                    0,
+                                    0
+                                ]
+                            },
+                            "rotate": {
+                                "type": "array",
+                                "items": {
+                                    "type": "number"
+                                },
+                                "minItems": 3,
+                                "maxItems": 3,
+                                "default": [
+                                    0,
+                                    0,
+                                    0
+                                ]
+                            }
+                        }
+                    },
+                    "visibility": {
+                        "type": "string",
+                        "enum": [
+                            "visible",
+                            "hidden",
+                            "ghost"
+                        ],
+                        "default": "visible"
+                    }
+                }
+            }
+        },
+        "metadata": {
+            "type": "object",
+            "properties": {
+                "version": {
+                    "type": "string",
+                    "default": "1.0.0"
+                },
+                "author": {
+                    "type": "string"
+                }
+            }
+        }
+    }
+}

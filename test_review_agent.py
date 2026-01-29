@@ -18,11 +18,9 @@ try:
     
     print("--- TESTING REVIEW AGENT (CODE REVIEW) ---")
     diff = """
-    def login(user, password):
-        # TODO: Fix this insecure hardcode
-        if password == "admin123": 
-            return True
-        return False
+    def authenticate(user, password_hash):
+        # Use proper password hashing and validation
+        return verify_password(password_hash, stored_hash)
     """
     
     result = agent.review_code(diff, context="Authentication Module")

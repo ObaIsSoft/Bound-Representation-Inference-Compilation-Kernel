@@ -14,10 +14,6 @@ import os
 current_dir = os.path.dirname(os.path.abspath(__file__))
 env_path = os.path.join(current_dir, '.env')
 load_dotenv(dotenv_path=env_path)
-print(f"[STARTUP] Loading .env from: {env_path}")
-print(f"[STARTUP] OPENAI_API_KEY: {'SET' if os.getenv('OPENAI_API_KEY') else 'NOT SET'}")
-print(f"[STARTUP] GEMINI_API_KEY: {'SET' if os.getenv('GEMINI_API_KEY') else 'NOT SET'}")
-print(f"[STARTUP] ZOO_API_TOKEN: {'SET' if os.getenv('ZOO_API_TOKEN') else 'NOT SET'}")
 
 from schema import AgentState, BrickProject
 from orchestrator import run_orchestrator, get_agent_registry

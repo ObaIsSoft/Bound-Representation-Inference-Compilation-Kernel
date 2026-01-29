@@ -16,9 +16,6 @@ except ImportError:
     pass
 
 API_KEY = os.getenv("MATERIALS_PROJECT_API_KEY")
-print(f"API Key present: {bool(API_KEY)}")
-if API_KEY:
-    print(f"API Key (first 4 chars): {API_KEY[:4]}...")
 
 if not API_KEY:
     print("ERROR: No API key found in environment!")

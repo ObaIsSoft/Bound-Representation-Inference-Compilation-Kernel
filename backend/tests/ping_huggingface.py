@@ -23,7 +23,7 @@ def ping_huggingface():
         # Check for Token (optional but good for inference)
         token = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_API_KEY")
         if token:
-            print(f"✅ Token detected: {token[:4]}...{token[-4:]}")
+            print("✅ Hugging Face token detected.")
             # Try a simple inference check if token exists?
             # For now, just 'ping' connectivity is enough.
         else:

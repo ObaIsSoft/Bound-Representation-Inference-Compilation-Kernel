@@ -16,15 +16,7 @@ def inspect_keys():
             print(f"❌ {name}: MISSING")
             continue
             
-        print(f"🔍 {name}:")
-        print(f"   Length: {len(value)}")
-        print(f"   Starts with: '{value[:4]}'")
-        print(f"   Ends with:   '{value[-4:]}'")
-        
-        problems = []
-        if value.strip() != value:
-            problems.append("Has leading/trailing whitespace")
-        if value.startswith('"') or value.startswith("'"):
+        print(f"✅ {name}: PRESENT (length: {len(value)})")
             problems.append("Cannot have quotes at start")
         if " " in value:
             problems.append("Contains spaces inside")

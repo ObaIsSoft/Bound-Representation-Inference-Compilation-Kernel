@@ -74,7 +74,7 @@ def main():
     else:
         # Try OpenAI
         if os.getenv("OPENAI_API_KEY"):
-            print("\n🌐 Detected OPENAI_API_KEY. Using OpenAIProvider (gpt-4-turbo)...")
+            print("\n🌐 Using OpenAI provider for LLM inference...")
             provider = OpenAIProvider()
         
         # Try Ollama (Auto-detect model)

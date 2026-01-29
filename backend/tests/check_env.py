@@ -11,12 +11,7 @@ def check_keys():
     hf = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_API_KEY")
     
     print(f"GROQ_API_KEY: {'[FOUND]' if groq else '[MISSING]'}")
-    if groq:
-        print(f"  -> {groq[:4]}...{groq[-4:]}")
-        
     print(f"HF_TOKEN: {'[FOUND]' if hf else '[MISSING]'}")
-    if hf:
-        print(f"  -> {hf[:4]}...{hf[-4:]}")
         
     if not groq and not hf:
         print("❌ Both keys missing. Please check .env file.")

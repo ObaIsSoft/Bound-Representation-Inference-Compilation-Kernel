@@ -8,9 +8,10 @@ print("=== DEBUG START ===")
 
 # 1. Check API Key
 api = UnifiedMaterialsAPI()
-print(f"MP API Key Loaded: {bool(api.mp_api.api_key)}")
 if api.mp_api.api_key:
-    print(f"Key Prefix: {api.mp_api.api_key[:4]}...")
+    print("MP API Key: LOADED")
+else:
+    print("MP API Key: NOT LOADED")
 
 # 2. Check Pymatgen Al
 try:

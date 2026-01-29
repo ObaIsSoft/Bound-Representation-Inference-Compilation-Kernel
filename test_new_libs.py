@@ -22,7 +22,8 @@ except ImportError:
     pass
 
 API_KEY = os.getenv("MATERIALS_PROJECT_API_KEY")
-print(f"API Key: {API_KEY[:4]}..." if API_KEY else "Missing API Key")
+if not API_KEY:
+    print("Warning: MATERIALS_PROJECT_API_KEY not set in environment")
 
 print("\n=== MENDELEEV TEST ===")
 try:

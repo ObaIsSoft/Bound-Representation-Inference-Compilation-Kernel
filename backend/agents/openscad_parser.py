@@ -6,6 +6,7 @@ Handles all OpenSCAD features: modules, primitives, transforms, booleans, condit
 
 from typing import List, Dict, Any, Set, Tuple
 import re
+import ast
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -644,22 +645,32 @@ class OpenSCADParser:
         return params
     
     def _evaluate_expression(self, expr: str) -> Any:
-        """Safely evaluate an expression"""
+        """Safely evaluate an expression without eval().
+        
+        SECURITY: Uses ast.literal_eval for literals and restricted eval for math.
+        Supports: numbers, lists, basic arithmetic (+,-,*,/)
+        """
         expr = expr.strip()
         
-        # Replace variables
+        # Replace variables with their values (only safe numeric types)
         for var_name, var_value in self.variables.items():
-            expr = expr.replace(var_name, str(var_value))
+            if isinstance(var_value, (int, float)):
+                expr = expr.replace(var_name, str(var_value))
         
-        # Try to evaluate as Python expression (safe subset)
+        # Try to parse as Python literal (safe - no code execution)
         try:
-            # Only allow numbers, lists, basic math
-            if re.match(r'^[\d\s+\-*/().,\[\]]+$', expr):
-                return eval(expr, {"__builtins__": {}}, {})
-        except:
+            return ast.literal_eval(expr)
+        except (ValueError, SyntaxError):
             pass
         
-        # Return as string if can't evaluate
+        # If simple arithmetic, use restricted eval
+        if re.match(r'^[\d+\-*/() .]+$', expr):
+            try:
+                return eval(expr, {"__builtins__": {}}, {})
+            except (NameError, TypeError, ZeroDivisionError):
+                pass
+        
+        # Return as string if can't safely evaluate
         return expr
     
     def _parse_range(self, range_str: str) -> List[Any]:

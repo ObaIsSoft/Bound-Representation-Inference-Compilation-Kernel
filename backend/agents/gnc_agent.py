@@ -44,7 +44,8 @@ class GncAgent:
         # Get earth gravity from kernel
         try:
             g_earth = get_physics_kernel().get_constant('g')
-        except:
+        except (KeyError, AttributeError) as e:
+            logger.debug(f"Could not get gravity from kernel, using default: {e}")
             g_earth = 9.80665
 
         # Gravity map

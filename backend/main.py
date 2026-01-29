@@ -105,7 +105,8 @@ async def get_system_status():
     try:
         # In a real system, we'd ping the physics kernel or check last heartbeat
         pass
-    except:
+    except Exception as e:
+        logger.debug(f"ARES status check failed: {e}")
         ares_status = "OFFLINE"
 
     # 2. LDP (Latent Design Propagation / Gradient Optimization) Status

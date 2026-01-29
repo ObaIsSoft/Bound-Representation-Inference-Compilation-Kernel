@@ -57,7 +57,8 @@ class HybridGeometryEngine:
              
         try:
              mode_enum = CompileMode(fidelity.lower())
-        except:
+        except (ValueError, AttributeError):
+             logger.debug(f"Invalid fidelity '{fidelity}', using STANDARD")
              mode_enum = CompileMode.STANDARD
 
         # Convert to GeometryNodes (for cache key generation)

@@ -59,7 +59,8 @@ class PhysicsAgent:
                 temperature=temperature, 
                 pressure=pressure
             )
-        except:
+        except (KeyError, TypeError, AttributeError):
+            logger.debug(f"Could not calculate fluid density, using fallback")
             fluid_density = environment.get("fluid_density", 1.225)  # Fallback
         
         # 2. Derive Physical Properties from Geometry (Mass, Surface Area)

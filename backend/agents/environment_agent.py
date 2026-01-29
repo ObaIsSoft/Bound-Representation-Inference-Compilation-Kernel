@@ -44,7 +44,8 @@ class EnvironmentAgent:
             kernel = get_physics_kernel()
             try:
                 c = kernel.get_constant('c')
-            except:
+            except (KeyError, AttributeError) as e:
+                logger.debug(f"Could not get speed of light from kernel, using default: {e}")
                 c = 299792458 # Safe fallback only if kernel fails
                 
             flux = env_data.get("solar_flux", 0)
@@ -99,7 +100,8 @@ class EnvironmentAgent:
         """Get standard earth gravity from kernel."""
         try:
             return get_physics_kernel().get_constant('g')
-        except:
+        except (KeyError, AttributeError) as e:
+            logger.debug(f"Could not get gravity from kernel, using default: {e}")
             return 9.80665
 
     def _determine_location(self, intent_lower: str) -> dict:

@@ -1,11 +1,9 @@
 import React from 'react';
 import { Check, Cpu, ShieldCheck, Network } from 'lucide-react';
 import { useTheme } from '../../contexts/ThemeContext';
-import { useSimulation } from '../../contexts/SimulationContext';
 
-const Header = ({ isRunning }) => {
+const Header = ({ isRunning = false }) => {
     const { theme } = useTheme();
-    const { solverStatus } = useSimulation();
 
     // Helper for status color
     const getStatusColor = (status, defaultColor) => {
@@ -54,9 +52,9 @@ const Header = ({ isRunning }) => {
                             borderColor: theme.colors.border.primary
                         }}
                     >
-                        <ShieldCheck size={12} style={{ color: getStatusColor(solverStatus?.ares, theme.colors.text.muted) }} />
+                        <ShieldCheck size={12} style={{ color: theme.colors.text.muted }} />
                         <span className="text-[9px] font-mono font-bold" style={{ color: theme.colors.text.primary }}>
-                            ARES: {solverStatus?.ares || 'INIT'}
+                            ARES: INIT
                         </span>
                     </div>
 
@@ -68,9 +66,9 @@ const Header = ({ isRunning }) => {
                             borderColor: theme.colors.border.primary
                         }}
                     >
-                        <Network size={12} style={{ color: solverStatus?.ldp === 'CONVERGED' ? '#3b82f6' : theme.colors.text.muted }} />
+                        <Network size={12} style={{ color: theme.colors.text.muted }} />
                         <span className="text-[9px] font-mono font-bold" style={{ color: theme.colors.text.primary }}>
-                            LDP: {solverStatus?.ldp || 'IDLE'}
+                            LDP: IDLE
                         </span>
                     </div>
                 </div>

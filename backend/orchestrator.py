@@ -58,6 +58,58 @@ from agents.remote_agent import RemoteAgent
 from agents.pvc_agent import PvcAgent
 from agents.nexus_agent import NexusAgent
 from agents.stt_agent import get_stt_agent
+from agents.review_agent import ReviewAgent
+from agents.construction_agent import ConstructionAgent
+from agents.stt_agent import STTAgent
+from agents.swarm_manager import SwarmManager
+
+# Import new node functions for 8-phase architecture
+from new_nodes import (
+    # Phase 1: Feasibility
+    geometry_estimator_node,
+    cost_quick_estimate_node,
+    # Phase 2: Planning
+    document_plan_node,
+    review_plan_node,
+    # Phase 3: Geometry Kernel
+    mass_properties_node,
+    structural_node,
+    fluid_node,
+    geometry_physics_validator_node,
+    # Phase 4: Multi-Physics
+    physics_mega_node,
+    # Phase 5: Manufacturing
+    slicer_node,
+    lattice_synthesis_node,
+    # Phase 6: Validation
+    validation_node,
+    # Phase 7: Sourcing & Deployment
+    asset_sourcing_node,
+    component_node,
+    devops_node,
+    swarm_node,
+    doctor_node,
+    pvc_node,
+    construction_node,
+    # Phase 8: Final Documentation
+    final_document_node,
+    final_review_node
+)
+
+# Import conditional gates
+from conditional_gates import (
+    check_feasibility,
+    check_user_approval,
+    check_fluid_needed,
+    check_manufacturing_type,
+    check_lattice_needed,
+    check_validation
+)
+
+# Import agent selector for intelligent physics agent selection
+from agent_selector import select_physics_agents
+
+from llm.factory import get_llm_provider
 
 from ares import AresMiddleware, AresUnitError
 import logging
@@ -740,6 +792,15 @@ def optimization_node(state: AgentState) -> Dict[str, Any]:
             metadata={"timestamp": time.time()} 
         )
 
+    # 5.3 INTEGRATION: Feedback Loop
+    from agents.feedback_agent import FeedbackAgent
+    feedback_agent = FeedbackAgent()
+    feedback = feedback_agent.analyze_failure(state)
+    logger.info(f"Feedback: {feedback.get('priority_fix')}")
+    
+    # Store feedback in state for next iteration or user
+    state["feedback_analysis"] = feedback
+
     # Increment counter
     count = state.get("iteration_count", 0) + 1
     
@@ -822,7 +883,7 @@ def swarm_node(state: AgentState) -> Dict[str, Any]:
     Executes the Swarm Manager if the intent requires massive parallelization.
     """
     intent = state.get("user_intent", "").upper()
-    keywords = ["SWARM", "CITY", "COLONIZE", "MULTITUDE", "FLEET"]
+    keywords = ["SWARM", "CITY", "COLONIZE", "MULTITUDE", "FLEET", "MULTITASK"]
     
     if any(k in intent for k in keywords):
         logger.info(f"Swarm Intent Detection ({intent}): Triggering SwarmManager.")
@@ -847,78 +908,182 @@ def swarm_node(state: AgentState) -> Dict[str, Any]:
 
 def build_graph():
     """
-    Constructs the BRICK OS Agent Orchestration Graph.
+    Build the complete 8-phase LangGraph workflow.
+    
+    8-Phase Architecture:
+    1. Feasibility Check (2 nodes)
+    2. Planning & Review (7 nodes)
+    3. Geometry Kernel (8 nodes)
+    4. Multi-Physics (1 mega node - intelligent selection)
+    5. Manufacturing (3 nodes)
+    6. Validation & Optimization (4 nodes)
+    7. Sourcing & Deployment (7 nodes)
+    8. Final Documentation (2 nodes)
+    
+    Total: 36 nodes, 6 conditional gates
     """
     workflow = StateGraph(AgentState)
-
-    # 1. Add Nodes
+    
+    # ========== PHASE 1: FEASIBILITY CHECK ==========
+    workflow.add_node("geometry_estimator", geometry_estimator_node)
+    workflow.add_node("cost_estimator", cost_quick_estimate_node)
+    
+    # ========== PHASE 2: PLANNING & REVIEW ==========
     workflow.add_node("stt_node", stt_node)
-    workflow.add_node("dreamer_node", dreamer_node) # NEW Entry Point
+    workflow.add_node("dreamer_node", dreamer_node)
     workflow.add_node("environment_agent", environment_node)
-    workflow.add_node("topological_agent", topological_node) # NEW
+    workflow.add_node("topological_agent", topological_node)
     workflow.add_node("planning_node", planning_node)
-    workflow.add_node("designer_agent", designer_node) # NEW
-    workflow.add_node("ldp_node", ldp_node) # NEW Logic Kernel
+    workflow.add_node("document_plan", document_plan_node)
+    workflow.add_node("review_plan", review_plan_node)
+    
+    # ========== PHASE 3: GEOMETRY KERNEL ==========
+    workflow.add_node("designer_agent", designer_node)
+    workflow.add_node("ldp_node", ldp_node)
     workflow.add_node("geometry_agent", geometry_node)
-    workflow.add_node("surrogate_physics_agent", surrogate_physics_node) # NEW
+    workflow.add_node("mass_properties", mass_properties_node)
+    workflow.add_node("structural_analysis", structural_node)
+    workflow.add_node("fluid_analysis", fluid_node)
+    workflow.add_node("geometry_validator", geometry_physics_validator_node)
+    
+    # ========== PHASE 4: MULTI-PHYSICS ==========
+    workflow.add_node("physics_mega_node", physics_mega_node)
+    
+    # ========== PHASE 5: MANUFACTURING ==========
     workflow.add_node("manufacturing_agent", manufacturing_node)
-    workflow.add_node("physics_agent", physics_node)
-    workflow.add_node("swarm_agent", swarm_node) 
+    workflow.add_node("slicer_agent", slicer_node)
+    workflow.add_node("lattice_synthesis", lattice_synthesis_node)
+    
+    # ========== PHASE 6: VALIDATION & OPTIMIZATION ==========
+    workflow.add_node("surrogate_physics_agent", surrogate_physics_node)
     workflow.add_node("training_agent", training_node)
+    workflow.add_node("validation_node", validation_node)
     workflow.add_node("optimization_agent", optimization_node)
-
-    # 2. Add Edges
-    # Start -> STT -> Dreamer -> Environment
-    workflow.set_entry_point("stt_node")
-    workflow.add_edge("stt_node", "dreamer_node")
-    workflow.add_edge("dreamer_node", "environment_agent")
     
-    # Environment -> Topological -> Planning
-    workflow.add_edge("environment_agent", "topological_agent")
-    workflow.add_edge("topological_agent", "planning_node")
+    # ========== PHASE 7: SOURCING & DEPLOYMENT ==========
+    workflow.add_node("asset_sourcing", asset_sourcing_node)
+    workflow.add_node("component_manager", component_node)
+    workflow.add_node("devops_agent", devops_node)
+    workflow.add_node("swarm_agent", swarm_node)
+    workflow.add_node("doctor_agent", doctor_node)
+    workflow.add_node("pvc_agent", pvc_node)
+    workflow.add_node("construction_agent", construction_node)
     
-    # Planning -> (Check) -> Designer
-    workflow.add_conditional_edges("planning_node", check_planning_mode, {
-        "plan": END,
-        "execute": "designer_agent"
-    })
+    # ========== PHASE 8: FINAL DOCUMENTATION ==========
+    workflow.add_node("final_document", final_document_node)
+    workflow.add_node("final_review", final_review_node)
     
-    workflow.add_edge("designer_agent", "ldp_node")
-    workflow.add_edge("ldp_node", "geometry_agent")
+    # ========== PHASE 1 FLOW: FEASIBILITY ==========
+    workflow.set_entry_point("geometry_estimator")
+    workflow.add_edge("geometry_estimator", "cost_estimator")
     
-    # Geometry -> Surrogate -> Manufacturing -> Physics
-    workflow.add_edge("geometry_agent", "surrogate_physics_agent")
-    workflow.add_edge("surrogate_physics_agent", "manufacturing_agent")
-    workflow.add_edge("manufacturing_agent", "physics_agent")
-    
-    # Environment -> Geometry -> Manufacturing -> Physics -> Swarm -> Training
-    # Planning Node -> Check Approval -> (Stop or Continue)
-    # workflow.add_edge("environment_agent", "planning_node") # REMOVED (Replaced by Topo)
-    # Execute Path: Plan -> Check -> Designer -> Geometry
-    
-    # If check_planning_mode returns "designer_agent", we go there.
-    # Otherwise if "plan", we stop.
-    
-    # If check_planning_mode returns "designer_agent", we go there.
-    # Otherwise if "plan", we stop.
-    
-    workflow.add_edge("designer_agent", "ldp_node") # Designer -> LDP
-    workflow.add_edge("ldp_node", "geometry_agent") # LDP -> Geometry
-    workflow.add_edge("geometry_agent", "manufacturing_agent")
-    workflow.add_edge("manufacturing_agent", "physics_agent")
-    workflow.add_edge("physics_agent", "swarm_agent")
-    workflow.add_edge("swarm_agent", "training_agent")
-    
-    # Training -> (Check) -> Optimization/End
+    # Gate 1: Check Feasibility
     workflow.add_conditional_edges(
-        "training_agent",
-        check_validation
+        "cost_estimator",
+        check_feasibility,
+        {
+            "feasible": "stt_node",
+            "infeasible": END
+        }
     )
     
-    # Optimization -> Geometry (Re-generate with new params)
+    # ========== PHASE 2 FLOW: PLANNING ==========
+    workflow.add_edge("stt_node", "dreamer_node")
+    workflow.add_edge("dreamer_node", "environment_agent")
+    workflow.add_edge("environment_agent", "topological_agent")
+    workflow.add_edge("topological_agent", "planning_node")
+    workflow.add_edge("planning_node", "document_plan")
+    workflow.add_edge("document_plan", "review_plan")
+    
+    # Gate 2: Check User Approval
+    workflow.add_conditional_edges(
+        "review_plan",
+        check_user_approval,
+        {
+            "approved": "designer_agent",
+            "rejected": "dreamer_node",  # Loop back to revise
+            "plan_only": END
+        }
+    )
+    
+    # ========== PHASE 3 FLOW: GEOMETRY KERNEL ==========
+    workflow.add_edge("designer_agent", "ldp_node")
+    workflow.add_edge("ldp_node", "geometry_agent")
+    workflow.add_edge("geometry_agent", "mass_properties")
+    workflow.add_edge("mass_properties", "structural_analysis")
+    
+    # Gate 3: Check if Fluid Analysis Needed
+    workflow.add_conditional_edges(
+        "structural_analysis",
+        check_fluid_needed,
+        {
+            "fluid_needed": "fluid_analysis",
+            "skip_fluid": "geometry_validator"
+        }
+    )
+    
+    workflow.add_edge("fluid_analysis", "geometry_validator")
+    workflow.add_edge("geometry_validator", "physics_mega_node")
+    
+    # ========== PHASE 4 FLOW: MULTI-PHYSICS ==========
+    # physics_mega_node runs 4-11 agents intelligently
+    workflow.add_edge("physics_mega_node", "surrogate_physics_agent")
+    
+    # ========== PHASE 5 FLOW: MANUFACTURING ==========
+    # Gate 4: Check Manufacturing Type
+    workflow.add_conditional_edges(
+        "surrogate_physics_agent",
+        check_manufacturing_type,
+        {
+            "3d_print": "slicer_agent",
+            "assembly": "manufacturing_agent"
+        }
+    )
+    
+    workflow.add_edge("slicer_agent", "manufacturing_agent")
+    
+    # Gate 5: Check if Lattice Needed
+    workflow.add_conditional_edges(
+        "manufacturing_agent",
+        check_lattice_needed,
+        {
+            "lattice_needed": "lattice_synthesis",
+            "no_lattice": "training_agent"
+        }
+    )
+    
+    workflow.add_edge("lattice_synthesis", "training_agent")
+    
+    # ========== PHASE 6 FLOW: VALIDATION & OPTIMIZATION ==========
+    workflow.add_edge("training_agent", "validation_node")
+    
+    # Gate 6: Check Validation Result
+    workflow.add_conditional_edges(
+        "validation_node",
+        check_validation,
+        {
+            "valid": "asset_sourcing",
+            "needs_optimization": "optimization_agent"
+        }
+    )
+    
+    # Optimization loop back to geometry
     workflow.add_edge("optimization_agent", "geometry_agent")
-
-    # 3. Compile
+    
+    # ========== PHASE 7 FLOW: SOURCING & DEPLOYMENT ==========
+    workflow.add_edge("asset_sourcing", "component_manager")
+    workflow.add_edge("component_manager", "devops_agent")
+    workflow.add_edge("devops_agent", "swarm_agent")
+    workflow.add_edge("swarm_agent", "doctor_agent")
+    workflow.add_edge("doctor_agent", "pvc_agent")
+    workflow.add_edge("pvc_agent", "construction_agent")
+    
+    # ========== PHASE 8 FLOW: FINAL DOCUMENTATION ==========
+    workflow.add_edge("construction_agent", "final_document")
+    workflow.add_edge("final_document", "final_review")
+    workflow.add_edge("final_review", END)
+    
+    # Compile and return
     return workflow.compile()
 
 def planning_node(state: AgentState) -> Dict[str, Any]:

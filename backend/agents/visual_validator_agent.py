@@ -16,6 +16,18 @@ class VisualValidatorAgent:
     
     def __init__(self):
         self.name = "VisualValidatorAgent"
+        try:
+            from backend.config.validation_thresholds import VISUAL_SCORING
+            self.scoring = VISUAL_SCORING
+        except ImportError:
+            logger.warning("Could not import validation_thresholds. Using defaults.")
+            self.scoring = {
+                "watertightness_penalty": 0.3,
+                "inverted_normals_penalty": 0.5,
+                "degenerate_face_penalty": 0.1,
+                "unlit_scene_penalty": 0.2,
+                "min_face_area": 1e-9
+            }
     
     def run(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -40,8 +52,9 @@ class VisualValidatorAgent:
                 
                 # A. Watertightness
                 if not mesh.is_watertight:
-                    artifacts.append("Mesh is NOT watertight (Holes detected)")
-                    score -= 0.3
+                    penalty = self.scoring["watertightness_penalty"]
+                    artifacts.append(f"Mesh is NOT watertight (Holes detected) - Penalty: {penalty}")
+                    score -= penalty
                     
                     # Find holes
                     edges = mesh.edges_sorted.shape[0]
@@ -51,18 +64,21 @@ class VisualValidatorAgent:
                 
                 # B. Orientation
                 if mesh.volume < 0:
-                    artifacts.append("Inverted Normals detected (Negative Volume)")
-                    score -= 0.5
+                    penalty = self.scoring["inverted_normals_penalty"]
+                    artifacts.append(f"Inverted Normals detected (Negative Volume) - Penalty: {penalty}")
+                    score -= penalty
                     
                 # C. Aspect Ratio (Slivers)
                 # Compute face areas
                 try: 
-                    # Heuristic for bad triangles: Area / Perimeter^2 very small
+                    # Heuristic for bad triangles
                     # Trimesh doesn't have direct sliver check, assume area check
                      min_area = np.min(mesh.area_faces)
-                     if min_area < 1e-9:
-                         artifacts.append("Degenerate triangles detected (Area < 1e-9)")
-                         score -= 0.1
+                     threshold = self.scoring["min_face_area"]
+                     if min_area < threshold:
+                         penalty = self.scoring["degenerate_face_penalty"]
+                         artifacts.append(f"Degenerate triangles detected (Area < {threshold}) - Penalty: {penalty}")
+                         score -= penalty
                 except: pass
                 
                 logs.append(f"  - Verified {len(mesh.faces)} faces.")
@@ -74,8 +90,9 @@ class VisualValidatorAgent:
                 
         # 2. Scene/Render Checks (Legacy)
         if scene_meta.get("light_count", 1) == 0:
-            artifacts.append("Scene is unlit (0 lights)")
-            score -= 0.2
+            penalty = self.scoring["unlit_scene_penalty"]
+            artifacts.append(f"Scene is unlit (0 lights) - Penalty: {penalty}")
+            score -= penalty
             
         if artifacts:
             logs.append(f"[VISUAL_VALIDATOR] ✗ Found {len(artifacts)} defects")

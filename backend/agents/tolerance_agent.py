@@ -16,12 +16,20 @@ class ToleranceAgent:
     
     def __init__(self):
         self.name = "ToleranceAgent"
-        # ISO 286 hole basis tolerances (simplified)
-        self.hole_basis_fits = {
-            "H7/g6": {"type": "clearance", "min_clear": 0.01, "max_clear": 0.04},
-            "H7/h6": {"type": "transition", "min_clear": -0.01, "max_clear": 0.01},
-            "H7/p6": {"type": "interference", "min_clear": -0.04, "max_clear": -0.01},
-        }
+        # Load standards from config
+        try:
+            from backend.config.manufacturing_standards import HOLE_BASIS_FITS, PROCESS_CAPABILITIES, get_recommended_fit
+            self.hole_basis_fits = HOLE_BASIS_FITS
+            self.process_capabilities = PROCESS_CAPABILITIES
+            self.get_fit_strategy = get_recommended_fit
+        except ImportError:
+            # Fallback if config is missing (though it shouldn't be)
+            logger.warning("Could not import manufacturing_standards. Using limited fallback defaults.")
+            self.hole_basis_fits = {
+                "H7/g6": {"type": "clearance", "min_clear": 0.01, "max_clear": 0.04}
+            }
+            self.process_capabilities = {"CNC": {"tolerance_mm": 0.01}}
+            self.get_fit_strategy = lambda d: "H7/g6"
     
     def run(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -59,31 +67,50 @@ class ToleranceAgent:
         warnings = []
         recommendations = []
         
-        # Standard ISO fit selection based on nominal diameter
-        if nominal_diam <= 3:
-            tol_class = "H7/g6"  # Looser for small parts
-        elif nominal_diam <= 50:
-            tol_class = "H7/h6"  # Standard
-        else:
-            tol_class = "H8/h7"  # Looser for large parts
+        # Standard ISO fit selection from strategy
+        tol_class = self.get_fit_strategy(nominal_diam)
         
-        fit_data = self.hole_basis_fits.get("H7/g6", {})
+        # Override based on desired fit type if needed
+        # (Simple logic: if they ask for interference, try to find a matching interference fit)
+        if fit_type == "interference":
+             # Try to find an interference fit in our DB
+             for k, v in self.hole_basis_fits.items():
+                 if v["type"] == "interference":
+                     tol_class = k
+                     break
         
+        fit_data = self.hole_basis_fits.get(tol_class, {})
+        if not fit_data: 
+            # Fallback
+            tol_class = "H7/g6"
+            fit_data = self.hole_basis_fits.get(tol_class, {})
+
         fits.append({
             "tolerance_class": tol_class,
             "fit_type": fit_data.get("type", "clearance"),
             "min_clearance_mm": fit_data.get("min_clear", 0.01),
             "max_clearance_mm": fit_data.get("max_clear", 0.04),
-            "nominal_diameter_mm": nominal_diam
+            "nominal_diameter_mm": nominal_diam,
+            "description": fit_data.get("description", "")
         })
         
-        # Manufacturing process considerations
-        if process == "3D_PRINT":
-            warnings.append("3D printing typically achieves ±0.2mm tolerance")
-            recommendations.append("Increase clearances by +0.3mm for reliable assembly")
-        elif process == "CNC":
-            logs.append("[TOLERANCE] CNC machining can achieve ±0.01mm")
+        # Manufacturing process considerations via Config
+        capability = self.process_capabilities.get(process, {})
+        process_tol = capability.get("tolerance_mm", 0.1)
         
+        logs.append(f"[TOLERANCE] Process: {process}, Capability: ±{process_tol}mm")
+        
+        if process == "3D_PRINT":
+            # Specific logic for 3D printing compensation
+             warnings.append(f"3D printing typically achieves ±{process_tol}mm tolerance")
+             recommendations.append(f"Increase clearances by +{process_tol * 1.5:.2f}mm for reliable assembly")
+        
+        # Check if process capability is sufficient for the fit
+        # Heuristic: Process tolerance should be <= 50% of the fit tolerance range
+        fit_range = abs(fit_data.get("max_clear", 0) - fit_data.get("min_clear", 0))
+        if fit_range > 0 and process_tol > (fit_range * 0.5):
+             warnings.append(f"Process capability (±{process_tol}mm) may be too coarse for {tol_class} range ({fit_range:.3f}mm)")
+             recommendations.append("Consider a more precise manufacturing process (e.g., CNC/Grinding)")        
         # Check for tight tolerances
         if fit_data.get("max_clear", 0) < 0.01:
             warnings.append("Very tight tolerance - consider manufacturing capability")

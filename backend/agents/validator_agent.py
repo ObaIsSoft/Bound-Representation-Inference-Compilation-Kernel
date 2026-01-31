@@ -11,6 +11,21 @@ class ValidatorAgent:
     def __init__(self):
         self.name = "ValidatorAgent"
 
+    def validate_all(self, physics_results: Dict[str, Any], requirements: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Wrapper to validate all physics results against requirements.
+        """
+        # Flatten metrics from physics results
+        metrics = {}
+        for agent, res in physics_results.items():
+            if isinstance(res, dict):
+                metrics.update(res)
+                
+        return self.run({
+            "metrics": metrics,
+            "constraints": requirements
+        })
+
     def run(self, params: Dict[str, Any]) -> Dict[str, Any]:
         logger.info(f"{self.name} validating constraints...")
         

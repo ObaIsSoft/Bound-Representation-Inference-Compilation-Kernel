@@ -16,6 +16,12 @@ class DoctorAgent:
     
     def __init__(self):
         self.name = "DoctorAgent"
+        try:
+            from backend.config.monitor_config import HEALTH_CONFIG
+            self.config = HEALTH_CONFIG
+        except ImportError:
+            logger.warning("Could not import monitor_config. Using defaults.")
+            self.config = {"failure_probability": 0.05}
     
     def run(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -38,11 +44,12 @@ class DoctorAgent:
         
         status_map = {}
         healthy_count = 0
+        failure_prob = self.config.get("failure_probability", 0.05)
         
         for agent in target_agents:
             # Mock health check
             # In a real system, this would ping the agent or check its heartbeats
-            is_healthy = random.random() > 0.05 # 95% chance of health
+            is_healthy = random.random() > failure_prob 
             
             if is_healthy:
                 status_map[agent] = "HEALTHY"

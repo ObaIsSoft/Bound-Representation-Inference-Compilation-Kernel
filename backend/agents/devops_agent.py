@@ -3,7 +3,7 @@ from typing import Dict, Any, List, Optional
 import logging
 import os
 import json
-from llm.provider import LLMProvider
+from backend.llm.provider import LLMProvider
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +15,16 @@ class DevOpsAgent:
     def __init__(self, llm_provider: Optional[LLMProvider] = None):
         self.name = "DevOpsAgent"
         self.llm_provider = llm_provider
+        try:
+            from backend.config.devops_config import DOCKER_AUDIT_RULES, CI_CD_TEMPLATE, HEALTH_CHECK_TIMEOUT
+            self.audit_rules = DOCKER_AUDIT_RULES
+            self.pipeline_template = CI_CD_TEMPLATE
+            self.timeout = HEALTH_CHECK_TIMEOUT
+        except ImportError:
+            logger.warning("Could not import devops_config. Using defaults.")
+            self.audit_rules = [{"check": "USER", "message": "Security: Container runs as root"}]
+            self.pipeline_template = "name: CI/CD Pipeline\n..."
+            self.timeout = 5
         
     def run(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -56,7 +66,7 @@ class DevOpsAgent:
                     ["docker", "ps", "-q"], 
                     capture_output=True, 
                     text=True, 
-                    timeout=5
+                    timeout=self.timeout
                 )
                 if result.returncode == 0:
                     docker_status = "online"
@@ -96,19 +106,25 @@ class DevOpsAgent:
         try:
             with open(path, 'r') as f:
                 content = f.read()
-                
-            # Rule 1: Root user check
-            if "USER" not in content:
-                issues.append("Security: Container runs as root (missing USER instruction)")
-                
-            # Rule 2: Latest tag check
-            if ":latest" in content:
-                issues.append("Stability: Using ':latest' tag is discouraged")
             
-            # Rule 3: Sudo usage
-            if "sudo" in content:
-                issues.append("Security: Avoid using sudo in Dockerfile")
-                
+            for rule in self.audit_rules:
+                if rule["check"] in content:
+                     # Some checks are "must exist" and some are "must not exist"
+                     # The original logic was specific.
+                     # Let's adapt: If message says "missing", then it MUST be there (so if NOT in content, error)
+                     # If message says "Avoid", then it MUST NOT be there (so if IN content, error)
+                     
+                     if "missing" in rule["message"].lower():
+                         if rule["check"] not in content:
+                             issues.append(rule["message"])
+                     elif "avoid" in rule["message"].lower() or "discouraged" in rule["message"].lower():
+                         if rule["check"] in content:
+                             issues.append(rule["message"])
+            
+            # Simple fallback for standard checks if config is raw
+            if "USER" not in content and not any("missing user" in i.lower() for i in issues):
+                 issues.append("Security: Container runs as root (missing USER instruction)")
+
             return {
                 "status": "audited",
                 "secure": len(issues) == 0,
@@ -124,7 +140,7 @@ class DevOpsAgent:
              # Template Fallback
              return {
                  "status": "success",
-                 "config": self._get_pipeline_template()
+                 "config": self.pipeline_template
              }
              
         prompt = f"""
@@ -143,27 +159,9 @@ class DevOpsAgent:
         except Exception as e:
             return {
                  "status": "success",
-                 "config": self._get_pipeline_template(),
+                 "config": self.pipeline_template,
                  "fallback": True
             }
 
     def _get_pipeline_template(self) -> str:
-        return """
-name: CI/CD Pipeline
-on: [push, pull_request]
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v2
-    - name: Set up Python
-      uses: actions/setup-python@v2
-      with:
-        python-version: '3.9'
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-    - name: Test
-      run: python -m pytest
-"""
+        return self.pipeline_template

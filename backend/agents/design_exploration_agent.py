@@ -17,6 +17,18 @@ class DesignExplorationAgent:
     def __init__(self):
         self.name = "DesignExplorationAgent"
         
+        # Load Config
+        try:
+            from backend.config.design_exploration_config import EXPLORATION_DEFAULTS, SCORING_WEIGHTS, PARETO_CONFIG
+            self.defaults = EXPLORATION_DEFAULTS
+            self.weights = SCORING_WEIGHTS
+            self.pareto_config = PARETO_CONFIG
+        except ImportError:
+            logger.warning("Could not import design_exploration_config. Using defaults.")
+            self.defaults = {"num_samples": 50}
+            self.weights = {"mass": -1.0, "strength": 1.0}
+            self.pareto_config = {"max_front_size": 5}
+
         # Initialize Neural Surrogate
         try:
             from models.design_exploration_surrogate import DesignExplorationSurrogate
@@ -30,7 +42,7 @@ class DesignExplorationAgent:
             except ImportError:
                 self.surrogate = None
                 self.has_surrogate = False
-                print("DesignExplorationSurrogate not found")
+                logger.debug("DesignExplorationSurrogate not found")
     
     def run(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -55,7 +67,7 @@ class DesignExplorationAgent:
         parameters = params.get("parameters", {})
         objectives = params.get("objectives", ["minimize_mass", "maximize_strength"])
         constraints = params.get("constraints", [])
-        num_samples = params.get("num_samples", 50)
+        num_samples = params.get("num_samples", self.defaults["num_samples"])
         
         logs = [
             f"[DESIGN_EXPLORATION] Exploring {len(parameters)} parameter(s)",
@@ -65,7 +77,10 @@ class DesignExplorationAgent:
         
         # Generate candidate designs
         candidates = []
-        for i in range(min(num_samples, 10)):
+        # Limit max samples to avoid timeout if param is crazy
+        safe_limit = min(num_samples, 20) 
+        
+        for i in range(safe_limit):
             param_values = self._sample_parameters(parameters, i)
             
             # Use surrogate to predict quality if available
@@ -74,14 +89,19 @@ class DesignExplorationAgent:
                 param_array = np.array(list(param_values.values()))
                 score = self.surrogate.predict(param_array)
             else:
-                score = 0.9 - (i * 0.05)  # Fallback
+                # Mock score logic (replaced by physics simulation in real flow)
+                # But at least make it dependent on params not just 'i'
+                # E.g. minimize first param
+                val = list(param_values.values())[0] if param_values else 0
+                score = 1.0 / (1.0 + val) 
             
             candidate = {
                 "id": f"candidate_{i+1}",
                 "parameters": param_values,
                 "score": score,
-                "mass_kg": 5.0 + (i * 0.5),
-                "strength_MPa": 200 - (i * 10)
+                # Placeholder physics results
+                "mass_kg": 5.0 + (i * 0.1),
+                "strength_MPa": 200 - (i * 2)
             }
             candidates.append(candidate)
         
@@ -117,7 +137,9 @@ class DesignExplorationAgent:
     
     def _find_pareto_front(self, candidates: List[Dict], objectives: List[str]) -> List[Dict]:
         """Find Pareto-optimal designs (non-dominated)."""
-        return candidates[:3]
+        # Simplified: Just grab top N based on config
+        limit = self.pareto_config.get("max_front_size", 5)
+        return candidates[:limit]
     
     def evolve(self, training_data: List[Any]) -> Dict[str, Any]:
         """

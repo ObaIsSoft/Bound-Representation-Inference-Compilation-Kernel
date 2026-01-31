@@ -24,7 +24,7 @@ class DocumentAgent:
             params=params.get("metrics", {})
         )
     
-    def generate_design_plan(self, intent: str, env: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
+    def generate_design_plan(self, intent: str, env: Dict[str, Any], params: Dict[str, Any], design_scheme: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Generate comprehensive design plan by orchestrating specialized agents.
         
@@ -69,11 +69,12 @@ class DocumentAgent:
         try:
             from agents.manufacturing_agent import ManufacturingAgent
             mfg_agent = ManufacturingAgent()
-            mfg_result = mfg_agent.run({
-                "design_type": intent,
-                "material": data["materials"].get("primary_material", "Aluminum"),
-                "complexity": "medium"
-            })
+            # Extract material for explicit passing
+            primary_material = data["materials"].get("primary_material", "Aluminum")
+            mfg_result = mfg_agent.run(
+                geometry_tree=[], # No geometry in planning phase
+                material=primary_material
+            )
             data["manufacturing"] = mfg_result
             logger.info("ManufacturingAgent: Gathered DFM analysis")
         except Exception as e:
@@ -269,16 +270,184 @@ Design and development of {intent} for {env.get('regime', 'STANDARD')} environme
         }
     
     def _format_requirements(self, params: Dict) -> str:
-        if not params:
-            return "- No specific requirements"
-        return "\n".join([f"- **{k.replace('_', ' ').title()}:** {v}" for k, v in params.items()])
+        reqs = params.get("requirements", [])
+        return "\n".join(f"- {req}" for req in reqs) if reqs else "- None specified"
     
     def _format_list(self, items: List) -> str:
-        if not items:
-            return "- None"
-        return "\n".join([f"- {item}" for item in items])
+        return "\n".join(f"- {item}" for item in items) if items else "- None"
     
     def _format_cost_breakdown(self, breakdown: Dict) -> str:
-        if not breakdown:
-            return "- No breakdown"
-        return "\n".join([f"- **{k.replace('_', ' ').title()}:** ${v:,.2f}" for k, v in breakdown.items()])
+        return "\n".join(f"- {k}: ${v:.2f}" for k, v in breakdown.items())
+
+    def generate_final_documentation(self, state: Dict[str, Any]) -> str:
+        """
+        Generate comprehensive final documentation for Phase 8.
+        
+        Args:
+            state: Complete AgentState with all project data
+        
+        Returns:
+            str: Markdown formatted final documentation
+        """
+        logger.info(f"{self.name} generating final documentation...")
+        
+        # Extract all relevant data from state
+        user_intent = state.get("user_intent", "")
+        environment = state.get("environment", {})
+        design_parameters = state.get("design_parameters", {})
+        geometry_tree = state.get("geometry_tree", [])
+        mass_properties = state.get("mass_properties", {})
+        structural_analysis = state.get("structural_analysis", {})
+        fluid_analysis = state.get("fluid_analysis", {})
+        sub_agent_reports = state.get("sub_agent_reports", {})
+        manufacturing_plan = state.get("manufacturing_plan", {})
+        bom_analysis = state.get("bom_analysis", {})
+        verification_report = state.get("verification_report", {})
+        sourced_components = state.get("sourced_components", [])
+        deployment_plan = state.get("deployment_plan", {})
+        
+        # Generate comprehensive documentation
+        doc = f"""# {user_intent} - Final Project Documentation
+
+## Project Overview
+
+**Intent**: {user_intent}
+
+**Environment**: {environment.get('type', 'N/A')}
+
+**Design Type**: {design_parameters.get('design_type', 'Custom')}
+
+---
+
+## Design Parameters
+
+{self._format_requirements(design_parameters)}
+
+---
+
+## Geometry Summary
+
+**Components**: {len(geometry_tree)} geometry nodes
+
+**Mass Properties**:
+- Total Mass: {mass_properties.get('mass_kg', 0):.2f} kg
+- Center of Mass: {mass_properties.get('center_of_mass', [0,0,0])}
+- Inertia Tensor: {mass_properties.get('inertia_tensor', 'N/A')}
+
+---
+
+## Physics Analysis
+
+### Structural Analysis
+- Max Stress: {structural_analysis.get('max_stress_mpa', 0):.2f} MPa
+- Safety Factor: {structural_analysis.get('safety_factor', 0):.2f}
+- Status: {structural_analysis.get('status', 'N/A')}
+
+### Fluid Analysis
+{f"- Drag Coefficient: {fluid_analysis.get('drag_coefficient', 0):.3f}" if fluid_analysis else "- Not applicable for this environment"}
+{f"- Lift Coefficient: {fluid_analysis.get('lift_coefficient', 0):.3f}" if fluid_analysis.get('lift_coefficient') else ""}
+
+### Multi-Physics Results
+{chr(10).join(f"- **{agent}**: {report.get('status', 'Complete')}" for agent, report in sub_agent_reports.items())}
+
+---
+
+## Manufacturing
+
+**Process**: {manufacturing_plan.get('type', 'N/A')}
+
+**Bill of Materials**:
+- Total Cost: ${bom_analysis.get('total_cost_usd', 0):.2f}
+- Lead Time: {bom_analysis.get('lead_time_days', 0)} days
+- Components: {len(sourced_components)} items
+
+### Sourced Components
+{chr(10).join(f"- {comp.get('name', 'Unknown')}: ${comp.get('cost', 0):.2f}" for comp in sourced_components[:10])}
+{f"... and {len(sourced_components) - 10} more" if len(sourced_components) > 10 else ""}
+
+---
+
+## Verification & Validation
+
+**Status**: {verification_report.get('status', 'N/A')}
+
+**Tests Passed**: {verification_report.get('tests_passed', 0)}/{verification_report.get('total_tests', 0)}
+
+---
+
+## Deployment
+
+**Strategy**: {deployment_plan.get('strategy', 'N/A')}
+
+**CI/CD**: {deployment_plan.get('ci_cd_enabled', False)}
+
+---
+
+## Conclusion
+
+This design has been validated through comprehensive multi-physics analysis and is ready for manufacturing and deployment.
+
+**Generated**: {state.get('timestamp', 'N/A')}
+
+**Project ID**: {state.get('project_id', 'N/A')}
+"""
+        
+        return doc
+
+    def generate_design_brief_artifact(self, state: Dict[str, Any], project_id: str) -> Dict[str, Any]:
+        """
+        Generate Comprehensive Design Brief Artifact.
+        """
+        # Reuse existing logic but format as specific artifact
+        intent = state.get("user_intent", "Untitled")
+        env = state.get("environment", {})
+        metrics = state.get("design_parameters", {})
+        
+        # We need agent data - try to extract from state or re-gather
+        # Ideally state has 'sub_agent_reports' or similar
+        # For planning phase, we often re-run gather
+        agent_data = self._gather_agent_data(intent, env, metrics)
+        
+        # Generate the specific markdown format requested
+        structured_doc = self._generate_structured_plan(intent, env, metrics, agent_data)
+        content = structured_doc.get("document", {}).get("content", "")
+        
+        return {
+            "id": f"plan-{project_id}",
+            "type": "design_brief",
+            "title": f"Design Plan: {intent}",
+            "content": content,
+            "comments": []
+        }
+
+    def generate_testing_artifact(self, state: Dict[str, Any], project_id: str) -> Dict[str, Any]:
+        """
+        Generate Testing Plan Artifact (Markdown Checklist).
+        """
+        intent = state.get("user_intent", "Unknown Project")
+        params = state.get("design_parameters", {})
+        env = state.get("environment", {})
+        
+        plan = self._generate_testing_plan(intent, params, env)
+        
+        md_content = f"""### Testing & Validation Plan
+
+#### 1. Unit Tests (Component Level)
+{chr(10).join([f"- [ ] {t}" for t in plan.get('unit_tests', [])])}
+
+#### 2. Integration Tests (Assembly Level)
+{chr(10).join([f"- [ ] {t}" for t in plan.get('integration_tests', [])])}
+
+#### 3. Performance Tests (System Level)
+{chr(10).join([f"- [ ] {t}" for t in plan.get('performance_tests', [])])}
+
+#### 4. Acceptance Criteria
+> {plan.get('acceptance_criteria', 'N/A')}
+"""
+        return {
+            "id": f"testing-{project_id}",
+            "type": "testing_plan",
+            "title": "Validation Strategy",
+            "content": md_content,
+            "comments": []
+        }

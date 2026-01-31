@@ -14,7 +14,7 @@ class ComplianceAgent:
         self.name = "ComplianceAgent"
         self.llm = llm_provider
         if not self.llm:
-             from llm.factory import get_llm_provider
+             from backend.llm.factory import get_llm_provider
              self.llm = get_llm_provider()
 
     def run(self, params: Dict[str, Any]) -> Dict[str, Any]:

@@ -18,7 +18,13 @@ load_dotenv(dotenv_path=env_path)
 from schema import AgentState, BrickProject
 from orchestrator import run_orchestrator, get_agent_registry
 from comment_schema import Comment, PlanReview, TextSelection, plan_reviews
+from schemas.handshake import (
+    HandshakeRequest, HandshakeResponse, ISAVersion, ISAHierarchy,
+    CURRENT_ISA_VERSION, is_compatible, negotiate_version
+)
+from agent_selector import select_physics_agents, get_agent_selection_summary
 import logging
+import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +33,72 @@ app = FastAPI(title="BRICK OS API", version="0.1.0")
 # --- Agent Registry ---
 AGENTS = get_agent_registry()
 
-# --- Component API ---
+# --- ISA Handshake API ---
+
+@app.post("/api/handshake")
+async def handshake(request: HandshakeRequest) -> HandshakeResponse:
+    """ISA/Schema handshake protocol for version negotiation."""
+    try:
+        client_version = ISAVersion.from_string(request.client_version)
+        server_version = CURRENT_ISA_VERSION
+        compatible = is_compatible(client_version, server_version)
+        
+        if not compatible:
+            return HandshakeResponse(
+                server_version=str(server_version),
+                negotiated_version=str(server_version),
+                compatible=False,
+                session_id=str(uuid.uuid4()),
+                message=f"Incompatible versions: client={client_version}, server={server_version}"
+            )
+        
+        negotiated = negotiate_version(client_version, server_version)
+        session_id = str(uuid.uuid4())
+        
+        return HandshakeResponse(
+            server_version=str(server_version),
+            negotiated_version=str(negotiated),
+            compatible=True,
+            isa_hierarchy=None,
+            supported_features=["scoped_execution", "intelligent_agent_selection", "8_phase_pipeline"],
+            session_id=session_id,
+            message=f"Handshake successful. Session: {session_id}"
+        )
+    except Exception as e:
+        logger.error(f"Handshake error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/agents/select")
+async def preview_agent_selection(state: Dict[str, Any]):
+    """Preview which physics agents would be selected for a given design."""
+    try:
+        selected_agents = select_physics_agents(state)
+        summary = get_agent_selection_summary(selected_agents)
+        
+        return {
+            "selected_agents": selected_agents,
+            "summary": summary,
+            "total_agents": len(selected_agents),
+            "max_agents": 11,
+            "efficiency_gain": summary["efficiency_gain"]
+        }
+    except Exception as e:
+        logger.error(f"Agent selection error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/schema/version")
+async def get_schema_version():
+    """Get current ISA schema version."""
+    return {
+        "version": str(CURRENT_ISA_VERSION),
+        "major": CURRENT_ISA_VERSION.major,
+        "minor": CURRENT_ISA_VERSION.minor,
+        "patch": CURRENT_ISA_VERSION.patch
+    }
+
+
 
 @app.get("/api/components/catalog")
 async def get_component_catalog(category: Optional[str] = None, search: Optional[str] = ""):
@@ -439,38 +510,299 @@ app.add_middleware(
 async def health_check():
     return {"status": "ok", "system": "BRICK OS"}
 
-@app.post("/api/compile")
-async def compile_design(intent: Dict[str, Any]):
+@app.post("/api/orchestrator/run")
+async def run_orchestrator_endpoint(
+    user_intent: str = Form(...),
+    project_id: str = Form(...),
+    mode: str = Form("run"), # plan, run, step
+    focused_pod_id: Optional[str] = Form(None),
+    voice_data: Optional[UploadFile] = File(None)
+):
     """
-    Main entry point for design generation.
-    Currently a stub that mimics the Orchestrator response.
+    Central Orchestrator Endpoint.
+    Handles Voice/Text Intent -> Agent Execution -> Artifact Generation.
     """
-    user_intent = intent.get("user_intent", "")
-    project_id = intent.get("project_id", "temp-1")
-    mode = intent.get("mode", "plan") # Default to plan
+    logger.info(f"Orchestrator Request: {user_intent} (Mode: {mode}, Voice: {voice_data is not None})")
     
-    # Call the Orchestrator
-    try:
-        final_state = await run_orchestrator(user_intent, project_id, mode=mode)
+    # 1. Handle Voice Data (Strict Routing to ConversationalAgent)
+    transcript = ""
+    # Check if we have valid voice data (UploadFile)
+    if voice_data and hasattr(voice_data, "read"):
+        from agents.conversational_agent import ConversationalAgent
+        # We process voice to get transcript for intent augmentation
+        # In a real swarm, the audio bytes might be passed directly too
+        # checking "conversational" in registry
+        conv_agent = AGENTS.get("conversational")
+        if not conv_agent:
+            from agents.conversational_agent import ConversationalAgent
+            conv_agent = ConversationalAgent()
+            
+        # Transcribe via helper or agent method
+        # Assuming agent has access to STT or we use STT agent directly
+        from agents.stt_agent import get_stt_agent
+        stt = get_stt_agent()
+        content = await voice_data.read()
+        transcript = stt.transcribe(content, filename="voice_command.wav")
+        logger.info(f"Voice Transcript: {transcript}")
         
-        # In a real app, we might sanitize this before sending back
+        # Augment intent
+        user_intent = f"{user_intent} {transcript}".strip()
+
+    # 2. Run Orchestrator
+    try:
+        final_state = await run_orchestrator(
+            user_intent=user_intent,
+            project_id=project_id,
+            mode=mode,
+            focused_pod_id=focused_pod_id
+        )
+        
+        # 3. Generate Standardized Artifacts
+        artifacts = []
+        
+        # A. Cost Artifact
+        if "cost" in AGENTS:
+            cost_agent = AGENTS["cost"]
+            # Check if agent has the new method (dynamic update check)
+            if hasattr(cost_agent, "generate_cost_artifact"):
+                artifacts.append(cost_agent.generate_cost_artifact(final_state, project_id))
+        
+        # B. Planning Artifacts (Design Brief + Test Plan)
+        if "document" in AGENTS:
+            doc_agent = AGENTS["document"]
+            if hasattr(doc_agent, "generate_design_brief_artifact"):
+                artifacts.append(doc_agent.generate_design_brief_artifact(final_state, project_id))
+            if hasattr(doc_agent, "generate_testing_artifact"):
+                artifacts.append(doc_agent.generate_testing_artifact(final_state, project_id))
+                
+        # C. 2D Design Artifact (Placeholder/Generated)
+        # If geometry exists, create a 2D projection or thumbnail artifact
+        if final_state.get("geometry_tree"):
+            artifacts.append({
+                "id": f"design-2d-{project_id}",
+                "type": "design_2d",
+                "title": "2D Model View",
+                "content": "/api/geometry/render/2d", # Dynamic URL
+                "comments": []
+            })
+
         return {
             "success": True,
             "project_id": project_id,
-            "environment": final_state.get("environment"),
-            "planning_doc": final_state.get("plan_markdown") or final_state.get("planning_doc"),
-            # Return other fields as they get populated
-            "bom_analysis": final_state.get("bom_analysis"),
-            "components": final_state.get("components"),
-            "kcl_code": final_state.get("kcl_code"), 
-            "glsl_code": final_state.get("glsl_code"), # HWC Kernel Output
-            "geometry_tree": final_state.get("geometry_tree"),
-            "physics_predictions": final_state.get("physics_predictions"),
-            "validation_flags": final_state.get("validation_flags"),
-            "material_props": final_state.get("material_props")
+            "state": final_state,
+            "artifacts": artifacts
+        }
+        
+    except Exception as e:
+        import traceback
+        logger.error(f"Orchestrator Run Failed: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Orchestrator Error: {str(e)}")
+
+
+# --- Finance API (Phase 6.2 Extension) ---
+
+class ConvertRequest(BaseModel):
+    amount: float
+    from_currency: str = "USD"
+    to_currency: str
+
+@app.get("/api/finance/currencies")
+async def list_currencies():
+    """List supported currencies and their rates relative to USD."""
+    # Centralized rates source (Mocked for MVP)
+    rates = {
+        "USD": 1.0,
+        "EUR": 0.92,
+        "GBP": 0.79,
+        "JPY": 150.0,
+        "CAD": 1.35
+    }
+    return {
+        "base": "USD",
+        "rates": rates,
+        "supported_codes": list(rates.keys())
+    }
+
+@app.post("/api/finance/convert")
+async def convert_currency_endpoint(req: ConvertRequest):
+    """Convert amount between currencies."""
+    rates = {
+        "USD": 1.0,
+        "EUR": 0.92,
+        "GBP": 0.79,
+        "JPY": 150.0,
+        "CAD": 1.35
+    }
+    
+    from_rate = rates.get(req.from_currency.upper())
+    to_rate = rates.get(req.to_currency.upper())
+    
+    if not from_rate or not to_rate:
+         raise HTTPException(status_code=400, detail="Invalid currency code")
+         
+    # Convert to USD first, then to target
+    amount_usd = req.amount / from_rate
+    amount_target = amount_usd * to_rate
+    
+    return {
+        "amount": req.amount,
+        "from": req.from_currency.upper(),
+        "to": req.to_currency.upper(),
+        "converted_amount": round(amount_target, 2),
+        "rate": round(to_rate / from_rate, 4)
+    }
+
+
+@app.post("/api/orchestrator/plan")
+async def plan_orchestrator_endpoint(
+    user_intent: str = Form(...),
+    project_id: str = Form(...)
+):
+    """Shortcut for Planning Mode"""
+    return await run_orchestrator_endpoint(user_intent=user_intent, project_id=project_id, mode="plan")
+
+@app.post("/api/orchestrator/approve")
+async def approve_plan_endpoint(
+    project_id: str = Form(...),
+    approved: bool = Form(...),
+    user_intent: Optional[str] = Form(None)
+):
+    """
+    Handle User Approval Gate.
+    Resumes execution from Phase 3 if approved.
+    """
+    if not approved:
+         return {"status": "rejected", "message": "Plan rejected by user."}
+         
+    # Resume execution (Phase 3+)
+    # We pass mode="run" to bypass the planning stop
+    return await run_orchestrator_endpoint(
+        user_intent=user_intent or "Resume execution", 
+        project_id=project_id, 
+        mode="run",
+        voice_data=None,         # Explicitly None to avoid File(None)
+        focused_pod_id=None      # Explicitly None to avoid Form(None)
+    )
+
+@app.post("/api/orchestrator/feedback")
+async def feedback_plan_endpoint(
+    project_id: str = Form(...),
+    feedback: str = Form(...)
+):
+    """
+    Handle User Feedback on Plan.
+    Regenerates the plan by re-running planning phase with feedback.
+    """
+    # Append feedback to intent or context. 
+    # For MVP, we treat feedback as a new intent refinement.
+    return await run_orchestrator_endpoint(
+        user_intent=f"Refine plan with feedback: {feedback}",
+        project_id=project_id,
+        mode="plan",
+        voice_data=None,         # Explicitly None
+        focused_pod_id=None      # Explicitly None
+    )
+
+
+# --- Agent-Specific Endpoints (Phase 6.2) ---
+
+class FeasibilityRequest(BaseModel):
+    geometry_tree: List[Dict[str, Any]]
+
+class EstimateRequest(BaseModel):
+    geometry_tree: List[Dict[str, Any]]
+    material: str = "Aluminum 6061"
+    currency: str = "USD"
+    complexity: str = "moderate"
+
+class SelectionRequest(BaseModel):
+    user_intent: str
+    project_id: str
+
+@app.get("/api/agents/available")
+async def list_available_agents():
+    """List all registered agents and their statuses."""
+    from backend.agent_registry import AGENT_REGISTRY
+    agents = []
+    for name, agent_cls in AGENT_REGISTRY.items():
+        # Instantiate to get metadata (cached in real app)
+        try:
+            agent = agent_cls()
+            agents.append({
+                "name": agent.name,
+                "type": name,
+                "status": "active"
+            })
+        except Exception as e:
+            agents.append({
+                "name": name,
+                "type": name,
+                "status": "error",
+                "error": str(e)
+            })
+    return {"agents": agents}
+
+@app.post("/api/agents/select")
+async def select_agents_endpoint(req: SelectionRequest):
+    """Preview which agents would be selected for a prompt."""
+    from backend.agent_selector import select_physics_agents
+    
+    selected_agents = select_physics_agents(req.user_intent)
+    return {
+        "user_intent": req.user_intent,
+        "selected_agents": selected_agents,
+        "count": len(selected_agents)
+    }
+
+@app.post("/api/agents/feasibility")
+async def check_feasibility_endpoint(req: FeasibilityRequest):
+    """Quick feasibility check for geometry."""
+    try:
+        from backend.agents.geometry_estimator import GeometryEstimator
+        agent = GeometryEstimator()
+        # Mocking check for now as GeometryEstimator doesn't expose quick_feasibility_check directly yet
+        # Using run() to get volume/bbox
+        result = agent.run({"geometry_tree": req.geometry_tree})
+        
+        # Simple heuristic
+        feasible = True
+        reasoning = "Geometry is within valid bounds."
+        
+        if not result.get("valid", True):
+            feasible = False
+            reasoning = "Invalid geometry definition."
+            
+        return {
+            "feasible": feasible,
+            "reasoning": reasoning,
+            "score": 0.85 if feasible else 0.0,
+            "details": result
         }
     except Exception as e:
+        logger.error(f"Feasibility check failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/agents/geometry/estimate")
+async def geometry_estimate_endpoint(req: EstimateRequest):
+    """Quick geometry complexity estimation."""
+    from backend.agents.geometry_estimator import GeometryEstimator
+    agent = GeometryEstimator()
+    result = agent.run({"geometry_tree": req.geometry_tree})
+    return result
+
+@app.post("/api/agents/cost/estimate")
+async def cost_estimate_endpoint(req: EstimateRequest):
+    """Quick cost estimation."""
+    from backend.agents.cost_agent import CostAgent
+    agent = CostAgent()
+    params = {
+        "material_name": req.material,
+        "complexity": req.complexity,
+        "mass_kg": 5.0 # Need to link with mass properties in real flow
+    }
+    return agent.quick_estimate(params, currency=req.currency)
+
 
 # --- Physics API ---
 

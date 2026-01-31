@@ -58,11 +58,37 @@ class AABB:
             
         return new_box
 
+
 class GeometryEstimator:
     """
     Analytic Geometry Bounds Estimator from AST.
     Avoids CSG compilation.
     """
+    def __init__(self):
+        self.name = "GeometryEstimator"
+
+    def estimate(self, intent: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Quick feasibility check based on intent keywords and parameters.
+        Phase 1 Feasibility.
+        """
+        # Heuristic check
+        impossible = False
+        reason = ""
+        
+        # Check size constraints
+        dims = params.get("dimensions", [0,0,0])
+        MAX_SIZE = 5000 # mm
+        if any(d > MAX_SIZE for d in dims):
+            impossible = True
+            reason = f"Dimensions exceed max size ({MAX_SIZE}mm)"
+            
+        return {
+            "feasible": not impossible,
+            "impossible": impossible,
+            "reason": reason,
+            "estimated_bounds": {"min": [0,0,0], "max": dims} # Placeholder
+        }
     
     def calculate_bounds(self, nodes: List[ASTNode], variables: Dict[str, Any]) -> Tuple[Dict[str, float], Dict[str, float]]:
         """

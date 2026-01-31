@@ -15,6 +15,17 @@ class VerificationAgent:
     
     def __init__(self):
         self.name = "VerificationAgent"
+        try:
+            from backend.config.validation_thresholds import SAFETY_THRESHOLDS, VERIFICATION_CRITERIA
+            self.safety_thresholds = SAFETY_THRESHOLDS
+            self.criteria = VERIFICATION_CRITERIA
+        except ImportError:
+            logger.warning("Could not import validation_thresholds. Using defaults.")
+            self.safety_thresholds = {
+                "collision_margin_mm": -0.1,
+                "rapid_clearance_mm": 5.0
+            }
+            self.criteria = {"min_pass_rate": 1.0}
     
     def run(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -52,16 +63,26 @@ class VerificationAgent:
         passed_count = 0
         
         for req in requirements:
-            # Mock verification
-            # Real implementation would run specific test logic per requirement
-            results[req] = "PASS"
-            passed_count += 1
-            logs.append(f"[VERIFICATION] Req '{req}': PASS")
+            # Mock verification mechanism
+            # In a real system, this would dispatch to specific test runners based on requirement type
+            # For now, we assume if we reached this stage without errors, it's likely a pass,
+            # but we can simulate failures if "fail" is in the requirement text for testing.
+            
+            if "fail" in req.lower():
+                outcome = "FAIL"
+                logs.append(f"[VERIFICATION] Req '{req}': ❌ FAIL (Simulated)")
+            else:
+                outcome = "PASS"
+                passed_count += 1
+                logs.append(f"[VERIFICATION] Req '{req}': ✅ PASS")
+                
+            results[req] = outcome
             
         pass_rate = passed_count / len(requirements)
+        passed = pass_rate >= self.criteria.get("min_pass_rate", 1.0)
         
         return {
-            "passed": pass_rate == 1.0,
+            "passed": passed,
             "pass_rate": pass_rate,
             "results": results,
             "logs": logs
@@ -90,6 +111,8 @@ class VerificationAgent:
         kernel = SymbolicMachiningKernel(stock_dims=stock_dims)
         collisions = []
         
+        collision_margin = self.safety_thresholds.get("collision_margin_mm", -0.1)
+        
         logs.append(f"Initialized VMK with stock {stock_dims}")
         
         for i, op in enumerate(gcode):
@@ -113,9 +136,9 @@ class VerificationAgent:
                 # Check Midpoint SDF against Stock State
                 d = kernel.get_sdf(mid)
                 
-                # Tolerance: If d < -0.1 (Inside material), CRASH
-                if d < -0.1:
-                    msg = f"CRASH on Line {i} (Rapid): Point {mid} is inside Stock (SDF={d:.2f})"
+                # Tolerance check from config
+                if d < collision_margin:
+                    msg = f"CRASH on Line {i} (Rapid): Point {mid} is inside Stock (SDF={d:.2f} < {collision_margin})"
                     collisions.append(msg)
                     logs.append(f"❌ {msg}")
             

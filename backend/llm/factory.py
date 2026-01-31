@@ -2,38 +2,33 @@
 import os
 import logging
 from typing import Optional
-from llm.provider import LLMProvider
+from backend.llm.provider import LLMProvider
 
 logger = logging.getLogger(__name__)
 
 def get_llm_provider(preferred: Optional[str] = None) -> LLMProvider:
     """
     Factory to return an LLM Provider based on availability or preference.
-    Order of operations:
-    1. Preferred (if valid and key exists)
-    2. OpenAI (if key exists)
-    3. Groq (if key exists)
-    4. Error (No Mock)
     """
     
     # Lazy imports to avoid crashing if packages are missing
     try:
-        from llm.openai_provider import OpenAIProvider
+        from backend.llm.openai_provider import OpenAIProvider
     except ImportError:
         OpenAIProvider = None
         
     try:
-        from llm.groq_provider import GroqProvider
+        from backend.llm.groq_provider import GroqProvider
     except ImportError:
         GroqProvider = None
 
     try:
-        from llm.gemini_provider import GeminiProvider
+        from backend.llm.gemini_provider import GeminiProvider
     except ImportError:
         GeminiProvider = None
 
     try:
-        from llm.ollama_provider import OllamaProvider
+        from backend.llm.ollama_provider import OllamaProvider
     except ImportError:
         OllamaProvider = None
 

@@ -25,6 +25,18 @@ class ComponentAgent:
     def __init__(self):
         self.name = "ComponentAgent"
         self.db = SupabaseClient()
+        
+        # Load Config
+        try:
+            from backend.config.component_config import COMPONENT_DEFAULTS, TEST_ASSETS, ATLAS_CONFIG
+            self.defaults = COMPONENT_DEFAULTS
+            self.assets = TEST_ASSETS
+            self.atlas_config = ATLAS_CONFIG
+        except ImportError:
+            logger.warning("Could not import component_config. Using defaults.")
+            self.defaults = {"db_table": "components", "weights_path": "data/component_agent_weights.json"}
+            self.assets = {"cube": "test_assets/test_cube.stl"}
+            self.atlas_config = {"default_resolution": 64}
 
     def run(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -250,7 +262,7 @@ class ComponentAgent:
         # 1. Resolve Mesh Path (Fallback)
         if not mesh_path:
             # Check for generic assets
-            candidates = ["test_assets/test_cube.stl", "test_assets/test_sphere.stl"]
+            candidates = list(self.assets.values())
             for cand in candidates:
                 if os.path.exists(cand):
                     mesh_path = cand
@@ -261,8 +273,9 @@ class ComponentAgent:
                 # Generate a dummy mesh if none exists (for testing flow)
                 import trimesh
                 mesh = trimesh.creation.box(extents=[1,1,1])
-                os.makedirs("data/components", exist_ok=True)
-                mesh_path = f"data/components/{component_id}.stl"
+                install_dir = self.defaults.get("install_path", "data/components")
+                os.makedirs(install_dir, exist_ok=True)
+                mesh_path = f"{install_dir}/{component_id}.stl"
                 mesh.export(mesh_path)
         
         # 2. Convert to SDF (Using Atlas Pipeline)

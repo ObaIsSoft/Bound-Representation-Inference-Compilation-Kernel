@@ -112,6 +112,69 @@ class ReviewAgent:
         # Default response
         return f"Noted: '{comment}'. This feedback will be considered in the design refinement."
     
+    def review_design_plan(self, plan: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Review the initial design plan.
+        Wrapper for Phase 2 Planning Review.
+        """
+        logger.info(f"{self.name} reviewing initial design plan...")
+        
+        # Simple heuristic review if no LLM
+        issues = []
+        if len(plan) < 100:
+            issues.append("Plan is too short")
+        if "Estimate" not in plan and "Cost" not in plan:
+            issues.append("Missing cost estimate")
+            
+        return {
+            "status": "issues_found" if issues else "approved",
+            "issues": issues,
+            "feedback": f"Plan review complete. Found {len(issues)} issues."
+        }
+
+        """
+        Perform automated code review on code changes.
+        """
+        if not self.llm_provider:
+            return {"status": "skipped", "message": "No LLM for code review."}
+            
+        logger.info(f"{self.name} reviewing code diff...")
+        
+        prompt = f"""
+        You are a Security and Code Quality Auditor.
+        Review the following code diff for:
+        1. Security Vulnerabilities (Hardcoded keys, injection risks)
+        2. Logic Errors
+        3. Style/Best Practices
+        
+        Diff:
+        {code_diff}
+        
+        Context:
+        {context}
+        
+        Return JSON:
+        {{
+            "approved": boolean,
+            "issues": [string],
+            "security_score": number (0-100),
+            "summary": string
+        }}
+        """
+        try:
+            return self.llm_provider.generate_json(prompt, schema={
+                "type": "object",
+                "properties": {
+                    "approved": {"type": "boolean"},
+                    "issues": {"type": "array", "items": {"type": "string"}},
+                    "security_score": {"type": "number"},
+                    "summary": {"type": "string"}
+                }
+            })
+        except Exception as e:
+            logger.error(f"Code Review Failed: {e}")
+            return {"status": "error", "message": str(e)}
+
     def review_code(self, code_diff: str, context: str = "") -> Dict[str, Any]:
         """
         Perform automated code review on code changes.
@@ -175,3 +238,138 @@ class ReviewAgent:
             return "Simplify geometry by reducing feature count while maintaining functional requirements"
         
         return f"Review and adjust parameters related to: {context}"
+
+    def final_project_review(self, review_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Perform final quality review of entire project for Phase 8.
+        
+        Args:
+            review_data: {
+                "plan": str,
+                "geometry": List,
+                "code": str,
+                "documentation": str,
+                "bom": Dict,
+                "verification": Dict,
+                "validation_flags": Dict
+            }
+        
+        Returns:
+            {
+                "overall_score": int (0-100),
+                "report": str (markdown),
+                "issues": List[str],
+                "recommendations": List[str],
+                "approved": bool
+            }
+        """
+        logger.info(f"{self.name} performing final project review...")
+        
+        # Extract data
+        plan = review_data.get("plan", "")
+        geometry = review_data.get("geometry", [])
+        code = review_data.get("code", "")
+        documentation = review_data.get("documentation", "")
+        bom = review_data.get("bom", {})
+        verification = review_data.get("verification", {})
+        validation_flags = review_data.get("validation_flags", {})
+        
+        # Scoring criteria
+        scores = {}
+        issues = []
+        recommendations = []
+        
+        # 1. Plan Quality (20 points)
+        if len(plan) > 500:
+            scores["plan"] = 20
+        elif len(plan) > 200:
+            scores["plan"] = 15
+            issues.append("Plan documentation is brief")
+        else:
+            scores["plan"] = 10
+            issues.append("Plan documentation is insufficient")
+        
+        # 2. Geometry Quality (20 points)
+        if len(geometry) > 0:
+            scores["geometry"] = 20
+        else:
+            scores["geometry"] = 0
+            issues.append("No geometry generated")
+        
+        # 3. Code Quality (15 points)
+        if len(code) > 100:
+            scores["code"] = 15
+        elif len(code) > 0:
+            scores["code"] = 10
+        else:
+            scores["code"] = 5
+            recommendations.append("Consider generating firmware/control code")
+        
+        # 4. Documentation Quality (15 points)
+        if len(documentation) > 1000:
+            scores["documentation"] = 15
+        elif len(documentation) > 500:
+            scores["documentation"] = 10
+        else:
+            scores["documentation"] = 5
+            issues.append("Documentation is incomplete")
+        
+        # 5. BOM Completeness (10 points)
+        if bom.get("total_cost_usd", 0) > 0:
+            scores["bom"] = 10
+        else:
+            scores["bom"] = 5
+            recommendations.append("Complete BOM analysis needed")
+        
+        # 6. Verification Status (10 points)
+        if verification.get("status") == "PASS":
+            scores["verification"] = 10
+        else:
+            scores["verification"] = 5
+            issues.append("Verification did not pass all checks")
+        
+        # 7. Validation Flags (10 points)
+        if validation_flags.get("physics_valid"):
+            scores["validation"] = 10
+        else:
+            scores["validation"] = 0
+            issues.append("Physics validation failed")
+        
+        # Calculate overall score
+        overall_score = sum(scores.values())
+        approved = overall_score >= 70  # 70% threshold
+        
+        # Generate report
+        report = f"""# Final Project Review
+
+## Overall Score: {overall_score}/100
+
+### Scoring Breakdown
+- Plan Quality: {scores.get('plan', 0)}/20
+- Geometry Quality: {scores.get('geometry', 0)}/20
+- Code Quality: {scores.get('code', 0)}/15
+- Documentation: {scores.get('documentation', 0)}/15
+- BOM Completeness: {scores.get('bom', 0)}/10
+- Verification: {scores.get('verification', 0)}/10
+- Validation: {scores.get('validation', 0)}/10
+
+### Status: {'✅ APPROVED' if approved else '❌ NEEDS REVISION'}
+
+### Issues Found
+{chr(10).join(f'- {issue}' for issue in issues) if issues else '- None'}
+
+### Recommendations
+{chr(10).join(f'- {rec}' for rec in recommendations) if recommendations else '- None'}
+
+### Summary
+{'This project meets quality standards and is approved for deployment.' if approved else 'This project requires revisions before deployment. Please address the issues listed above.'}
+"""
+        
+        return {
+            "overall_score": overall_score,
+            "report": report,
+            "issues": issues,
+            "recommendations": recommendations,
+            "approved": approved,
+            "scores": scores
+        }

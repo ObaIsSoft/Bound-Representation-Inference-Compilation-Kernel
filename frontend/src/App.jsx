@@ -99,3 +99,26 @@ export default function App() {
         </div>
     );
 }
+
+/* 
+DEFERRED PLAN: SystemHealth Dashboard (Phase 11.3)
+
+Goal: Real-time visualization of backend telemetry.
+Architecture:
+1. Backend WebSocket (TODO in main.py):
+   - Endpoint: /ws/telemetry (pushes JSON every 2s)
+   - Payload: { system: {cpu, mem}, latency: {avg, p95}, agents_active, status }
+   
+2. Frontend Component (SystemHealth.tsx):
+   - Path: src/components/SystemHealth.tsx
+   - Visuals:
+     - [ ] Top Bar: Status Badge (Green/Red)
+     - [ ] Left Panel: CPU/RAM animated bars
+     - [ ] Right Panel: Latency Line Chart (recharts/chart.js)
+     - [ ] Agent Grid: 64 dots indicating active/idle status
+
+Integration:
+- Add 'health' to activeActivity state.
+- Add HealthPanel.tsx wrapping SystemHealth.
+- Connect via useWebSocket hook.
+*/

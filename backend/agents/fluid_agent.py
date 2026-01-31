@@ -5,6 +5,8 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+from backend.physics.kernel import get_physics_kernel
+
 class FluidAgent:
     """
     Tier 2 Fluid Dynamics Agent (EVOLVED).

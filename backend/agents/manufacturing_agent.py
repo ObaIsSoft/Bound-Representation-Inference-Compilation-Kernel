@@ -15,7 +15,20 @@ class ManufacturingAgent:
     def __init__(self):
         self.name = "ManufacturingAgent"
         
-        # Initialize Oracles for manufacturing analysis
+        # Phase 10 Optimization: Use Physics Kernel Singletons
+        from backend.physics.kernel import get_physics_kernel
+        self.physics = get_physics_kernel()
+        
+        # 1. Materials DB (Shared)
+        # Access via Materials Domain to share the connection
+        if hasattr(self.physics.domains["materials"], "materials_db"):
+             self.api = self.physics.domains["materials"].materials_db
+        else:
+             # Fallback if kernel init failed or partial
+             from backend.materials.materials_db import MaterialsDatabase
+             self.api = MaterialsDatabase()
+        
+        # 2. Oracles
         try:
             from agents.materials_oracle.materials_oracle import MaterialsOracle
             self.materials_oracle = MaterialsOracle()
@@ -23,32 +36,31 @@ class ManufacturingAgent:
         except ImportError:
             self.materials_oracle = None
             self.has_oracles = False
-        try:
-            from materials.materials_db import MaterialsDatabase
-        except ImportError:
-            from backend.materials.materials_db import MaterialsDatabase
-        self.api = MaterialsDatabase()
-        
-        # Initialize Deep Evolution Surrogate
-        try:
-            from backend.models.manufacturing_surrogate import ManufacturingSurrogate
-            self.surrogate = ManufacturingSurrogate()
-            self.has_surrogate = True
-        except ImportError:
-            try:
-                from models.manufacturing_surrogate import ManufacturingSurrogate
-                self.surrogate = ManufacturingSurrogate()
-                self.has_surrogate = True
-            except ImportError:
-                self.surrogate = None
-                self.has_surrogate = False
-                print("ManufacturingSurrogate not found.")
+            
+        # 3. Manufacturing Surrogate (Shared via SurrogateManager)
+        self.surrogate_manager = self.physics.intelligence["surrogate_manager"]
+        if self.surrogate_manager.has_model("manufacturing_surrogate"):
+             # Wrapper to expose expected methods if needed, or just use manager directly
+             # ManufacturingAgent expects 'self.surrogate.predict_defect_probability'
+             # We can map it or grab the model instance (less clean but fast)
+             self.surrogate = self.surrogate_manager.surrogates["manufacturing_surrogate"]["model"]
+             self.has_surrogate = True
+        else:
+             self.surrogate = None
+             self.has_surrogate = False
+             # Try lazily loading if not found in manager (redundancy)
+             try:
+                 from backend.models.manufacturing_surrogate import ManufacturingSurrogate
+                 self.surrogate = ManufacturingSurrogate()
+                 self.has_surrogate = True
+             except ImportError:
+                 pass
 
     def _get_material_data(self, material_name: str) -> Dict[str, Any]:
         """Fetch material costing data from DB."""
         # Defaults
         defaults = {"density": 2700, "cost_per_kg": 2.50, "machining_factor": 1.0}
-        
+        #hardcoded
         result = self.api.find_material(material_name)
         if not result:
             return defaults

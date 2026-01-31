@@ -47,16 +47,46 @@ class DoctorAgent:
         failure_prob = self.config.get("failure_probability", 0.05)
         
         for agent in target_agents:
-            # Mock health check
-            # In a real system, this would ping the agent or check its heartbeats
-            is_healthy = random.random() > failure_prob 
-            
+            # Mock health check (Ping mechanism to come later)
+            is_healthy = random.random() > 0.01 
             if is_healthy:
                 status_map[agent] = "HEALTHY"
                 healthy_count += 1
             else:
                 status_map[agent] = "DEGRADED"
-                logs.append(f"[DOCTOR] ⚠ Agent {agent} is showing signs of instability")
+                logs.append(f"[DOCTOR] ⚠ Agent {agent} unresponsive")
+        
+        # --- PHASE 11: Real System Telemetry ---
+        try:
+            import psutil
+            import os
+            process = psutil.Process(os.getpid())
+            
+            # CPU & Memory
+            cpu_percent = psutil.cpu_percent(interval=None)
+            mem_info = process.memory_info()
+            mem_mb = mem_info.rss / (1024 * 1024)
+            
+            logs.append(f"[DOCTOR] CPU: {cpu_percent}% | Memory: {mem_mb:.1f} MB")
+            
+            # Latency (from Singleton)
+            from backend.monitoring.latency import latency_monitor
+            metrics = latency_monitor.get_metrics()
+            logs.append(f"[DOCTOR] Latency (avg): {metrics['avg_ms']}ms | P95: {metrics['p95_ms']}ms")
+            
+            # Add to result for API
+            status_map["_system"] = {
+                "cpu_percent": cpu_percent,
+                "memory_mb": round(mem_mb, 1),
+                "latency": metrics
+            }
+            
+        except ImportError:
+            logs.append("[DOCTOR] `psutil` not installed. System metrics unavailable.")
+            status_map["_system"] = {"error": "psutil_missing"}
+        except Exception as e:
+            logger.error(f"Doctor telemetry failed: {e}")
+            logs.append(f"[DOCTOR] Telemetry error: {str(e)}")
         
         score = healthy_count / len(target_agents) if target_agents else 1.0
         

@@ -18,55 +18,51 @@ load_dotenv(dotenv_path=env_path)
 from schema import AgentState, BrickProject
 from orchestrator import run_orchestrator, get_agent_registry
 from comment_schema import Comment, PlanReview, TextSelection, plan_reviews
-from schemas.handshake import (
-    HandshakeRequest, HandshakeResponse, ISAVersion, ISAHierarchy,
-    CURRENT_ISA_VERSION, is_compatible, negotiate_version
-)
+# from schemas.handshake import ... (Removed legacy imports)
 from agent_selector import select_physics_agents, get_agent_selection_summary
 import logging
-import uuid
+
+# --- Controllers ---
+from controllers.handshake_controller import HandshakeController
 
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="BRICK OS API", version="0.1.0")
+
+# --- Phase 10: Global Agent Registry ---
+from agent_registry import registry as global_registry
+
+@app.on_event("startup")
+async def startup_event():
+    logger.info("Starting BRICK OS API...")
+    global_registry.initialize()
+    logger.info("Global Agent Registry active.")
+
+# --- Project Manager Init ---
+from managers.project_manager import ProjectManager
+project_manager = ProjectManager(storage_dir="projects")
+
+# --- Phase 11: Telemetry Middleware ---
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from backend.monitoring.latency import latency_monitor
+
+class LatencyMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        start_time = time.time()
+        response = await call_next(request)
+        process_time = time.time() - start_time
+        latency_monitor.record_request_time(process_time)
+        return response
+
+app.add_middleware(LatencyMiddleware)
 
 # --- Agent Registry ---
 AGENTS = get_agent_registry()
 
 # --- ISA Handshake API ---
 
-@app.post("/api/handshake")
-async def handshake(request: HandshakeRequest) -> HandshakeResponse:
-    """ISA/Schema handshake protocol for version negotiation."""
-    try:
-        client_version = ISAVersion.from_string(request.client_version)
-        server_version = CURRENT_ISA_VERSION
-        compatible = is_compatible(client_version, server_version)
-        
-        if not compatible:
-            return HandshakeResponse(
-                server_version=str(server_version),
-                negotiated_version=str(server_version),
-                compatible=False,
-                session_id=str(uuid.uuid4()),
-                message=f"Incompatible versions: client={client_version}, server={server_version}"
-            )
-        
-        negotiated = negotiate_version(client_version, server_version)
-        session_id = str(uuid.uuid4())
-        
-        return HandshakeResponse(
-            server_version=str(server_version),
-            negotiated_version=str(negotiated),
-            compatible=True,
-            isa_hierarchy=None,
-            supported_features=["scoped_execution", "intelligent_agent_selection", "8_phase_pipeline"],
-            session_id=session_id,
-            message=f"Handshake successful. Session: {session_id}"
-        )
-    except Exception as e:
-        logger.error(f"Handshake error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+# --- Legacy Handshake Removed ---
 
 
 @app.post("/api/agents/select")
@@ -88,15 +84,7 @@ async def preview_agent_selection(state: Dict[str, Any]):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/schema/version")
-async def get_schema_version():
-    """Get current ISA schema version."""
-    return {
-        "version": str(CURRENT_ISA_VERSION),
-        "major": CURRENT_ISA_VERSION.major,
-        "minor": CURRENT_ISA_VERSION.minor,
-        "patch": CURRENT_ISA_VERSION.patch
-    }
+# --- Legacy Version Removed ---
 
 
 
@@ -654,6 +642,129 @@ async def convert_currency_endpoint(req: ConvertRequest):
     }
 
 
+    return {
+        "amount": req.amount,
+        "from": req.from_currency.upper(),
+        "to": req.to_currency.upper(),
+        "converted_amount": round(amount_target, 2),
+        "rate": round(to_rate / from_rate, 4)
+    }
+
+
+# --- ISA/Schema API (Phase 6.3 - Updated for 7.2) ---
+
+class HandshakeRequest(BaseModel):
+    client_version: str
+    capabilities: List[str] = []
+
+class FocusRequest(BaseModel):
+    project_id: str
+    pod_id: str
+
+@app.post("/api/handshake")
+async def handshake_endpoint(req: HandshakeRequest):
+    """
+    Establish compatibility between Client and Server ISA versions.
+    Delegates to HandshakeController.
+    """
+    return HandshakeController.process_handshake(req.client_version, req.capabilities)
+
+@app.get("/api/schema/version")
+async def schema_version_endpoint():
+    """Get current Hardware ISA version/revision."""
+    # This remains simple for now, but could also move to controller
+    from backend.isa import HardwareISA
+    isa_template = HardwareISA(project_id="template")
+    return {
+        "version": "1.0.0",
+        "revision": isa_template.revision,
+        "environment": isa_template.environment_kernel
+    }
+
+@app.get("/api/schema/isa")
+async def get_isa_structure_endpoint():
+    """
+    Returns the full serialized ISA Hierarchy (Pods, Parameters, Constraints).
+    Used by frontend to build the ISA Browser UI.
+    """
+    from backend.isa import HardwareISA
+    
+    # In a real scenario, this might load a specific project's ISA
+    # For now, we return the template/default ISA structure
+    isa_template = HardwareISA(project_id="template")
+    hierarchy = HandshakeController.serialize_isa(isa_template)
+    
+    return hierarchy.dict()
+
+@app.post("/api/isa/focus")
+async def set_isa_focus_endpoint(req: FocusRequest):
+    """
+    Set focus to a specific Pod ID for subsequent operations.
+    In a real implementation, this would update the session state.
+    """
+    logger.info(f"ISA Focus shift: Project={req.project_id} -> Pod={req.pod_id}")
+    return {
+        "status": "focused",
+        "project_id": req.project_id,
+        "focused_pod_id": req.pod_id,
+        "message": f"Context switched to pod '{req.pod_id}'"
+    }
+
+
+    return {
+        "status": "focused",
+        "project_id": req.project_id,
+        "focused_pod_id": req.pod_id,
+        "message": f"Context switched to pod '{req.pod_id}'"
+    }
+
+
+# --- State Management API (Phase 6.4) ---
+
+class StateSaveRequest(BaseModel):
+    state: Dict[str, Any]
+    branch: str = "main"
+
+@app.get("/api/state/{project_id}")
+async def get_project_state(project_id: str, branch: str = "main"):
+    """Load project state from storage."""
+    try:
+        filename = f"{project_id}.brick"
+        state = project_manager.load_project(filename, branch=branch)
+        return {"project_id": project_id, "state": state, "branch": branch}
+    except FileNotFoundError:
+        # Return empty/default state if new project
+        return {"project_id": project_id, "state": None, "message": "Project state not found"}
+    except Exception as e:
+        logger.error(f"Load state error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/state/{project_id}/save")
+async def save_project_state(project_id: str, req: StateSaveRequest):
+    """Save project state to storage."""
+    try:
+        filename = f"{project_id}.brick"
+        path = project_manager.save_project(req.state, filename, branch=req.branch)
+        return {"status": "saved", "path": path, "project_id": project_id}
+    except Exception as e:
+        logger.error(f"Save state error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/state/{project_id}")
+async def delete_project_state(project_id: str, branch: str = "main"):
+    """Delete project state."""
+    try:
+        filename = f"{project_id}.brick"
+        deleted = project_manager.delete_project(filename, branch=branch)
+        if deleted:
+            return {"status": "deleted", "project_id": project_id}
+        else:
+            raise HTTPException(status_code=404, detail="Project state not found")
+    except Exception as e:
+        logger.error(f"Delete state error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/orchestrator/plan")
 async def plan_orchestrator_endpoint(
     user_intent: str = Form(...),
@@ -723,14 +834,22 @@ class SelectionRequest(BaseModel):
 @app.get("/api/agents/available")
 async def list_available_agents():
     """List all registered agents and their statuses."""
-    from backend.agent_registry import AGENT_REGISTRY
+    # Use Global Registry (Phase 10)
+    from backend.agent_registry import registry as global_registry
+    
     agents = []
-    for name, agent_cls in AGENT_REGISTRY.items():
-        # Instantiate to get metadata (cached in real app)
+    # global_registry.list_agents() returns {name: type_str}
+    # But we want the instances to get real metadata names
+    
+    # Ensure initialized if accessed directly
+    if not global_registry._initialized:
+         global_registry.initialize()
+         
+    for name, agent in global_registry._agents.items():
         try:
-            agent = agent_cls()
+            # Agent is already instantiated! Fast access.
             agents.append({
-                "name": agent.name,
+                "name": agent.name if hasattr(agent, 'name') else name,
                 "type": name,
                 "status": "active"
             })
@@ -742,6 +861,64 @@ async def list_available_agents():
                 "error": str(e)
             })
     return {"agents": agents}
+
+@app.get("/api/telemetry")
+async def get_system_telemetry():
+    """
+    Get real-time system health metrics (Phase 11).
+    - CPU/Memory Usage
+    - Request Latency
+    - Agent Registry Status
+    """
+    # 1. System Metrics (CPU/Mem)
+    system_status = {"cpu": 0, "memory_mb": 0}
+    try:
+        import psutil
+        import os
+        process = psutil.Process(os.getpid())
+        system_status["cpu"] = psutil.cpu_percent()
+        system_status["memory_mb"] = round(process.memory_info().rss / (1024 * 1024), 1)
+    except ImportError:
+        system_status["error"] = "psutil not installed"
+
+    # 2. Latency Metrics
+    from backend.monitoring.latency import latency_monitor
+    latency_stats = latency_monitor.get_metrics()
+    
+    # 3. Agent Registry Status
+    from backend.agent_registry import registry as global_registry
+    agent_count = len(global_registry._agents) if global_registry._initialized else 0
+    
+    return {
+        "timestamp": time.time(),
+        "system": system_status,
+        "latency": latency_stats,
+        "agents_active": agent_count,
+        "status": "HEALTHY" if latency_stats["avg_ms"] < 2000 else "DEGRADED"
+    }
+
+# --- WebSocket Telemetry (Phase 11.3) ---
+from fastapi import WebSocket, WebSocketDisconnect
+import asyncio
+
+@app.websocket("/ws/telemetry")
+async def websocket_telemetry(websocket: WebSocket):
+    await websocket.accept()
+    try:
+        while True:
+            # 1. Gather Telemetry
+            data = await get_system_telemetry()
+            
+            # 2. Broadcast
+            await websocket.send_json(data)
+            
+            # 3. Frequency (2s)
+            await asyncio.sleep(2)
+    except WebSocketDisconnect:
+        logger.info("Telemetry client disconnected")
+    except Exception as e:
+        logger.error(f"WebSocket error: {e}")
+        await websocket.close()
 
 @app.post("/api/agents/select")
 async def select_agents_endpoint(req: SelectionRequest):

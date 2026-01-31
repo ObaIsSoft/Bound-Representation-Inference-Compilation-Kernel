@@ -58,6 +58,15 @@ class ProjectManager:
         with open(filepath, "r") as f:
             return json.load(f)
 
+    def delete_project(self, filename: str = "save.brick", branch: str = "main") -> bool:
+        """Deletes a project file from the specified branch."""
+        filepath = os.path.join(self._get_branch_path(branch), filename)
+        if os.path.exists(filepath):
+            os.remove(filepath)
+            print(f"[ProjectManager] Deleted: {filepath}")
+            return True
+        return False
+
     def list_projects(self, branch: str = "main"):
         """Returns list of .brick files in storage (legacy flat support handled by defaulting to main)."""
         path = self._get_branch_path(branch)

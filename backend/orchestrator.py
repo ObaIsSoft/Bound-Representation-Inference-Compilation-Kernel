@@ -131,90 +131,19 @@ class MockSurrogateAgent:
 surrogate_critic = SurrogateCritic(window_size=100)
 physics_critic = PhysicsCritic(window_size=100) # For future hybrid agents
 
+# --- Global Registry Integration ---
+from agent_registry import registry as global_registry
+
 def get_agent_registry():
-    """Returns a dict of all instantiated agents."""
-    # Use Factory to get best available LLM
-    llm = get_llm_provider(preferred="groq") # Prefer Groq for speed if available? Or make configurable. Defaulting check order.
-    
-    return {
-        # --- Core Agents ---
-        "environment": EnvironmentAgent(),
-        "geometry": GeometryAgent(),
-        "physics": PhysicsAgent(),
-        # "surrogate_physics": SurrogateAgent(), # DEPRECATED
-        "mass_properties": MassPropertiesAgent(), # Real Implementation
-        "manifold": ManifoldAgent(),
-        "validator": ValidatorAgent(),
+    """
+    Returns a dict of all instantiated agents from the Global Registry.
+    Phase 10 Optimization: Uses singleton pattern to avoid re-instantiation.
+    """
+    if not global_registry._initialized:
+        # Fallback lazily if not explicitly initialized (though main.py should do it)
+        global_registry.initialize()
         
-        # --- Design & Planning ---
-        "designer": DesignerAgent(),
-        "design_exploration": DesignExplorationAgent(),
-        "design_quality": DesignQualityAgent(),
-        "template_design": TemplateDesignAgent(),
-        "asset_sourcing": AssetSourcingAgent(),
-        
-        # --- Analysis ---
-        "thermal": ThermalAgent(),
-        "dfm": DfmAgent(), # Real Implementation
-        "cps": ControlAgent(), # Alias CPS -> ControlAgent (Real)
-        "gnc": GncAgent(), # Real Implementation
-        "mitigation": MitigationAgent(),
-        "topological": TopologicalAgent(),
-        
-        # --- Manufacturing ---
-        "manufacturing": ManufacturingAgent(),
-        "slicer": SlicerAgent(),
-        "tolerance": ToleranceAgent(),
-        "codegen": CodegenAgent(provider=llm), # Phase 16: Firmware Synthesis
-        
-        # --- Material ---
-        "material": MaterialAgent(),
-        "chemistry": ChemistryAgent(),
-        
-        # --- Structural/Arch ---
-        "structural": StructuralAgent(), # Maps to 'structural_load' in UI roughly
-        "structural_load": StructuralAgent(), # Alias
-        "mep": MepAgent(),
-        "zoning": ZoningAgent(),
-        
-        # --- Electronics ---
-        "electronics": ElectronicsAgent(),
-        
-        # --- Advanced ---
-        "multi_mode": MultiModeAgent(),
-        "nexus": NexusAgent(),
-        "pvc": PvcAgent(),
-        "doctor": DoctorAgent(),
-        "shell": ShellAgent(),
-        "vhil": VhilAgent(),
-        
-        # --- Documentation ---
-        "document": DocumentAgent(llm_provider=llm),
-        "documentation": DocumentAgent(llm_provider=llm), # Alias
-        "diagnostic": DiagnosticAgent(),
-        "verification": VerificationAgent(),
-        "visual_validator": VisualValidatorAgent(),
-        
-        # --- Specialized ---
-        "standards": StandardsAgent(),
-        "component": ComponentAgent(),
-        "component": ComponentAgent(),
-        "conversational": ConversationalAgent(provider=llm),
-        "remote": RemoteAgent(),
-        "devops": DevOpsAgent(llm_provider=llm),
-        
-        # --- Training ---
-        "training": TrainingAgent(),
-        "physics_trainer": TrainingAgent(), # Alias
-        
-        "lattice_synthesis": LatticeSynthesisAgent(),
-        
-        # --- System ---
-        "cost": CostAgent(),
-        "control": ControlAgent(),
-        "compliance": ComplianceAgent(),
-        "network": NetworkAgent()
-    }
+    return global_registry._agents
 
 # --- Nodes ---
 

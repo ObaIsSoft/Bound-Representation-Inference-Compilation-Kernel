@@ -41,12 +41,43 @@ class ChemistryAgent:
             self.has_brain = False
             self.brain = None
 
-    def run(self, materials: List[str], environment_type: str) -> Dict[str, Any]:
+    def run(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """
         Static validation of material compatibility in an environment.
         """
         issues = []
         report = []
+        
+        # Unpack State
+        env = state.get("environment", {})
+        environment_type = env.get("type", "GROUND")
+        
+        # Determine materials to check
+        materials = []
+        
+        # 1. Check direct 'material' key (Scheme pollute or single mat)
+        if state.get("material") and isinstance(state["material"], str):
+             # Ensure it's not a description string but a name? 
+             # Heuristic: If it's long, might be description.
+             m = state["material"]
+             if len(m) < 50: materials.append(m)
+             
+        # 2. Check 'design_parameters'
+        params = state.get("design_parameters", {})
+        if "material" in params:
+             materials.append(params["material"])
+        if "materials" in params:
+             materials.extend(params["materials"])
+             
+        # 3. Check 'resolved_components'
+        # (If available in state)
+        
+        # Deduplicate
+        materials = list(set(materials))
+        
+        # Fallback
+        if not materials:
+             materials = ["Steel", "Aluminum"] # Default to common checks
         
         # 1. Fetch Material Data
         for mat_name in materials:

@@ -41,11 +41,16 @@ class PhysicsAgent:
             self.has_nuclear_brain = False
             self.nuclear_student = None
 
-    def run(self, environment: Dict[str, Any], geometry_tree: List[Dict[str, Any]], design_params: Dict[str, Any]) -> Dict[str, Any]:
+    def run(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """
         Run the physics simulation kernel.
         Returns detailed predictions and feasibility verdicts.
         """
+        # Unpack state
+        environment = state.get("environment", {})
+        geometry_tree = state.get("geometry_tree", [])
+        design_params = state.get("design_parameters", {})
+
         
         # 1. Establish Boundary Conditions (The "Universe" state)
         # NEW: Use physics kernel for constants instead of hardcoded values

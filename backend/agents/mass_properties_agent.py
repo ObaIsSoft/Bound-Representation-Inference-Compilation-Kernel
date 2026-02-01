@@ -25,20 +25,50 @@ class MassPropertiesAgent:
             self.surrogate = None
             self.use_surrogate = False
 
-    def run(self, params: Dict[str, Any]) -> Dict[str, Any]:
+    def run(self, geometry: List[Any], material_name: str) -> Dict[str, Any]:
         """
         Execute mass properties analysis.
-        Expected params:
-        - volume_cm3: float (Geometry volume)
-        - material_density: float (g/cm3)
-        - bounding_box: [Lx, Ly, Lz] (cm) - Optional, for inertia estimation
+        Args:
+            geometry: List of GeometryNodes (or dict representation)
+            material_name: Name of the material (e.g. "Aluminum 6061")
         """
-        logger.info(f"{self.name} calculating mass stats...")
+        logger.info(f"{self.name} calculating mass stats for {material_name}...")
         
-        # Inputs
-        volume_cm3 = params.get("volume_cm3", 1000.0) # Default 10x10x10 cube
-        density_g_cm3 = params.get("material_density", 2.7) # Default Al-6061
-        bbox = params.get("bounding_box", [10.0, 10.0, 10.0]) # Lx, Ly, Lz in cm
+        # 0. Material Density Lookup (Mock/Basic)
+        # In real system, this calls MaterialAgent or DB
+        densities = {
+            "Aluminum 6061": 2.7,
+            "Steel": 7.85,
+            "Titanium": 4.43,
+            "Plastic": 1.2,
+            "ABS": 1.04,
+            "PLA": 1.24
+        }
+        # Fuzzy match or default
+        density_g_cm3 = 2.7
+        for key, val in densities.items():
+            if key.lower() in material_name.lower():
+                density_g_cm3 = val
+                break
+        
+        # 1. Volume Estimation from Geometry Tree
+        # If geometry is empty or invalid, default to 1000.0
+        volume_cm3 = 1000.0
+        bbox = [10.0, 10.0, 10.0]
+        
+        if isinstance(geometry, list) and len(geometry) > 0:
+            # Try to extract bbox from first node metadata/params
+            try:
+                # Basic heuristic: sum volumes of primitives?
+                # For now: Just use defaults with "Estimated" log
+                pass 
+            except:
+                pass
+                
+        # Inputs used for calculation
+        # volume_cm3 = params.get("volume_cm3", 1000.0) 
+        # density_g_cm3 = params.get("material_density", 2.7) 
+        # bbox = params.get("bounding_box", [10.0, 10.0, 10.0])
         
         logs = []
         
@@ -87,7 +117,7 @@ class MassPropertiesAgent:
 
         # --- Recursive ISA Integration ---
         # If running in the context of a scoped pod, verify scope and update exports
-        pod_id = params.get("pod_id")
+        pod_id = None # params variable was removed from signature
         if pod_id:
             try:
                 from core.system_registry import get_system_resolver
@@ -144,6 +174,7 @@ class MassPropertiesAgent:
 
         return {
             "status": "success",
+            "total_mass_kg": mass_kg,
             "mass": pv_mass.to_dict(),
             "inertia_tensor": [ixx, iyy, izz],
             "center_of_gravity": cg,

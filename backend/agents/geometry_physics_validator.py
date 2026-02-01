@@ -142,3 +142,51 @@ def validate_geometry_physics(
         validation["is_valid"] = False
     
     return validation
+
+
+class GeometryPhysicsValidator:
+    """
+    Agent wrapper for geometry-physics compatibility checking.
+    """
+    def __init__(self):
+        self.name = "GeometryPhysicsValidator"
+    
+    def run(self, geometry: List[Dict[str, Any]], mass_props: Dict[str, Any], structural: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Validate consistency between geometry and physics analysis results.
+        """
+        logger.info("Validating geometry-physics consistency...")
+        
+        compatible = True
+        issues = []
+        
+        # 1. Geometry Check
+        if not geometry:
+            issues.append("Geometry tree is empty")
+            compatible = False
+            
+        # 2. Mass Check
+        mass = mass_props.get("total_mass_kg", 0)
+        # Relaxed check: Only warn if 0, unless it's strictly required
+        if mass < 0:
+            issues.append(f"Invalid negative mass: {mass} kg")
+            compatible = False
+            
+        # 3. Structural Check
+        # If structural analysis failed or has critical warnings
+        if structural.get("status") == "failed":
+            issues.append("Structural analysis failed")
+            compatible = False
+            
+        max_stress = structural.get("max_stress_pa", 0)
+        yield_strength = structural.get("yield_strength_pa", 275e6) # Default Al
+        
+        if max_stress > yield_strength:
+             issues.append(f"Stress {max_stress:.2e} Pa exceeds yield strength {yield_strength:.2e} Pa")
+             compatible = False
+        
+        return {
+            "compatible": compatible,
+            "issues": issues,
+            "checked_items": ["geometry_presence", "mass_validity", "structural_safety"]
+        }

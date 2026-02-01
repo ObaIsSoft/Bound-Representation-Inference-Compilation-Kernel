@@ -219,19 +219,29 @@ class ThermalAgent:
         Calculates equilibrium temperature.
         Supports Convection (Air) and Radiation (Vacuum).
         """
-        logger.info(f"Running Thermal Analysis on: {payload}")
-        
+        logger.info(f"Running Thermal Analysis on: {payload.keys()}")
         
         # 1. Robust Param Extraction
-        power_w = float(payload.get("power_watts", 10.0))
-        surface_area = float(payload.get("surface_area", 0.1)) # Default 0.1m^2
-        emissivity = float(payload.get("emissivity", 0.9)) # Anodized Aluminum
-        ambient_temp = float(payload.get("ambient_temp", 25.0)) # Celsius
+        # Support direct args or nested in 'design_parameters' (State object)
+        params = payload.get("design_parameters", payload) # Flatten or use direct
+        env = payload.get("environment", {})
+        if not env and "environment_type" not in payload:
+             # If no env dict and no env type strings, check if payload IS params
+             pass
         
-        # Environment Detection
-        env_type = payload.get("environment_type", "GROUND")
-        h = float(payload.get("heat_transfer_coeff", 10.0)) # Convection coeff
+        # Extract Core Vars
+        power_w = float(params.get("power_watts", payload.get("power_watts", 10.0)))
+        params_w = params.get("POWER_REQ_W") # Check upper case aliases from orchestrator
+        if params_w: power_w = float(params_w)
         
+        surface_area = float(params.get("surface_area", payload.get("surface_area", 0.1))) 
+        emissivity = float(params.get("emissivity", payload.get("emissivity", 0.9))) 
+        
+        # Environment
+        ambient_temp = float(env.get("temperature", payload.get("ambient_temp", 25.0)))
+        env_type = env.get("type", payload.get("environment_type", "GROUND"))
+        h = float(env.get("heat_transfer_coeff", payload.get("heat_transfer_coeff", 10.0)))
+
         logs = []
         
         # 1. Heuristic Branch (Physics Equation)

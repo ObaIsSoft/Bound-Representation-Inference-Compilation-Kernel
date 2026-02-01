@@ -1,6 +1,7 @@
 from typing import Dict, Any, List, Optional
 import logging
 from llm.provider import LLMProvider
+from backend.agent_registry import registry
 
 logger = logging.getLogger(__name__)
 
@@ -52,25 +53,30 @@ class DocumentAgent:
         
         # 1. Material Selection (MaterialAgent)
         try:
-            from agents.material_agent import MaterialAgent
-            material_agent = MaterialAgent()
-            material_result = material_agent.run({
-                "regime": env.get("regime", "GROUND"),
-                "temp_c": env.get("temp_c", 20),
-                "requirements": params
-            })
+            material_agent = registry.get_agent("MaterialAgent")
+            if not material_agent:
+                raise ValueError("MaterialAgent not found in registry")
+                
+            # Fix: MaterialAgent.run expects (material_name: str, temperature: float)
+            target_material = params.get("material_preference", "Titanium")
+            material_result = material_agent.run(
+                material_name=target_material,
+                temperature=env.get("temp_c", 20)
+            )
             data["materials"] = material_result
             logger.info("MaterialAgent: Gathered material recommendations")
         except Exception as e:
             logger.warning(f"MaterialAgent failed: {e}")
-            data["materials"] = {"primary_material": "Aluminum 6061-T6", "justification": "Standard engineering material"}
+            data["materials"] = {"primary_material": "Titanium", "justification": "Standard engineering material"}
         
         # 2. Manufacturing Analysis (ManufacturingAgent)
         try:
-            from agents.manufacturing_agent import ManufacturingAgent
-            mfg_agent = ManufacturingAgent()
+            mfg_agent = registry.get_agent("ManufacturingAgent")
+            if not mfg_agent:
+                 raise ValueError("ManufacturingAgent not found in registry")
+                 
             # Extract material for explicit passing
-            primary_material = data["materials"].get("primary_material", "Aluminum")
+            primary_material = data["materials"].get("primary_material", "Titanium")
             mfg_result = mfg_agent.run(
                 geometry_tree=[], # No geometry in planning phase
                 material=primary_material
@@ -83,8 +89,10 @@ class DocumentAgent:
         
         # 3. Cost Estimation (CostAgent)
         try:
-            from agents.cost_agent import CostAgent
-            cost_agent = CostAgent()
+            cost_agent = registry.get_agent("CostAgent")
+            if not cost_agent:
+                 raise ValueError("CostAgent not found in registry")
+                 
             cost_result = cost_agent.run({
                 "materials": data.get("materials", {}),
                 "manufacturing": data.get("manufacturing", {}),
@@ -98,8 +106,10 @@ class DocumentAgent:
         
         # 4. Design Quality & Risk Assessment (DesignQualityAgent)
         try:
-            from agents.design_quality_agent import DesignQualityAgent
-            quality_agent = DesignQualityAgent()
+            quality_agent = registry.get_agent("DesignQualityAgent")
+            if not quality_agent:
+                raise ValueError("DesignQualityAgent not found in registry")
+                
             quality_result = quality_agent.run({
                 "design_type": intent,
                 "requirements": params,
@@ -200,7 +210,7 @@ Design and development of {intent} for {env.get('regime', 'STANDARD')} environme
 ## 2. Materials & Manufacturing
 
 ### Selected Materials (MaterialAgent)
-- **Primary Material:** {materials.get('primary_material', 'Aluminum 6061-T6')}
+- **Primary Material:** {materials.get('primary_material', 'Titanium')}
 - **Justification:** {materials.get('justification', 'Standard engineering material')}
 
 ### Manufacturing Processes (ManufacturingAgent)

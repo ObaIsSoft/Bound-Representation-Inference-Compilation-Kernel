@@ -90,3 +90,33 @@ class AgentState(TypedDict):
     material: str
     material_properties: Dict[str, Any]
     sub_agent_reports: Dict[str, Any]
+
+    # Phase 8.4 Optimization Fields (Added)
+    feasibility_report: Dict[str, Any]
+    geometry_estimate: Dict[str, Any]
+    cost_estimate: Dict[str, Any]
+    plan_review: Dict[str, Any]
+    selected_physics_agents: List[str]
+    final_documentation: Optional[str]
+    quality_review_report: Dict[str, Any]
+    fluid_analysis: Dict[str, Any]
+    plan_markdown: Optional[str]
+    generated_code: Optional[str]
+    sourced_components: List[Any]
+    manufacturing_plan: Dict[str, Any]
+    verification_report: Dict[str, Any]
+    deployment_plan: Dict[str, Any]
+    swarm_metrics: Dict[str, Any]
+    swarm_config: Dict[str, Any]
+    lattice_geometry: List[Any]
+    lattice_metadata: Dict[str, Any]
+    gcode: str
+    slicing_metadata: Dict[str, Any]
+    
+    # Flow Control Fields
+    user_approval: Optional[Literal["approved", "rejected"]]
+    user_feedback: Optional[str]
+    approval_required: bool
+    design_exploration: Dict[str, Any]
+    surrogate_validation: Dict[str, Any]
+    llm_provider: Optional[str]

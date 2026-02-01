@@ -27,8 +27,15 @@ class SupabaseClient:
 
         if self.url and self.key:
             try:
-                from supabase import create_client, Client
-                self.client: Client = create_client(self.url, self.key)
+                from supabase import create_client, Client, ClientOptions
+                self.client: Client = create_client(
+                    self.url, 
+                    self.key,
+                    options=ClientOptions(
+                        postgrest_client_timeout=10, 
+                        storage_client_timeout=10
+                    )
+                )
                 self.enabled = True
                 logger.info("Supabase Client Initialized")
             except ImportError:

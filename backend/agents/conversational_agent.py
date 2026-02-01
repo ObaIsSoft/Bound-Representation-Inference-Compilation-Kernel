@@ -110,7 +110,8 @@ class ConversationalAgent:
         else:
              # De-Mocking: Fetch default from factory
              from llm.factory import get_llm_provider
-             self.provider = get_llm_provider()
+             # Force Groq preference if available for Mega Stress Test stability
+             self.provider = get_llm_provider(preferred="groq")
              
         self.discovery = DiscoveryManager()
         
@@ -173,11 +174,15 @@ Classify the LATEST user input. If it's a continuation of a design discussion, u
 """
         
         try:
+            import time
+            t_start = time.perf_counter()
             structured_resp = self.provider.generate_json(
                 prompt=intent_prompt, 
                 schema=schema,
                 system_prompt="You are an intent classifier. Use the conversation history to understand context."
             )
+            t_dur = (time.perf_counter() - t_start) * 1000
+            logs.append(f"[LLM-LATENCY] Intent Classification took {t_dur:.2f}ms")
             intent = structured_resp.get("intent", "unknown")
             logs.append(f"[CONVERSATIONAL] Intent: {intent}")
             
@@ -279,4 +284,3 @@ Respond helpfully, taking the full conversation history into account. Do NOT ask
             return {"sdf": val, "inside_material": val < 0}
             
         return {"error": "Unknown Query"}
-

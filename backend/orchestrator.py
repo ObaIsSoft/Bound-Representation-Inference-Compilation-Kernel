@@ -3,65 +3,11 @@ from langgraph.graph import StateGraph, END
 from schema import AgentState
 from agents.environment_agent import EnvironmentAgent
 
-from agents.manufacturing_agent import ManufacturingAgent
-from agents.geometry_agent import GeometryAgent
-from agents.physics_agent import PhysicsAgent
-from agents.material_agent import MaterialAgent
-from agents.chemistry_agent import ChemistryAgent
-# Critics
+# Critics (Global - Keep for now as they are used in global scope instantiation below)
+# Ideally these should also be lazy, but for Phase 8.4 we focus on the 64 main agents.
 from agents.critics.SurrogateCritic import SurrogateCritic
 from agents.critics.PhysicsCritic import PhysicsCritic
-from agents.thermal_agent import ThermalAgent
-from agents.structural_agent import StructuralAgent
-from agents.electronics_agent import ElectronicsAgent
-from agents.slicer_agent import SlicerAgent
-from agents.designer_agent import DesignerAgent
-from agents.validator_agent import ValidatorAgent
-from agents.cost_agent import CostAgent
-from agents.control_agent import ControlAgent
-from agents.generic_agent import GenericAgent
-from agents.training_agent import TrainingAgent
-from agents.optimization_agent import OptimizationAgent
-from agents.lattice_synthesis_agent import LatticeSynthesisAgent
-# Real Agents
-from agents.mass_properties_agent import MassPropertiesAgent
-from agents.dfm_agent import DfmAgent
-from agents.gnc_agent import GncAgent
-from agents.gnc_agent import GncAgent
-from agents.codegen_agent import CodegenAgent
-# from agents.surrogate_agent import SurrogateAgent # DEPRECATED
-from agents.document_agent import DocumentAgent
-from agents.compliance_agent import ComplianceAgent
-from agents.network_agent import NetworkAgent
-from agents.manifold_agent import ManifoldAgent
-from agents.multi_mode_agent import MultiModeAgent
-from agents.mitigation_agent import MitigationAgent
-from agents.topological_agent import TopologicalAgent
-from agents.tolerance_agent import ToleranceAgent
-from agents.design_exploration_agent import DesignExplorationAgent
-from agents.shell_agent import ShellAgent
-from agents.vhil_agent import VhilAgent
-from agents.design_quality_agent import DesignQualityAgent
-from agents.mep_agent import MepAgent
-from agents.zoning_agent import ZoningAgent
-from agents.diagnostic_agent import DiagnosticAgent
-from agents.doctor_agent import DoctorAgent
-from agents.verification_agent import VerificationAgent
-from agents.visual_validator_agent import VisualValidatorAgent
-from agents.standards_agent import StandardsAgent
-from agents.component_agent import ComponentAgent
-from agents.asset_sourcing_agent import AssetSourcingAgent
-from agents.template_design_agent import TemplateDesignAgent
-from agents.conversational_agent import ConversationalAgent
-from agents.devops_agent import DevOpsAgent
-from agents.remote_agent import RemoteAgent
-from agents.pvc_agent import PvcAgent
-from agents.nexus_agent import NexusAgent
 from agents.stt_agent import get_stt_agent
-from agents.review_agent import ReviewAgent
-from agents.construction_agent import ConstructionAgent
-from agents.stt_agent import STTAgent
-from agents.swarm_manager import SwarmManager
 
 # Import new node functions for 8-phase architecture
 from new_nodes import (
@@ -95,6 +41,7 @@ from new_nodes import (
     final_document_node,
     final_review_node
 )
+
 
 # Import conditional gates
 from conditional_gates import (
@@ -172,9 +119,13 @@ def dreamer_node(state: AgentState) -> Dict[str, Any]:
     raw_intent = state.get("user_intent", "")
     current_params = state.get("design_parameters", {})
     
-    # Use Registry Instance (Persistent) instead of new one
-    registry = get_agent_registry()
-    agent = registry["conversational"]
+    # Use Registry Instance (Persistent) using safe accessor
+    from agent_registry import registry
+    agent = registry.get_agent("ConversationalAgent")
+    
+    if not agent:
+        logger.error("ConversationalAgent not found in registry!")
+        return {"error": "Agent missing"}
     
     # Call the agent to extract entities/intent
     result = agent.run({
@@ -370,6 +321,8 @@ async def ldp_node(state: AgentState) -> Dict[str, Any]:
 
 def geometry_node(state: AgentState) -> Dict[str, Any]:
     # ... as before ...
+    from agents.geometry_agent import GeometryAgent
+
     intent = state.get("user_intent", "")
     params = state.get("design_parameters", {})
     env = state.get("environment", {})
@@ -749,7 +702,8 @@ def optimization_node(state: AgentState) -> Dict[str, Any]:
     
     return {
         "iteration_count": count,
-        "logs": result.get("mutations", [])
+        "logs": result.get("mutations", []),
+        "design_parameters": new_params
     }
 
 def sourcing_node(state: AgentState) -> Dict[str, Any]:

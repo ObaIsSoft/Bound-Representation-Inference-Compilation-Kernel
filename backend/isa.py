@@ -492,19 +492,22 @@ class PhysicalValue(BaseModel):
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     significant_figures: int = 4
     
-    @validator('magnitude')
+    @field_validator('magnitude')
+    @classmethod
     def validate_magnitude(cls, v):
         if not math.isfinite(v):
             raise ValueError(f"Magnitude must be finite, got {v}")
         return v
     
-    @validator('tolerance')
+    @field_validator('tolerance')
+    @classmethod
     def validate_tolerance(cls, v):
         if v < 0:
             raise ValueError(f"Tolerance must be non-negative, got {v}")
         return v
     
-    @validator('validation_score')
+    @field_validator('validation_score')
+    @classmethod
     def validate_score(cls, v):
         if not (0.0 <= v <= 1.0):
             raise ValueError(f"Validation score must be between 0 and 1, got {v}")

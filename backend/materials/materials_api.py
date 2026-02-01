@@ -409,13 +409,27 @@ class ThermoLibrary:
         if cache_key in self._cache:
             return self._cache[cache_key]
         
+        # Timeout handling for Thermo library instantiation (can hang on web lookups)
+        import signal
+        
+        def handler(signum, frame):
+            raise TimeoutError("Thermo lookup timed out")
+
         try:
-            # Try to instantiate the Chemical
-            # This can be slow on first call
-            c = self.thermo.Chemical(name, T=temperature, P=101325)
-            self._cache[cache_key] = c
-            return c
-        except Exception as e:
+            # Set timeout of 5 seconds
+            signal.signal(signal.SIGALRM, handler)
+            signal.alarm(5)
+            
+            try:
+                # Try to instantiate the Chemical
+                c = self.thermo.Chemical(name, T=temperature, P=101325)
+                self._cache[cache_key] = c
+                return c
+            finally:
+                # Disable alarm
+                signal.alarm(0)
+                
+        except (Exception, TimeoutError) as e:
             logger.debug(f"Could not create Chemical for '{name}': {e}")
             return None
             
@@ -506,7 +520,7 @@ class UnifiedMaterialsAPI:
         
         # Common Name -> Formula Mapping
         NAME_TO_FORMULA = {
-            "aluminum": "Al", "aluminium": "Al", "titanium": "Ti",
+            "titanium": "Ti",
             "steel": "Fe", "iron": "Fe", "copper": "Cu", "gold": "Au",
             "silver": "Ag", "silicon": "Si",
         }
@@ -598,7 +612,7 @@ class UnifiedMaterialsAPI:
             
         # Map common names to symbols
         NAME_TO_FORMULA = {
-            "aluminum": "Al", "aluminium": "Al", "titanium": "Ti", 
+            "titanium": "Ti",  
             "copper": "Cu", "gold": "Au", "silver": "Ag", 
             "silicon": "Si", "iron": "Fe", "carbon": "C", 
             "oxygen": "O", "steel": "Fe" # Approx
@@ -695,6 +709,10 @@ class UnifiedMaterialsAPI:
 
         # 1. Search for material data in Remote APIs
         candidates = self.find_material(material)
+        
+        # [TESTING FALLBACK] Removed per user request
+        # TODO: In the future, ensure NO fallbacks exist. Fix API access or data sourcing instead.
+            
         if not candidates:
              if "steel" in material.lower():
                  candidates = self.find_material("Fe")

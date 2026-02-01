@@ -25,24 +25,23 @@ class MaterialAgent:
             self.chemistry_oracle = None
             self.has_oracles = False
             
-        # Initialize Neural Brain (Tier 3.5 Deep Evolution)
+        # Initialize Neural Brain (Singleton Access via Kernel)
+        # We leverage the PhysicsKernel's pre-loaded specific intelligence rather than creating a duplicate.
+        self.brain = None
+        self.has_brain = False
+        
         try:
-            # Try absolute import first (standard for run from root)
-            try:
-                from backend.models.material_net import MaterialNet
-            except ImportError:
-                # Fallback to relative import (if run as module)
-                from ...models.material_net import MaterialNet
-                
-            self.brain = MaterialNet(input_size=4, hidden_size=16, output_size=2)
-            self.model_path = "data/material_net.weights.json"
-            self.brain.load(self.model_path)
-            self.has_brain = True
-        except ImportError as e:
-            self.has_brain = False
-            print(f"MaterialNet not found: {e}")
-            # Ensure self.brain exists to avoid AttributeError in run() even if it is None
-            self.brain = None
+            surrogates = self.physics.intelligence.get("surrogate_manager")
+            if surrogates:
+                # Access the "material_net" surrogate if loaded
+                mat_net_data = surrogates.surrogates.get("material_net")
+                if mat_net_data and mat_net_data.get("model"):
+                    self.brain = mat_net_data["model"]
+                    self.has_brain = True
+                    # logger.info("MaterialAgent linked to Global Kernel Brain") 
+        except Exception as e:
+            # logger.warning(f"Could not link to Kernel Brain: {e}")
+            pass
     
     def run(self, material_name: str, temperature: float = 20.0) -> Dict[str, Any]:
         """

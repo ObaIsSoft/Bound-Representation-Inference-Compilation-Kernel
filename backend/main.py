@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from datetime import datetime
 import time
 import numpy as np
+from contextlib import asynccontextmanager
 
 # Load environment variables FIRST before any other imports
 from dotenv import load_dotenv
@@ -27,16 +28,19 @@ from controllers.handshake_controller import HandshakeController
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="BRICK OS API", version="0.1.0")
-
 # --- Phase 10: Global Agent Registry ---
 from agent_registry import registry as global_registry
 
-@app.on_event("startup")
-async def startup_event():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     logger.info("Starting BRICK OS API...")
     global_registry.initialize()
     logger.info("Global Agent Registry active.")
+    yield
+    # Shutdown logic if needed (e.g. closing db connections)
+    logger.info("BRICK OS API Shutting down...")
+
+app = FastAPI(title="BRICK OS API", version="0.1.0", lifespan=lifespan)
 
 # --- Project Manager Init ---
 from managers.project_manager import ProjectManager

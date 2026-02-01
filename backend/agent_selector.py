@@ -35,6 +35,9 @@ def select_physics_agents(state: Dict[str, Any]) -> List[str]:
     # ALWAYS run these core agents (every design needs material/chemistry/thermal/physics)
     selected = ["material", "chemistry", "thermal", "physics"]
     
+    print(f"DEBUG SELECTOR: Intent={intent}")
+    print(f"DEBUG SELECTOR: Core={selected}")
+    
     # === ELECTRONICS DETECTION ===
     electronics_keywords = [
         "POWER", "ELECTRIC", "BATTERY", "CIRCUIT", "LED", "MOTOR",

@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate } from 'r
 import BootSequence from './components/ui/BootSequence';
 import Landing from './pages/Landing';
 import RequirementsGatheringPage from './pages/RequirementsGatheringPage';
+import PlanningPage from './pages/PlanningPage';
 import Workspace from './pages/Workspace';
 import { useTheme } from './contexts/ThemeContext';
 import { SidebarProvider } from './contexts/SidebarContext';
@@ -34,6 +35,7 @@ const AppContent = () => {
                     <Route path="/" element={<Navigate to="/landing" replace />} />
                     <Route path="/landing" element={<Landing />} />
                     <Route path="/requirements" element={<RequirementsGatheringPage />} />
+                    <Route path="/planning" element={<PlanningPage />} />
                     <Route path="/workspace" element={<Workspace />} />
                 </Routes>
             </Router>

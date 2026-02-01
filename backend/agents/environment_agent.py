@@ -136,7 +136,7 @@ class EnvironmentAgent:
         # --- Standard Earth ---
         if re.search(r'\b(space|zero-g|orbit|vacuum)\b', intent_lower):
             return self._asteroid_environment() # Generic Space
-        if re.search(r'\b(aero|air|sky|flight|cloud)\b', intent_lower):
+        if re.search(r'\b(aero|air|sky|flight|cloud|rotor|blade|propeller)\b', intent_lower):
             return self._aero_environment()
         if re.search(r'\b(naval|water|lake|river|sea)\b', intent_lower):
             return self._naval_environment()
@@ -429,3 +429,9 @@ class EnvironmentAgent:
             domain="FLUID",
             params=params
         )
+
+    def detect_environment(self, user_intent: str) -> Dict[str, Any]:
+        """
+        Alias for run() to match main.py interface.
+        """
+        return self.run(user_intent)

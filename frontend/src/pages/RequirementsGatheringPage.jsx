@@ -82,6 +82,15 @@ export default function RequirementsGatheringPage() {
             setAgentMessages([...newMessages, `Agent: ${data.response} `]);
             setIsTyping(false);
 
+            // Update Feasibility State (Live Agent Feedback)
+            if (data.feasibility) {
+                setRequirements(prev => ({
+                    ...prev,
+                    environment: data.feasibility.environment,
+                    feasibility: data.feasibility
+                }));
+            }
+
             // Check if conversation is complete
             if (data.requirements_complete) {
                 setRequirements(data.requirements || {});
@@ -94,7 +103,14 @@ export default function RequirementsGatheringPage() {
                     // Artifacts already generated - go straight to planning
                     setPlanArtifacts(artifacts);
                     setTimeout(() => {
-                        setPhase('planning');
+                        navigate('/planning', {
+                            state: {
+                                planArtifacts: artifacts,
+                                requirements: data.requirements,
+                                userIntent: userIntent,
+                                conversationId: data.conversation_id
+                            }
+                        });
                     }, 2000);
                 } else {
                     // Show summary and generate plan
@@ -140,7 +156,14 @@ export default function RequirementsGatheringPage() {
 
             // Transition to planning phase
             setTimeout(() => {
-                setPhase('planning');
+                navigate('/planning', {
+                    state: {
+                        planArtifacts: data.artifacts || [],
+                        requirements: requirements,
+                        userIntent: userIntent,
+                        conversationId: conversationId
+                    }
+                });
                 setPlanGenerating(false);
             }, 1000);
         } catch (error) {
@@ -186,6 +209,45 @@ export default function RequirementsGatheringPage() {
                 {/* Phase 1: Gathering */}
                 {phase === 'gathering' && (
                     <div className="max-w-3xl mx-auto">
+
+                        {/* Agents Status Panel (Live Feasibility) - Glassmorphism & Compact */}
+                        <div className="grid grid-cols-3 gap-3 mb-4 backdrop-blur-md bg-opacity-20 rounded-lg p-2"
+                            style={{
+                                backgroundColor: theme.colors.bg.secondary + '40', // Low opacity
+                                border: `1px solid ${theme.colors.border.primary}40`
+                            }}>
+
+                            {/* Environment Agent */}
+                            <div className="p-2 rounded border flex flex-col items-center justify-center text-center"
+                                style={{ borderColor: theme.colors.border.primary + '40', backgroundColor: 'transparent' }}>
+                                <span className="text-xs font-bold uppercase tracking-wider mb-1" style={{ color: theme.colors.text.secondary }}>Environment</span>
+                                <span className="text-sm font-bold" style={{ color: theme.colors.accent.primary }}>
+                                    {requirements.environment?.type || "DETECTING..."}
+                                </span>
+                            </div>
+
+                            {/* Feasibility Agent */}
+                            <div className="p-2 rounded border flex flex-col items-center justify-center text-center"
+                                style={{ borderColor: theme.colors.border.primary + '40', backgroundColor: 'transparent' }}>
+                                <span className="text-xs font-bold uppercase tracking-wider mb-1" style={{ color: theme.colors.text.secondary }}>Feasibility</span>
+                                <div className="flex items-center gap-1.5">
+                                    <div className={`w-2 h-2 rounded-full ${(!requirements.feasibility?.geometry || requirements.feasibility.geometry.feasible) ? 'bg-green-500' : 'bg-red-500'}`}></div>
+                                    <span className="text-sm font-bold" style={{ color: theme.colors.text.primary }}>
+                                        {(!requirements.feasibility?.geometry || requirements.feasibility.geometry.feasible) ? "Possible" : "Impossible"}
+                                    </span>
+                                </div>
+                            </div>
+
+                            {/* Cost Agent */}
+                            <div className="p-2 rounded border flex flex-col items-center justify-center text-center"
+                                style={{ borderColor: theme.colors.border.primary + '40', backgroundColor: 'transparent' }}>
+                                <span className="text-xs font-bold uppercase tracking-wider mb-1" style={{ color: theme.colors.text.secondary }}>Est. Cost</span>
+                                <span className="text-sm font-bold" style={{ color: theme.colors.text.primary }}>
+                                    ${requirements.feasibility?.cost?.estimated_cost_usd || "0"}
+                                </span>
+                            </div>
+                        </div>
+
                         {/* User Intent Display */}
                         <div
                             className="mb-6 p-4 rounded-lg"

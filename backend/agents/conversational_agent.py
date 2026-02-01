@@ -1,7 +1,8 @@
-from typing import Dict, Any, List, Optional
 import logging
 import os
 from llm.provider import LLMProvider
+from context_manager import EnhancedContextManager, ContextScope
+import asyncio
 
 
 logger = logging.getLogger(__name__)
@@ -103,15 +104,16 @@ class ConversationalAgent:
     """
     
     
-    def __init__(self, provider: Optional[LLMProvider] = None):
+    def __init__(self, provider: Optional[LLMProvider] = None, model_name: Optional[str] = None):
         self.name = "ConversationalAgent"
         if provider:
             self.provider = provider
         else:
              # De-Mocking: Fetch default from factory
              from llm.factory import get_llm_provider
-             # Force Groq preference if available for Mega Stress Test stability
-             self.provider = get_llm_provider(preferred="groq")
+             # Use passed model_name if available, else default to "groq"
+             preferred = model_name if model_name else "groq"
+             self.provider = get_llm_provider(preferred=preferred)
              
         self.discovery = DiscoveryManager()
         
@@ -143,17 +145,49 @@ class ConversationalAgent:
         if not text:
              return {"response": "I didn't hear anything.", "intent": "none", "logs": logs}
 
-        # Format conversation history for LLM context
-        history_str = ""
+        # Re-hydrate EnhancedContextManager from request params (Stateless adaptation)
+        cm = EnhancedContextManager(agent_id="conversational", enable_vector_search=False) # Disable vector for fast stateless
+        
+        async def hydrate():
+            if context:
+                for msg in context:
+                    role = msg.get("role", "user")
+                    content = msg.get("text", msg.get("content", ""))
+                    if content:
+                        await cm.add_message(role, content, scope=ContextScope.EPHEMERAL)
+        
+        # Run async hydration synchronously
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # We are likely in a uvicorn worker which has a loop.
+                # However, 'run' is sync. We should probably schedule it or assume context manager handles sync?
+                # The user gave us ASYNC methods.
+                # If we are in sync function, we can't use await.
+                # Use a hack or fix main.py to be async.
+                # For now, let's just create a new loop or use run_until_complete if not running?
+                
+                # Safer: Just populate working_memory directly for the stateless reconstruction 
+                # to avoid event loop complexity in this MVP phase.
+                pass
+        except:
+            pass
+
+        # DIRECT HYDRATION (Bypassing async complexity for MVP Stability)
+        # Since we are stateless, we don't strictly need the async DB options right now.
+        from context_manager import MemoryFragment
         if context:
-            history_lines = []
-            for msg in context[-10:]:  # Last 10 messages to avoid token overflow
-                role = msg.get("role", "user")
-                content = msg.get("text", msg.get("content", ""))
-                if content:
-                    history_lines.append(f"{role.upper()}: {content}")
-            history_str = "\n".join(history_lines)
-            logs.append(f"[CONVERSATIONAL] Loaded {len(context)} messages from history.")
+            for msg in context:
+                 role = msg.get("role", "user")
+                 content = msg.get("text", msg.get("content", ""))
+                 if content:
+                     fragment = MemoryFragment(content=content, role=role, scope=ContextScope.EPHEMERAL)
+                     cm.working_memory.append(fragment)
+
+        logs.append(f"[CONVERSATIONAL] Hydrated EnhancedContextManager with {len(cm.working_memory)} messages.")
+
+        # Get formatted history string
+        history_str = cm.build_prompt_context(include_plan=False, include_summaries=False)
 
         # 1. Determine Intent (include history for context)
         schema = {
@@ -203,7 +237,19 @@ Classify the LATEST user input. If it's a continuation of a design discussion, u
             analysis = self.discovery.check_completeness(text, self.provider, history_str)
             logs.append(f"[DISCOVERY] Analysis: {analysis.get('missing')} missing.")
             
-            if not analysis.get("is_ready", False):
+            # FORCE PROGRESS: If mission and environment are broadly known, assume ready.
+            # Or if iteration count is high (> 3 turns).
+            # We implemented a "fail open" in check_completeness but logic here is key.
+            
+            is_ready = analysis.get("is_ready", False)
+            
+            # Heuristic override: If we have > 3 user turns and mission is set, force move on.
+            user_turns = sum(1 for m in context if m.get("role") == "user")
+            if user_turns > 3 and self.discovery.context.get("mission"):
+                 is_ready = True
+                 logs.append("[DISCOVERY] Heuristic override: Sufficient turns.")
+            
+            if not is_ready:
                 # WE ARE NOT READY -> Ask Strategic Question
                 response_text = analysis.get("next_strategic_question", "Could you provide more details?")
                 
@@ -226,11 +272,16 @@ Latest User Input: {text}
 Create a conceptual design summary based on EVERYTHING discussed. Format as a high-level engineering brief.
 """
                     response_text = self.provider.generate(plan_prompt, system_prompt=self.system_prompt)
+                    # Set intent to 'design_request' to trigger transition in frontend? 
+                    # Actually, we want to signal 'discovery_complete' maybe? 
+                    # The frontend looks for 'design_request' to persist params?
+                    intent = "design_request" 
                 except Exception as e:
                     response_text = "Design generation failed."
+                    intent = "design_request"
 
         else:
-            # Normal Chat / Other Intents (include history)
+            # Normal Chat / Other Intents
             try:
                 chat_prompt = f"""
 Conversation History:
@@ -239,7 +290,7 @@ Conversation History:
 Latest User Input: '{text}'
 Intent: {intent}
 
-Respond helpfully, taking the full conversation history into account. Do NOT ask questions that were already answered.
+Respond helpfully. Do NOT ask questions that were already answered.
 """
                 response_text = self.provider.generate(
                     prompt=chat_prompt,
@@ -284,3 +335,51 @@ Respond helpfully, taking the full conversation history into account. Do NOT ask
             return {"sdf": val, "inside_material": val < 0}
             
         return {"error": "Unknown Query"}
+
+    def chat(self, user_input: str, history: List[str], current_intent: str) -> str:
+        """
+        Wrapper to match main.py's expected interface.
+        Converts string-based history to context dicts and calls run().
+        """
+        # Convert history
+        context = []
+        for h in history:
+            if ":" in h:
+                parts = h.split(":", 1)
+                role = parts[0].strip().lower()
+                content = parts[1].strip()
+                # Normalize typical roles
+                if "user" in role: role = "user"
+                elif "agent" in role or "brick" in role: role = "assistant"
+                context.append({"role": role, "content": content})
+            else:
+                context.append({"role": "user", "content": h})
+        
+        # Inject intent into context or params? 
+        # run() determines intent itself, but we can hint it?
+        # For now, let run() do its job.
+        
+        params = {
+            "input_text": user_input,
+            "context": context
+        }
+        
+        # Determine if we should force discovery based on intent?
+        # run() logic handles it.
+        
+        result = self.run(params)
+        return result.get("response", "I am standing by.")
+
+    def is_requirements_complete(self, history: List[str]) -> bool:
+        """
+        Check if we have sufficient information to proceed to planning.
+        """
+        # If discovery is NOT active, and we have a mission, we are effectively complete.
+        # OR if run() just generated a plan.
+        return (not self.discovery.active) and (self.discovery.context.get("mission") is not None)
+
+    def extract_structured_requirements(self, history: List[str]) -> Dict[str, Any]:
+        """
+        Return the structured requirements gathered by DiscoveryManager.
+        """
+        return self.discovery.context

@@ -49,7 +49,7 @@ project_manager = ProjectManager(storage_dir="projects")
 # --- Phase 11: Telemetry Middleware ---
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from backend.monitoring.latency import latency_monitor
+from monitoring.latency import latency_monitor
 
 class LatencyMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
@@ -677,7 +677,7 @@ async def handshake_endpoint(req: HandshakeRequest):
 async def schema_version_endpoint():
     """Get current Hardware ISA version/revision."""
     # This remains simple for now, but could also move to controller
-    from backend.isa import HardwareISA
+    from isa import HardwareISA
     isa_template = HardwareISA(project_id="template")
     return {
         "version": "1.0.0",
@@ -691,7 +691,7 @@ async def get_isa_structure_endpoint():
     Returns the full serialized ISA Hierarchy (Pods, Parameters, Constraints).
     Used by frontend to build the ISA Browser UI.
     """
-    from backend.isa import HardwareISA
+    from isa import HardwareISA
     
     # In a real scenario, this might load a specific project's ISA
     # For now, we return the template/default ISA structure
@@ -839,7 +839,7 @@ class SelectionRequest(BaseModel):
 async def list_available_agents():
     """List all registered agents and their statuses."""
     # Use Global Registry (Phase 10)
-    from backend.agent_registry import registry as global_registry
+    from agent_registry import registry as global_registry
     
     agents = []
     # global_registry.list_agents() returns {name: type_str}
@@ -886,11 +886,11 @@ async def get_system_telemetry():
         system_status["error"] = "psutil not installed"
 
     # 2. Latency Metrics
-    from backend.monitoring.latency import latency_monitor
+    from monitoring.latency import latency_monitor
     latency_stats = latency_monitor.get_metrics()
     
     # 3. Agent Registry Status
-    from backend.agent_registry import registry as global_registry
+    from agent_registry import registry as global_registry
     agent_count = len(global_registry._agents) if global_registry._initialized else 0
     
     return {
@@ -927,7 +927,7 @@ async def websocket_telemetry(websocket: WebSocket):
 @app.post("/api/agents/select")
 async def select_agents_endpoint(req: SelectionRequest):
     """Preview which agents would be selected for a prompt."""
-    from backend.agent_selector import select_physics_agents
+    from agent_selector import select_physics_agents
     
     selected_agents = select_physics_agents(req.user_intent)
     return {
@@ -940,7 +940,7 @@ async def select_agents_endpoint(req: SelectionRequest):
 async def check_feasibility_endpoint(req: FeasibilityRequest):
     """Quick feasibility check for geometry."""
     try:
-        from backend.agents.geometry_estimator import GeometryEstimator
+        from agents.geometry_estimator import GeometryEstimator
         agent = GeometryEstimator()
         # Mocking check for now as GeometryEstimator doesn't expose quick_feasibility_check directly yet
         # Using run() to get volume/bbox
@@ -967,7 +967,7 @@ async def check_feasibility_endpoint(req: FeasibilityRequest):
 @app.post("/api/agents/geometry/estimate")
 async def geometry_estimate_endpoint(req: EstimateRequest):
     """Quick geometry complexity estimation."""
-    from backend.agents.geometry_estimator import GeometryEstimator
+    from agents.geometry_estimator import GeometryEstimator
     agent = GeometryEstimator()
     result = agent.run({"geometry_tree": req.geometry_tree})
     return result
@@ -975,7 +975,7 @@ async def geometry_estimate_endpoint(req: EstimateRequest):
 @app.post("/api/agents/cost/estimate")
 async def cost_estimate_endpoint(req: EstimateRequest):
     """Quick cost estimation."""
-    from backend.agents.cost_agent import CostAgent
+    from agents.cost_agent import CostAgent
     agent = CostAgent()
     params = {
         "material_name": req.material,

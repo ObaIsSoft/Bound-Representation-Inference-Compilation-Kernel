@@ -344,7 +344,7 @@ class OpenSCADAgent:
         try:
             from .openscad_parser import OpenSCADParser
         except ImportError:
-            from backend.agents.openscad_parser import OpenSCADParser
+            from agents.openscad_parser import OpenSCADParser
         import concurrent.futures
         import time
         
@@ -610,7 +610,7 @@ class OpenSCADAgent:
         try:
             from .openscad_parser import NodeType
         except ImportError:
-            from backend.agents.openscad_parser import NodeType
+            from agents.openscad_parser import NodeType
         
         # For primitives, just return the code
         if node.node_type == NodeType.PRIMITIVE:

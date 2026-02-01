@@ -5,11 +5,11 @@ from typing import List, Dict, Any, Optional
 from sklearn.decomposition import PCA
 from sklearn.neighbors import NearestNeighbors
 
-from backend.agents.evolution import GeometryGenome
+from agents.evolution import GeometryGenome
 # Reuse extraction logic or import it. Ideally we should have a shared FeatureExtractor.
 # For now, we reimplement a lightweight version or import from PINN if possible.
 # Let's verify if we can import MultiPhysicsPINN easily. Yes.
-from backend.agents.surrogate.pinn_model import MultiPhysicsPINN
+from agents.surrogate.pinn_model import MultiPhysicsPINN
 
 logger = logging.getLogger(__name__)
 

@@ -3,7 +3,7 @@ from typing import Dict, Any, List, Optional
 import logging
 import os
 import json
-from backend.llm.provider import LLMProvider
+from llm.provider import LLMProvider
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +16,7 @@ class DevOpsAgent:
         self.name = "DevOpsAgent"
         self.llm_provider = llm_provider
         try:
-            from backend.config.devops_config import DOCKER_AUDIT_RULES, CI_CD_TEMPLATE, HEALTH_CHECK_TIMEOUT
+            from config.devops_config import DOCKER_AUDIT_RULES, CI_CD_TEMPLATE, HEALTH_CHECK_TIMEOUT
             self.audit_rules = DOCKER_AUDIT_RULES
             self.pipeline_template = CI_CD_TEMPLATE
             self.timeout = HEALTH_CHECK_TIMEOUT

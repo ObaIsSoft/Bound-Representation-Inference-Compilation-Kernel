@@ -1,5 +1,5 @@
 from typing import Dict, Any
-from backend.physics import get_physics_kernel
+from physics import get_physics_kernel
 
 class MaterialAgent:
     """

@@ -18,7 +18,7 @@ class ToleranceAgent:
         self.name = "ToleranceAgent"
         # Load standards from config
         try:
-            from backend.config.manufacturing_standards import HOLE_BASIS_FITS, PROCESS_CAPABILITIES, get_recommended_fit
+            from config.manufacturing_standards import HOLE_BASIS_FITS, PROCESS_CAPABILITIES, get_recommended_fit
             self.hole_basis_fits = HOLE_BASIS_FITS
             self.process_capabilities = PROCESS_CAPABILITIES
             self.get_fit_strategy = get_recommended_fit

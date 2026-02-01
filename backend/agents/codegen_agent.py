@@ -15,7 +15,7 @@ class CodegenAgent:
         self.provider = provider
         
         # Load Hardware Definitions
-        from backend.config.hardware_definitions import HARDWARE_DEFS, DEFAULT_TARGET
+        from config.hardware_definitions import HARDWARE_DEFS, DEFAULT_TARGET
         self.hardware_defs = HARDWARE_DEFS
         self.default_target = DEFAULT_TARGET
         

@@ -27,7 +27,7 @@ class MaterialsDomain:
         
         # Try to import materials database
         try:
-            from backend.materials.materials_db import UnifiedMaterialsAPI
+            from materials.materials_db import UnifiedMaterialsAPI
             self.materials_db = UnifiedMaterialsAPI()
             logger.info("Materials domain initialized with database connection")
         except ImportError:

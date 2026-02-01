@@ -25,7 +25,7 @@ class SwarmManager:
         self.env_agent = EnvironmentAgent()
         
         # Physics Kernel Integration
-        from backend.physics.kernel import get_physics_kernel
+        from physics.kernel import get_physics_kernel
         kernel = get_physics_kernel()
         g_default = kernel.get_constant('g')
         

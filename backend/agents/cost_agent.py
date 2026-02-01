@@ -13,7 +13,7 @@ class CostAgent:
         self.db_path = "data/materials.db"
         
         try:
-            from backend.models.cost_surrogate import CostSurrogate
+            from models.cost_surrogate import CostSurrogate
             self.surrogate = CostSurrogate()
             self.use_surrogate = True
         except ImportError:

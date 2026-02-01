@@ -11,8 +11,10 @@ interface LockedSidebarProps {
     onDocsClick: () => void;
 }
 
+import { useSidebar } from '../../contexts/SidebarContext';
+
 export default function LockedSidebar({ activePanel, onPanelChange, onNewChat, onSettingsClick, onAccountClick, onDocsClick }: LockedSidebarProps) {
-    const [isCollapsed, setIsCollapsed] = useState(false);
+    const { isCollapsed, setIsCollapsed } = useSidebar();
     const [sidebarWidth, setSidebarWidth] = useState(280); // Default width in pixels
     const [isResizing, setIsResizing] = useState(false);
     const sidebarRef = useRef<HTMLDivElement>(null);

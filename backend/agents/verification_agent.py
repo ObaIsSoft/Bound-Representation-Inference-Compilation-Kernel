@@ -16,7 +16,7 @@ class VerificationAgent:
     def __init__(self):
         self.name = "VerificationAgent"
         try:
-            from backend.config.validation_thresholds import SAFETY_THRESHOLDS, VERIFICATION_CRITERIA
+            from config.validation_thresholds import SAFETY_THRESHOLDS, VERIFICATION_CRITERIA
             self.safety_thresholds = SAFETY_THRESHOLDS
             self.criteria = VERIFICATION_CRITERIA
         except ImportError:
@@ -100,7 +100,7 @@ class VerificationAgent:
         try:
             # Try absolute import first (standard for run from root)
             try:
-                from backend.vmk_kernel import SymbolicMachiningKernel, ToolProfile, VMKInstruction
+                from vmk_kernel import SymbolicMachiningKernel, ToolProfile, VMKInstruction
             except ImportError:
                  # Fallback to direct import if backend is in path
                  from vmk_kernel import SymbolicMachiningKernel, ToolProfile, VMKInstruction

@@ -414,10 +414,10 @@ def validation_node(state: Dict[str, Any]) -> Dict[str, Any]:
     Comprehensive validation of all physics results.
     Checks if design meets requirements.
     """
-    from backend.agents.validator_agent import ValidatorAgent
-    from backend.agents.safety_agent import SafetyAgent
-    from backend.agents.performance_agent import PerformanceAgent
-    from backend.agents.sustainability_agent import SustainabilityAgent
+    from agents.validator_agent import ValidatorAgent
+    from agents.safety_agent import SafetyAgent
+    from agents.performance_agent import PerformanceAgent
+    from agents.sustainability_agent import SustainabilityAgent
     
     physics_results = state.get("sub_agent_reports", {})
     requirements = state.get("design_parameters", {})

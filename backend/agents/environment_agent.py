@@ -1,7 +1,7 @@
 from typing import Dict, Any, List
 import logging
 import re
-from backend.physics.kernel import get_physics_kernel
+from physics.kernel import get_physics_kernel
 
 logger = logging.getLogger(__name__)
 

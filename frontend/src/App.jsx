@@ -1,105 +1,49 @@
 import React, { useState } from 'react';
-import Header from './components/layout/Header';
-import ActivityBar from './components/layout/ActivityBar';
+import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import BootSequence from './components/ui/BootSequence';
-
-import SettingsPage from './components/settings/SettingsPage';
-import AccountPage from './components/settings/AccountPage';
-import SearchPanel from './components/panels/SearchPanel';
-import ComponentPanel from './components/panels/ComponentPanel';
-import RunDebugPanel from './components/panels/RunDebugPanel';
-import AgentPodsPanel from './components/panels/AgentPodsPanel';
-import CompilePanel from './components/panels/CompilePanel';
-import ManufacturingPanel from './components/panels/ManufacturingPanel';
-import ForkPanel from './components/panels/ForkPanel';
-import ExportPanel from './components/panels/ExportPanel';
-import CompliancePanel from './components/panels/CompliancePanel';
-import ISABrowserPanel from './components/panels/ISABrowserPanel';
-
-import { ACTIVITY_BAR_WIDTH, DEFAULT_PANEL_SIZES } from './utils/constants';
+import Landing from './pages/Landing';
+import RequirementsGatheringPage from './pages/RequirementsGatheringPage';
+import Workspace from './pages/Workspace';
 import { useTheme } from './contexts/ThemeContext';
+import { SidebarProvider } from './contexts/SidebarContext';
 
-export default function App() {
+const BootWrapper = ({ onComplete }) => {
+    return <BootSequence onComplete={onComplete} />;
+};
+
+const AppContent = () => {
     const { theme } = useTheme();
-    const [activeActivity, setActiveActivity] = useState('search');
-    const [leftWidth] = useState(DEFAULT_PANEL_SIZES.left);
+    // Check if boot is already complete in session storage
+    const [bootComplete, setBootComplete] = useState(() => {
+        return sessionStorage.getItem('brick_boot_v12_stable') === 'true';
+    });
 
-    // Render left panel based on active activity
-    const renderLeftPanel = () => {
-        switch (activeActivity) {
-            case 'search':
-                return <SearchPanel width={leftWidth} />;
-            case 'components':
-                return <ComponentPanel width={leftWidth} />;
-            case 'run':
-                return <RunDebugPanel width={leftWidth} />;
-            case 'agents':
-                return <AgentPodsPanel width={leftWidth} />;
-            case 'compile':
-                return <CompilePanel width={leftWidth} />;
-            case 'mfg':
-                return <ManufacturingPanel width={leftWidth} />;
-            case 'compliance':
-                return <CompliancePanel width={leftWidth} />;
-            case 'fork':
-                return <ForkPanel width={leftWidth} />;
-            case 'export':
-                return <ExportPanel width={leftWidth} />;
-            case 'isa':
-                return <ISABrowserPanel width={leftWidth} />;
-            default:
-                return <SearchPanel width={leftWidth} />;
-        }
+    const handleBootComplete = () => {
+        sessionStorage.setItem('brick_boot_v12_stable', 'true');
+        setBootComplete(true);
     };
 
+    if (!bootComplete) {
+        return <BootWrapper onComplete={handleBootComplete} />;
+    }
+
     return (
-        <div
-            className="flex flex-col h-screen w-full overflow-hidden select-none font-sans"
-            style={{
-                backgroundColor: theme.colors.bg.primary,
-                color: theme.colors.text.primary
-            }}
-        >
-            <BootSequence />
-            <Header />
-
-            {/* Main Interaction Matrix */}
-            <div className="flex flex-1 overflow-hidden min-h-0 relative">
-                <ActivityBar activeTab={activeActivity} setActiveTab={setActiveActivity} />
-
-                {activeActivity === 'settings' || activeActivity === 'account' ? (
-                    activeActivity === 'settings' ? <SettingsPage /> : <AccountPage />
-                ) : (
-                    <>
-                        {renderLeftPanel()}
-
-                        {/* Center Placeholder */}
-                        <div
-                            className="flex-1 flex items-center justify-center"
-                            style={{ backgroundColor: theme.colors.bg.secondary }}
-                        >
-                            <div className="text-center space-y-4">
-                                <div
-                                    className="text-6xl font-black tracking-widest"
-                                    style={{ color: theme.colors.accent.primary + '40' }}
-                                >
-                                    BRICK
-                                </div>
-                                <div
-                                    className="text-sm font-mono tracking-wider"
-                                    style={{ color: theme.colors.text.muted }}
-                                >
-                                    Core navigation preserved. Workspace TBD.
-                                </div>
-                            </div>
-                        </div>
-                    </>
-                )}
-            </div>
-        </div>
+        <SidebarProvider>
+            <Router>
+                <Routes>
+                    <Route path="/" element={<Navigate to="/landing" replace />} />
+                    <Route path="/landing" element={<Landing />} />
+                    <Route path="/requirements" element={<RequirementsGatheringPage />} />
+                    <Route path="/workspace" element={<Workspace />} />
+                </Routes>
+            </Router>
+        </SidebarProvider>
     );
-}
+};
 
+export default function App() {
+    return <AppContent />;
+}
 /* 
 DEFERRED PLAN: SystemHealth Dashboard (Phase 11.3)
 

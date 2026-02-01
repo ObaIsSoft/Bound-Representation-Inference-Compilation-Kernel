@@ -4,11 +4,11 @@ import copy
 import math
 from typing import Dict, Any, List, Optional
 from pydantic import BaseModel
-from backend.agents.evolution import GeometryGenome, EvolutionaryMutator, EvolutionaryCrossover
-from backend.agents.surrogate.pinn_model import MultiPhysicsPINN
-from backend.agents.critics.adversarial import RedTeamAgent
-from backend.agents.critics.scientist import ScientistAgent
-from backend.agents.generative.latent_agent import LatentSpaceAgent
+from agents.evolution import GeometryGenome, EvolutionaryMutator, EvolutionaryCrossover
+from agents.surrogate.pinn_model import MultiPhysicsPINN
+from agents.critics.adversarial import RedTeamAgent
+from agents.critics.scientist import ScientistAgent
+from agents.generative.latent_agent import LatentSpaceAgent
 
 logger = logging.getLogger(__name__)
 
@@ -224,7 +224,7 @@ class OptimizationAgent:
         
         # Map string to Enum
         try:
-            from backend.agents.evolution import PrimitiveType
+            from agents.evolution import PrimitiveType
             seed_type = PrimitiveType[seed_type_str]
         except KeyError:
             seed_type = PrimitiveType.CUBE

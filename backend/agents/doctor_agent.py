@@ -17,7 +17,7 @@ class DoctorAgent:
     def __init__(self):
         self.name = "DoctorAgent"
         try:
-            from backend.config.monitor_config import HEALTH_CONFIG
+            from config.monitor_config import HEALTH_CONFIG
             self.config = HEALTH_CONFIG
         except ImportError:
             logger.warning("Could not import monitor_config. Using defaults.")
@@ -70,7 +70,7 @@ class DoctorAgent:
             logs.append(f"[DOCTOR] CPU: {cpu_percent}% | Memory: {mem_mb:.1f} MB")
             
             # Latency (from Singleton)
-            from backend.monitoring.latency import latency_monitor
+            from monitoring.latency import latency_monitor
             metrics = latency_monitor.get_metrics()
             logs.append(f"[DOCTOR] Latency (avg): {metrics['avg_ms']}ms | P95: {metrics['p95_ms']}ms")
             

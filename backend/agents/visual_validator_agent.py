@@ -17,7 +17,7 @@ class VisualValidatorAgent:
     def __init__(self):
         self.name = "VisualValidatorAgent"
         try:
-            from backend.config.validation_thresholds import VISUAL_SCORING
+            from config.validation_thresholds import VISUAL_SCORING
             self.scoring = VISUAL_SCORING
         except ImportError:
             logger.warning("Could not import validation_thresholds. Using defaults.")

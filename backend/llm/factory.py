@@ -2,7 +2,7 @@
 import os
 import logging
 from typing import Optional
-from backend.llm.provider import LLMProvider
+from llm.provider import LLMProvider
 
 logger = logging.getLogger(__name__)
 
@@ -13,22 +13,22 @@ def get_llm_provider(preferred: Optional[str] = None) -> LLMProvider:
     
     # Lazy imports to avoid crashing if packages are missing
     try:
-        from backend.llm.openai_provider import OpenAIProvider
+        from llm.openai_provider import OpenAIProvider
     except ImportError:
         OpenAIProvider = None
         
     try:
-        from backend.llm.groq_provider import GroqProvider
+        from llm.groq_provider import GroqProvider
     except ImportError:
         GroqProvider = None
 
     try:
-        from backend.llm.gemini_provider import GeminiProvider
+        from llm.gemini_provider import GeminiProvider
     except ImportError:
         GeminiProvider = None
 
     try:
-        from backend.llm.ollama_provider import OllamaProvider
+        from llm.ollama_provider import OllamaProvider
     except ImportError:
         OllamaProvider = None
 

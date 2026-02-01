@@ -18,7 +18,7 @@ class DiagnosticAgent:
         
         # Initialize Neural Surrogate
         try:
-            from backend.models.diagnostic_surrogate import DiagnosticSurrogate
+            from models.diagnostic_surrogate import DiagnosticSurrogate
             self.surrogate = DiagnosticSurrogate()
             self.model_path = "data/diagnostic_surrogate.weights.json"
             self.surrogate.load(self.model_path)

@@ -2,7 +2,7 @@ from typing import Dict, Any, List, Optional
 import logging
 import uuid
 import math
-from backend.agents.replicator_mixin import ReplicatorMixin
+from agents.replicator_mixin import ReplicatorMixin
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +18,7 @@ class ConstructionAgent(ReplicatorMixin):
         
         # Load Config
         try:
-            from backend.config.swarm_config import CONSTRUCTION_DEFAULTS, PHEROMONE_THRESHOLDS, GENETIC_DEFAULTS
+            from config.swarm_config import CONSTRUCTION_DEFAULTS, PHEROMONE_THRESHOLDS, GENETIC_DEFAULTS
             self.defaults = CONSTRUCTION_DEFAULTS
             self.thresholds = PHEROMONE_THRESHOLDS
             self.genetic_defaults = GENETIC_DEFAULTS

@@ -3,7 +3,7 @@ import logging
 
 # Inherit from Generic MLP
 try:
-    from backend.models.material_net import MaterialNet
+    from models.material_net import MaterialNet
 except ImportError:
     from models.material_net import MaterialNet
 

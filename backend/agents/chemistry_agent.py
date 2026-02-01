@@ -2,7 +2,7 @@ from typing import Dict, Any, List
 try:
     from materials.materials_db import MaterialsDatabase
 except ImportError:
-    from backend.materials.materials_db import MaterialsDatabase
+    from materials.materials_db import MaterialsDatabase
 
 class ChemistryAgent:
     """
@@ -28,7 +28,7 @@ class ChemistryAgent:
         # Initialize Neural Brain (Tier 3.5 Deep Evolution)
         try:
             try:
-                from backend.models.chemistry_surrogate import ChemistrySurrogate
+                from models.chemistry_surrogate import ChemistrySurrogate
             except ImportError:
                  from ...models.chemistry_surrogate import ChemistrySurrogate
             

@@ -19,7 +19,7 @@ class DesignExplorationAgent:
         
         # Load Config
         try:
-            from backend.config.design_exploration_config import EXPLORATION_DEFAULTS, SCORING_WEIGHTS, PARETO_CONFIG
+            from config.design_exploration_config import EXPLORATION_DEFAULTS, SCORING_WEIGHTS, PARETO_CONFIG
             self.defaults = EXPLORATION_DEFAULTS
             self.weights = SCORING_WEIGHTS
             self.pareto_config = PARETO_CONFIG
@@ -36,7 +36,7 @@ class DesignExplorationAgent:
             self.has_surrogate = True
         except ImportError:
             try:
-                from backend.models.design_exploration_surrogate import DesignExplorationSurrogate
+                from models.design_exploration_surrogate import DesignExplorationSurrogate
                 self.surrogate = DesignExplorationSurrogate()
                 self.has_surrogate = True
             except ImportError:

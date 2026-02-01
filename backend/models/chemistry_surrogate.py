@@ -4,7 +4,7 @@ from typing import Tuple
 
 # Derived from the standard MaterialNet (Three-Layer MLP)
 try:
-    from backend.models.material_net import MaterialNet
+    from models.material_net import MaterialNet
 except ImportError:
     from models.material_net import MaterialNet
 

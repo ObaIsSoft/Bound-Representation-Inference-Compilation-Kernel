@@ -18,7 +18,7 @@ class PhysicsAgent:
 
     def __init__(self):
         # Initialize Physics Kernel (Phase 3.8 - Real Physics)
-        from backend.physics.kernel import get_physics_kernel
+        from physics.kernel import get_physics_kernel
         self.physics = get_physics_kernel()
         
         # Initialize Neural Student (Phase 3.9: Managed by Kernel)
@@ -29,7 +29,7 @@ class PhysicsAgent:
         # Initialize Nuclear Student (Tier 3.5)
         try:
             try:
-                from backend.models.nuclear_surrogate import NuclearSurrogate
+                from models.nuclear_surrogate import NuclearSurrogate
             except ImportError:
                  from ...models.nuclear_surrogate import NuclearSurrogate
             
@@ -165,7 +165,7 @@ class PhysicsAgent:
 
         # 3. Mode Compatibility Check (Multi-Mode Agent) - NEW
         try:
-            from backend.agents.multi_mode_agent import MultiModeAgent
+            from agents.multi_mode_agent import MultiModeAgent
         except ImportError:
             from .multi_mode_agent import MultiModeAgent
         

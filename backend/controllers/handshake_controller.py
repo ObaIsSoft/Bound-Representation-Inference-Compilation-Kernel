@@ -1,8 +1,8 @@
 from typing import Dict, Any, List
 import uuid
 
-from backend.isa import HardwareISA, ConstraintNode
-from backend.schemas.isa_schema import (
+from isa import HardwareISA, ConstraintNode
+from schemas.isa_schema import (
     ISAHierarchy, ISAPod, ISAParameter, ISAConstraint, ISAConstraintType, ISAUnitDimension
 )
 

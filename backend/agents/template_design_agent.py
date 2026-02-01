@@ -39,7 +39,7 @@ class TemplateDesignAgent:
             self.has_surrogate = True
         except ImportError:
             try:
-                from backend.models.template_surrogate import TemplateSurrogate
+                from models.template_surrogate import TemplateSurrogate
                 self.surrogate = TemplateSurrogate()
                 self.has_surrogate = True
             except ImportError:

@@ -6,7 +6,7 @@ import random
 # Add project root to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
-from backend.agents.critics.scientist import ScientistAgent
+from agents.critics.scientist import ScientistAgent
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

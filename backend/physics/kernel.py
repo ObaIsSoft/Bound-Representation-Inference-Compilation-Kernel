@@ -32,30 +32,30 @@ class UnifiedPhysicsKernel:
         self.providers = {}
         
         # Import and initialize all providers directly - fail if missing (strict mode)
-        from backend.physics.providers.fphysics_provider import FPhysicsProvider
+        from physics.providers.fphysics_provider import FPhysicsProvider
         self.providers["constants"] = FPhysicsProvider()
 
-        from backend.physics.providers.physipy_provider import PhysiPyProvider
+        from physics.providers.physipy_provider import PhysiPyProvider
         self.providers["analytical"] = PhysiPyProvider()
 
-        from backend.physics.providers.sympy_provider import SymPyProvider
+        from physics.providers.sympy_provider import SymPyProvider
         self.providers["symbolic"] = SymPyProvider()
 
-        from backend.physics.providers.scipy_provider import SciPyProvider
+        from physics.providers.scipy_provider import SciPyProvider
         self.providers["numerical"] = SciPyProvider()
 
-        from backend.physics.providers.coolprop_provider import CoolPropProvider
+        from physics.providers.coolprop_provider import CoolPropProvider
         self.providers["materials"] = CoolPropProvider()
         
         # Import and initialize domain modules
-        from backend.physics.domains.mechanics import MechanicsDomain
-        from backend.physics.domains.structures import StructuresDomain
-        from backend.physics.domains.fluids import FluidsDomain
-        from backend.physics.domains.thermodynamics import ThermodynamicsDomain
-        from backend.physics.domains.electromagnetism import ElectromagnetismDomain
-        from backend.physics.domains.materials import MaterialsDomain
-        from backend.physics.domains.multiphysics import MultiphysicsDomain
-        from backend.physics.domains.nuclear import NuclearDomain # New
+        from physics.domains.mechanics import MechanicsDomain
+        from physics.domains.structures import StructuresDomain
+        from physics.domains.fluids import FluidsDomain
+        from physics.domains.thermodynamics import ThermodynamicsDomain
+        from physics.domains.electromagnetism import ElectromagnetismDomain
+        from physics.domains.materials import MaterialsDomain
+        from physics.domains.multiphysics import MultiphysicsDomain
+        from physics.domains.nuclear import NuclearDomain # New
         
         # Create domain instances
         mechanics = MechanicsDomain(self.providers)
@@ -80,9 +80,9 @@ class UnifiedPhysicsKernel:
         self.domains["multiphysics"] = MultiphysicsDomain(self.domains)
         
         # Import and initialize validation layer
-        from backend.physics.validation.conservation_laws import ConservationLawsValidator
-        from backend.physics.validation.constraint_checker import ConstraintChecker
-        from backend.physics.validation.feasibility import FeasibilityChecker
+        from physics.validation.conservation_laws import ConservationLawsValidator
+        from physics.validation.constraint_checker import ConstraintChecker
+        from physics.validation.feasibility import FeasibilityChecker
         
         self.validator = {
             "conservation": ConservationLawsValidator(),
@@ -91,10 +91,10 @@ class UnifiedPhysicsKernel:
         }
         
         # Import and initialize intelligence layer
-        from backend.physics.intelligence.equation_retrieval import EquationRetrieval
-        from backend.physics.intelligence.multi_fidelity import MultiFidelityRouter
-        from backend.physics.intelligence.surrogate_manager import SurrogateManager
-        from backend.physics.intelligence.symbolic_deriver import SymbolicDeriver # New
+        from physics.intelligence.equation_retrieval import EquationRetrieval
+        from physics.intelligence.multi_fidelity import MultiFidelityRouter
+        from physics.intelligence.surrogate_manager import SurrogateManager
+        from physics.intelligence.symbolic_deriver import SymbolicDeriver # New
         
         self.intelligence = {
             "equation_retrieval": EquationRetrieval(llm_provider),
@@ -289,7 +289,7 @@ def get_physics_kernel(llm_provider=None) -> UnifiedPhysicsKernel:
         # Import LLM provider if not provided
         if llm_provider is None:
             try:
-                from backend.llm.factory import get_llm_provider
+                from llm.factory import get_llm_provider
                 llm_provider = get_llm_provider()
             except Exception as e:
                 logger.warning(f"Could not load LLM provider: {e}")

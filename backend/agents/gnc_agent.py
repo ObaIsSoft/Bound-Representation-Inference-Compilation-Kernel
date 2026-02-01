@@ -2,7 +2,7 @@ from typing import Dict, Any, List, Tuple
 import logging
 import math
 from isa import PhysicalValue, Unit, create_physical_value
-from backend.physics.kernel import get_physics_kernel
+from physics.kernel import get_physics_kernel
 
 logger = logging.getLogger(__name__)
 

@@ -3,7 +3,7 @@ import math
 import numpy as np
 from typing import Dict, Any, List, Optional
 import os
-from backend.physics import get_physics_kernel
+from physics import get_physics_kernel
 
 # Try to import TensorFlow/Keras
 try:

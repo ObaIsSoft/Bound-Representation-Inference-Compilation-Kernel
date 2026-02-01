@@ -15,7 +15,7 @@ class ElectronicsAgent:
         
         # Feature: Deep Evolution (Neural Surrogate)
         try:
-            from backend.models.electronics_surrogate import ElectronicsSurrogate
+            from models.electronics_surrogate import ElectronicsSurrogate
             self.surrogate = ElectronicsSurrogate()
             self.use_surrogate = True
         except ImportError:
@@ -52,7 +52,7 @@ class ElectronicsAgent:
         try:
             from isa import Scale
         except ImportError:
-            from backend.isa import Scale
+            from isa import Scale
         
         # 1. Determine Regime
         scale_str = params.get("scale", "MESO").upper()
@@ -200,7 +200,7 @@ class ElectronicsAgent:
         try:
             from isa import Scale
         except ImportError:
-            from backend.isa import Scale
+            from isa import Scale
         
         # MEGA: Grid Scale checks
         thresholds = self.config.get("thresholds", {})

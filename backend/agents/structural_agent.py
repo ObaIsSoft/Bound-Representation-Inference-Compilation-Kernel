@@ -3,7 +3,7 @@ import math
 import numpy as np
 import logging
 from typing import Dict, Any, List, Optional
-from backend.physics import get_physics_kernel
+from physics import get_physics_kernel
 
 
 # Try importing TensorFlow (User requested "The Real Thing")

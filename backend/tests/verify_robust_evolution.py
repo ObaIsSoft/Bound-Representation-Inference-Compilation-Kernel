@@ -6,7 +6,7 @@ import random
 # Add project root to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
-from backend.agents.optimization_agent import OptimizationAgent
+from agents.optimization_agent import OptimizationAgent
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -54,11 +54,11 @@ def run_robust_verification():
             
             # Post-Run Stress Test verification
             # Let's see if the winner is actually robust
-            from backend.agents.surrogate.pinn_model import MultiPhysicsPINN
-            from backend.agents.critics.adversarial import RedTeamAgent
+            from agents.surrogate.pinn_model import MultiPhysicsPINN
+            from agents.critics.adversarial import RedTeamAgent
             
             # Reconstruct genome
-            from backend.agents.evolution import GeometryGenome
+            from agents.evolution import GeometryGenome
             genome_obj = GeometryGenome.from_json(best_genome)
             nodes_data = [attr['data'].dict() for attr in genome_obj.graph.nodes.values()]
             

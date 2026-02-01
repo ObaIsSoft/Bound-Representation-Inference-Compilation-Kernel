@@ -17,7 +17,7 @@ class MitigationAgent:
         
         # Tier 5: Failure Surrogate
         try:
-            from backend.models.mitigation_surrogate import FailureSurrogate
+            from models.mitigation_surrogate import FailureSurrogate
             self.surrogate = FailureSurrogate()
             self.use_surrogate = True
         except ImportError:

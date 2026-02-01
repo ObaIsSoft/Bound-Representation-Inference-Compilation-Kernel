@@ -5,7 +5,7 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-from backend.physics.kernel import get_physics_kernel
+from physics.kernel import get_physics_kernel
 
 class FluidAgent:
     """
@@ -31,7 +31,7 @@ class FluidAgent:
             self.has_oracle = True
         except ImportError:
             try:
-                from backend.agents.physics_oracle.physics_oracle import PhysicsOracle
+                from agents.physics_oracle.physics_oracle import PhysicsOracle
                 self.physics_oracle = PhysicsOracle()
                 self.has_oracle = True
             except ImportError:
@@ -44,7 +44,7 @@ class FluidAgent:
             self.has_surrogate = True
         except ImportError:
             try:
-                from backend.models.fluid_surrogate import FluidSurrogate
+                from models.fluid_surrogate import FluidSurrogate
                 self.surrogate = FluidSurrogate()
                 self.has_surrogate = True
             except ImportError:
@@ -59,7 +59,7 @@ class FluidAgent:
             self.has_critic = True
         except ImportError:
             try:
-                from backend.agents.critics.FluidCritic import FluidCritic
+                from agents.critics.FluidCritic import FluidCritic
                 self.critic = FluidCritic()
                 self.has_critic = True
             except ImportError:

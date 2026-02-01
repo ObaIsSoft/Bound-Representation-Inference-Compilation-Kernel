@@ -13,7 +13,7 @@ try:
     from database.supabase_client import SupabaseClient
 except ImportError:
     try:
-        from backend.database.supabase_client import SupabaseClient
+        from database.supabase_client import SupabaseClient
     except ImportError:
         # Fallback to relative import if running as module
         from ...database.supabase_client import SupabaseClient

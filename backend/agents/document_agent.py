@@ -1,7 +1,7 @@
 from typing import Dict, Any, List, Optional
 import logging
 from llm.provider import LLMProvider
-from backend.agent_registry import registry
+from agent_registry import registry
 
 logger = logging.getLogger(__name__)
 

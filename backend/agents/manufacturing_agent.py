@@ -16,7 +16,7 @@ class ManufacturingAgent:
         self.name = "ManufacturingAgent"
         
         # Phase 10 Optimization: Use Physics Kernel Singletons
-        from backend.physics.kernel import get_physics_kernel
+        from physics.kernel import get_physics_kernel
         self.physics = get_physics_kernel()
         
         # 1. Materials DB (Shared)
@@ -25,7 +25,7 @@ class ManufacturingAgent:
              self.api = self.physics.domains["materials"].materials_db
         else:
              # Fallback if kernel init failed or partial
-             from backend.materials.materials_db import MaterialsDatabase
+             from materials.materials_db import MaterialsDatabase
              self.api = MaterialsDatabase()
         
         # 2. Oracles
@@ -50,7 +50,7 @@ class ManufacturingAgent:
              self.has_surrogate = False
              # Try lazily loading if not found in manager (redundancy)
              try:
-                 from backend.models.manufacturing_surrogate import ManufacturingSurrogate
+                 from models.manufacturing_surrogate import ManufacturingSurrogate
                  self.surrogate = ManufacturingSurrogate()
                  self.has_surrogate = True
              except ImportError:

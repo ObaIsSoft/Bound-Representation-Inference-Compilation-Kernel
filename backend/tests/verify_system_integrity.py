@@ -14,8 +14,8 @@ def run_integrity_check():
     # 1. VERIFY CRITICS
     print("\n[1] Verifying Adversarial Critics...")
     try:
-        from backend.agents.critics.SurrogateCritic import SurrogateCritic
-        from backend.agents.critics.PhysicsCritic import PhysicsCritic
+        from agents.critics.SurrogateCritic import SurrogateCritic
+        from agents.critics.PhysicsCritic import PhysicsCritic
         
         # Instantiate
         sc = SurrogateCritic(window_size=10)
@@ -37,7 +37,7 @@ def run_integrity_check():
     # 2. VERIFY ARES MIDDLEWARE (Validation)
     print("\n[2] Verifying ARES Middleware...")
     try:
-        from backend.ares import AresMiddleware, AresUnitError
+        from ares import AresMiddleware, AresUnitError
         ares = AresMiddleware()
         # Test valid input
         ares.validate_unit({"mass": {"value": 10, "unit": "kg"}}, "mass")
@@ -50,7 +50,7 @@ def run_integrity_check():
     # 3. VERIFY NEURAL SURROGATES (MaterialNet)
     print("\n[3] Verifying Neural Surrogates...")
     try:
-        from backend.models.material_net import MaterialNet
+        from models.material_net import MaterialNet
         net = MaterialNet()
         # Check if weights loaded (MaterialNet has W1, W2 etc)
         if hasattr(net, 'W1'):
@@ -65,7 +65,7 @@ def run_integrity_check():
     # 4. VERIFY DATABASE (Supabase)
     print("\n[4] Verifying Database Connection...")
     try:
-        from backend.database.supabase_client import SupabaseClient
+        from database.supabase_client import SupabaseClient
         db = SupabaseClient()
         if db.client:
             results["Database"] = "✅ Connected"
@@ -79,7 +79,7 @@ def run_integrity_check():
     # 5. VERIFY PHYSICS KERNEL
     print("\n[5] Verifying Physics Kernel...")
     try:
-        from backend.physics.kernel import get_physics_kernel
+        from physics.kernel import get_physics_kernel
         pk = get_physics_kernel()
         results["PhysicsKernel"] = "✅ Loaded"
         print("  - PhysicsKernel: OK")

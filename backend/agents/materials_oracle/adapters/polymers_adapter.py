@@ -15,7 +15,7 @@ class PolymersAdapter:
         try:
             from materials.materials_db import MaterialsDatabase
         except ImportError:
-            from backend.materials.materials_db import MaterialsDatabase
+            from materials.materials_db import MaterialsDatabase
         self.db = MaterialsDatabase()
         # Initial load attempt
         self.known_monomers = self._load_monomers()

@@ -6,7 +6,7 @@ import logging
 try:
     from .PhysicsCritic import CriticReport
 except ImportError:
-    from backend.agents.critics.PhysicsCritic import CriticReport
+    from agents.critics.PhysicsCritic import CriticReport
 
 logger = logging.getLogger(__name__)
 

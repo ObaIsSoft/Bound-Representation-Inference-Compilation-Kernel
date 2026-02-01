@@ -4,7 +4,7 @@ import math
 try:
     from isa import PhysicalValue, Unit, create_physical_value
 except ImportError:
-    from backend.isa import PhysicalValue, Unit, create_physical_value
+    from isa import PhysicalValue, Unit, create_physical_value
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +18,7 @@ class MassPropertiesAgent:
         
         # Tier 5: Neural Surrogate
         try:
-            from backend.models.mass_properties_surrogate import MassPropertiesSurrogate
+            from models.mass_properties_surrogate import MassPropertiesSurrogate
             self.surrogate = MassPropertiesSurrogate()
             self.use_surrogate = True
         except ImportError:

@@ -1,6 +1,6 @@
 from typing import Dict, Any, List
 import logging
-from backend.physics import get_physics_kernel
+from physics import get_physics_kernel
 
 logger = logging.getLogger(__name__)
 

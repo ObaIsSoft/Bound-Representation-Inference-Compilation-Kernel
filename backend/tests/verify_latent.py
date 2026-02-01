@@ -7,8 +7,8 @@ import copy
 # Add project root to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
-from backend.agents.evolution import GeometryGenome, EvolutionaryMutator
-from backend.agents.generative.latent_agent import LatentSpaceAgent
+from agents.evolution import GeometryGenome, EvolutionaryMutator
+from agents.generative.latent_agent import LatentSpaceAgent
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

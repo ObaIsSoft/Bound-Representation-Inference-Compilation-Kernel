@@ -5,9 +5,9 @@ import logging
 # Add project root to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
-from backend.agents.surrogate.pinn_model import MultiPhysicsPINN
-from backend.agents.critics.adversarial import RedTeamAgent
-from backend.agents.evolution import PrimitiveType
+from agents.surrogate.pinn_model import MultiPhysicsPINN
+from agents.critics.adversarial import RedTeamAgent
+from agents.evolution import PrimitiveType
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

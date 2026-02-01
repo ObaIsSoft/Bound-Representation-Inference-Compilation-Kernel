@@ -5,7 +5,7 @@ import numpy as np
 from typing import Dict, Any, List
 
 # Reuse the existing PINN as the physics kernel for stress testing
-from backend.agents.surrogate.pinn_model import MultiPhysicsPINN
+from agents.surrogate.pinn_model import MultiPhysicsPINN
 
 logger = logging.getLogger(__name__)
 

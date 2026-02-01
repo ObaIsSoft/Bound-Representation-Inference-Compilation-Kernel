@@ -45,13 +45,13 @@ class SurrogateManager:
                     try:
                         if "physics" in domain:
                             try:
-                                from backend.models.physics_surrogate import PhysicsSurrogate
+                                from models.physics_surrogate import PhysicsSurrogate
                             except ImportError:
                                 from ...models.physics_surrogate import PhysicsSurrogate
                             model = PhysicsSurrogate(input_size=5, hidden_size=32, output_size=2)
                         else:
                             try:
-                                from backend.models.material_net import MaterialNet
+                                from models.material_net import MaterialNet
                             except ImportError:
                                 from models.material_net import MaterialNet
                             model = MaterialNet(input_size=5, output_size=1)

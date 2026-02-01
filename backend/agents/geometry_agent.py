@@ -3,7 +3,7 @@ import re
 import logging
 import math
 from typing import Dict, Any, List, Optional
-from backend.physics import get_physics_kernel
+from physics import get_physics_kernel
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ class GeometryAgent:
         logger.info("GeometryAgent: Physics kernel initialized")
 
         # Initialize Hybrid Engine (Phase 16)
-        from backend.geometry.hybrid_engine import HybridGeometryEngine
+        from geometry.hybrid_engine import HybridGeometryEngine
         self.engine = HybridGeometryEngine()
         
         self.zoo_client = None

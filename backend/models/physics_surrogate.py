@@ -5,7 +5,7 @@ import json
 
 # Reuse the core MLP logic (DRY principle)
 try:
-    from backend.models.material_net import MaterialNet
+    from models.material_net import MaterialNet
 except ImportError:
     from models.material_net import MaterialNet # Fallback
 

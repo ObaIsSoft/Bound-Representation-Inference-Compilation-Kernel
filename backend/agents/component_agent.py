@@ -5,12 +5,12 @@ import json
 try:
     from database.supabase_client import SupabaseClient
 except ImportError:
-    from backend.database.supabase_client import SupabaseClient
+    from database.supabase_client import SupabaseClient
 
 try:
     from models.component import Component, ComponentInstance
 except ImportError:
-    from backend.models.component import Component, ComponentInstance
+    from models.component import Component, ComponentInstance
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +28,7 @@ class ComponentAgent:
         
         # Load Config
         try:
-            from backend.config.component_config import COMPONENT_DEFAULTS, TEST_ASSETS, ATLAS_CONFIG
+            from config.component_config import COMPONENT_DEFAULTS, TEST_ASSETS, ATLAS_CONFIG
             self.defaults = COMPONENT_DEFAULTS
             self.assets = TEST_ASSETS
             self.atlas_config = ATLAS_CONFIG

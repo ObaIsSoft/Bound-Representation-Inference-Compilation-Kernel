@@ -5,7 +5,7 @@ from typing import List, Dict, Any, Optional, Tuple, Union
 try:
     from .openscad_parser import ASTNode, NodeType
 except ImportError:
-    from backend.agents.openscad_parser import ASTNode, NodeType
+    from agents.openscad_parser import ASTNode, NodeType
 
 class AABB:
     """Axis Aligned Bounding Box."""

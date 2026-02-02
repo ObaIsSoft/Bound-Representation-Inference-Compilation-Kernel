@@ -57,6 +57,9 @@ class GlobalAgentRegistry:
         "ChemistryAgent": ("backend.agents.chemistry_agent", "ChemistryAgent"),
         "BiologyAgent": ("backend.agents.chemistry_agent", "ChemistryAgent"),
         
+        "ExplainableAgent": ("backend.agents.explainable_agent", "ExplainableAgent"),
+        "ForensicAgent": ("backend.agents.forensic_agent", "ForensicAgent"),
+        
         "CodegenAgent": ("backend.agents.codegen_agent", "CodegenAgent"),
         "ComponentAgent": ("backend.agents.component_agent", "ComponentAgent"),
         "ConstructionAgent": ("backend.agents.construction_agent", "ConstructionAgent"),

@@ -12,6 +12,11 @@ const BootWrapper = ({ onComplete }) => {
     return <BootSequence onComplete={onComplete} />;
 };
 
+import { PanelProvider } from './contexts/PanelContext';
+import GlobalOverlay from './components/layout/GlobalOverlay';
+
+// ... imports ...
+
 const AppContent = () => {
     const { theme } = useTheme();
     // Check if boot is already complete in session storage
@@ -29,17 +34,20 @@ const AppContent = () => {
     }
 
     return (
-        <SidebarProvider>
-            <Router>
-                <Routes>
-                    <Route path="/" element={<Navigate to="/landing" replace />} />
-                    <Route path="/landing" element={<Landing />} />
-                    <Route path="/requirements" element={<RequirementsGatheringPage />} />
-                    <Route path="/planning" element={<PlanningPage />} />
-                    <Route path="/workspace" element={<Workspace />} />
-                </Routes>
-            </Router>
-        </SidebarProvider>
+        <PanelProvider>
+            <SidebarProvider>
+                <Router>
+                    <GlobalOverlay />
+                    <Routes>
+                        <Route path="/" element={<Navigate to="/landing" replace />} />
+                        <Route path="/landing" element={<Landing />} />
+                        <Route path="/requirements" element={<RequirementsGatheringPage />} />
+                        <Route path="/planning" element={<PlanningPage />} />
+                        <Route path="/workspace" element={<Workspace />} />
+                    </Routes>
+                </Router>
+            </SidebarProvider>
+        </PanelProvider>
     );
 };
 

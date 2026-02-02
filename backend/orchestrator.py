@@ -78,6 +78,8 @@ class MockSurrogateAgent:
 surrogate_critic = SurrogateCritic(window_size=100)
 physics_critic = PhysicsCritic(window_size=100) # For future hybrid agents
 
+
+
 # --- Global Registry Integration ---
 from agent_registry import registry as global_registry
 
@@ -405,7 +407,7 @@ def surrogate_physics_node(state: AgentState) -> Dict[str, Any]:
         # Ideally we pass a flag to conditional edge.
     }
 
-def physics_node(state: AgentState) -> Dict[str, Any]:
+async def physics_node(state: AgentState) -> Dict[str, Any]:
     """
     Executes the Physics Agent (The Judge).
     """
@@ -566,9 +568,15 @@ def physics_node(state: AgentState) -> Dict[str, Any]:
     # --- CONTROL LAYER END ---
 
     # 4. Physics (Flight Dynamics)
-    phys_agent = PhysicsAgent()
+    from agents.physics_agent_v2 import PhysicsAgent
+    from agents.explainable_agent import create_xai_wrapper
+    
+    # WRAPPED (XAI) - ENHANCED
+    # We create the wrapper using the factory.
+    phys_agent = create_xai_wrapper(PhysicsAgent(), physics_kernel=None)
+    
     params["mag_force_n"] = elec_result.get("mag_lift_n", 0.0) # Inject Maglev Force
-    phys_result = phys_agent.run(env, geo, params)
+    phys_result = await phys_agent.run(env, geo, params)
     
     FLAGS = phys_result["validation_flags"]
     reasons = FLAGS["reasons"] # Reference to list
@@ -592,6 +600,17 @@ def physics_node(state: AgentState) -> Dict[str, Any]:
         }
         surrogate_critic.observe(state, pred, validation)
     
+    # --- PASSIVE XAI STREAM INJECTION ---
+    # Retrieve thought from result (added by AgentExplainabilityWrapper)
+    thought_text = phys_result.get("_thought")
+    if thought_text:
+        try:
+             # Lazy import to avoid circular dep with main.py
+             from main import inject_thought
+             inject_thought("PhysicsAgent", thought_text)
+        except ImportError:
+             logger.warning("Could not inject thought: main module unreachable.")
+
     # Append Control Logs to Reasons if failed (or just log it)
     if cps_result.get("status") == "error":
         reasons.append(f"CONTROL_FAILURE: {cps_result.get('error')}")
@@ -741,8 +760,9 @@ def check_validation(state: AgentState) -> Literal["optimization_agent", END]:
     
     # IF physics said NO, and we haven't looped too many times...
     if not flags.get("physics_safe", True) and count < 3:
-        logger.info(f"Validation FAILED. Loop {count}/3. Triggering Optimization.")
-        return "optimization_agent"
+        logger.info(f"Validation FAILED. Loop {count}/3. Triggering Forensics -> Optimization.")
+        # NEW FLOW: Fail -> Forensic -> Optimization
+        return "forensic_node"
     
     return END
 
@@ -755,7 +775,47 @@ def training_node(state: AgentState) -> Dict[str, Any]:
     """
     agent = TrainingAgent()
     result = agent.run(state)
+    agent = TrainingAgent()
+    result = agent.run(state)
     return {"training_log": result}
+
+def forensic_node(state: AgentState) -> Dict[str, Any]:
+    """
+    Executes the Forensic Agent (The Investigator).
+    Triggered locally when validation fails.
+    """
+    from agent_registry import registry
+    agent = registry.get_agent("ForensicAgent")
+    
+    if not agent:
+        return {"logs": ["Forensic Agent missing."]}
+        
+    # Gather Context
+    # We need the LAST agent's report that failed. Usually Physics or sub-agents.
+    # We construct a synthetic 'failure_report' from validation_flags + physics logs
+    
+    failure_report = {
+        "status": "failed",
+        "error": state.get("validation_flags", {}).get("reasons", ["Unknown Failure"]),
+        "metrics": state.get("physics_predictions", {}), # e.g. stress, temp
+        "input_params": state.get("design_parameters", {})
+    }
+    
+    history = state.get("messages", [])
+    
+    rca_report = agent.analyze_failure(failure_report, history)
+    
+    logger.info(f"FORENSIC REPORT: {rca_report['root_causes']}")
+    
+    # Inject RCA into state so Optimization Agent can read 'root_causes'
+    return {
+        "forensic_analysis": rca_report,
+        # Append to reasons so generic optimizer sees it too
+        "validation_flags": {
+             **state.get("validation_flags", {}),
+             "reasons": state.get("validation_flags", {}).get("reasons", []) + rca_report['root_causes']
+        }
+    }
 
 # --- Graph Definition ---
 
@@ -842,6 +902,7 @@ def build_graph():
     workflow.add_node("training_agent", training_node)
     workflow.add_node("validation_node", validation_node)
     workflow.add_node("optimization_agent", optimization_node)
+    workflow.add_node("forensic_node", forensic_node)
     
     # ========== PHASE 7: SOURCING & DEPLOYMENT ==========
     workflow.add_node("asset_sourcing", asset_sourcing_node)
@@ -946,9 +1007,13 @@ def build_graph():
         check_validation,
         {
             "valid": "asset_sourcing",
-            "needs_optimization": "optimization_agent"
+            "needs_optimization": "optimization_agent",
+            "forensic_node": "forensic_node"
         }
     )
+    
+    # Forensic -> Optimization
+    workflow.add_edge("forensic_node", "optimization_agent")
     
     # Optimization loop back to geometry
     workflow.add_edge("optimization_agent", "geometry_agent")

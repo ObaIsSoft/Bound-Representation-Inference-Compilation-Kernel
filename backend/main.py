@@ -62,7 +62,31 @@ class LatencyMiddleware(BaseHTTPMiddleware):
 app.add_middleware(LatencyMiddleware)
 
 # --- Agent Registry ---
+# --- Agent Registry ---
 AGENTS = get_agent_registry()
+
+# --- Passive XAI Stream --
+from collections import deque
+THOUGHT_STREAM = deque(maxlen=50) # Buffer for last 50 thoughts
+
+@app.get("/api/agents/thoughts")
+async def get_passive_thoughts():
+    """
+    Polls for recent 'Inner Monologue' thoughts from agents.
+    Returns and clears the buffer (destructive read for polling).
+    """
+    thoughts = list(THOUGHT_STREAM)
+    THOUGHT_STREAM.clear()
+    return {"thoughts": thoughts}
+
+# Helper to inject thoughts (to be called by orchestrator/agents)
+def inject_thought(agent_name: str, thought_text: str):
+    timestamp = datetime.now().isoformat()
+    THOUGHT_STREAM.append({
+        "agent": agent_name,
+        "text": thought_text,
+        "timestamp": timestamp
+    })
 
 # --- ISA Handshake API ---
 
@@ -260,6 +284,35 @@ async def update_user_profile(req: UpdateProfileRequest):
     # Filter None values
     updates = {k: v for k, v in req.dict().items() if v is not None}
     return agent.update_profile(updates)
+
+    return agent.update_profile(updates)
+
+# --- XAI / Explainability API ---
+class ExplainLogRequest(BaseModel):
+    agent_name: str
+    log_entry: Dict[str, Any] # The output/log to explain
+    context: Dict[str, Any]   # The inputs/context at that time
+
+@app.post("/api/agents/explain")
+async def explain_decision_endpoint(req: ExplainLogRequest):
+    """
+    On-Demand XAI: Generates a 'Why' explanation for a specific agent action.
+    User clicks 'Explain' on a log entry -> Frontend sends context -> We return rationale.
+    """
+    # Use Lazy Registry
+    from agent_registry import registry
+    xai_agent = registry.get_agent("ExplainableAgent")
+    
+    if not xai_agent:
+        raise HTTPException(status_code=500, detail="ExplainableAgent (XAI) is not available.")
+        
+    explanation = xai_agent.explain_decision(
+        agent_name=req.agent_name,
+        decision=req.log_entry,
+        context=req.context
+    )
+    
+    return {"explanation": explanation}
 
 # --- Agent Metrics ---
 @app.get("/api/agents/metrics")
@@ -546,10 +599,12 @@ async def list_agents():
 @app.post("/api/agents/{name}/run")
 async def run_agent(name: str, payload: Dict[str, Any]):
     """Execute a specific agent directly."""
-    if name not in AGENTS:
-        raise HTTPException(status_code=404, detail=f"Agent '{name}' not found.")
+    # Use Global Registry for lazy loading support
+    from agent_registry import registry
+    agent = registry.get_agent(name)
     
-    agent = AGENTS[name]
+    if not agent:
+        raise HTTPException(status_code=404, detail=f"Agent '{name}' not found.")
     
     # Track Execution Time for Real Metrics
     from core.agent_registry import AgentVersionRegistry

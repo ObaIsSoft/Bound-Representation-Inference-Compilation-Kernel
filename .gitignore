@@ -67,3 +67,10 @@ src-tauri/target/
 *.dylib
 *.so
 *.dll
+
+# User and Session Data
+projects/
+brain/
+*.weights.json
+*.brick
+*.brick.bak

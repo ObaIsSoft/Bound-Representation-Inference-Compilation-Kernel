@@ -3,6 +3,7 @@ import { useLocation } from 'react-router-dom';
 import GlobalTabs from './GlobalTabs';
 import GlobalInputConsole from '../panels/GlobalInputConsole';
 import MainPanel from '../panels/MainPanel';
+import HistoryModal from '../shared/HistoryModal';
 
 const GlobalOverlay = () => {
     const location = useLocation();
@@ -14,11 +15,14 @@ const GlobalOverlay = () => {
     }
 
     return (
-        <div className="fixed inset-0 pointer-events-none z-50 overflow-hidden">
-            <GlobalTabs />
-            <MainPanel />
-            <GlobalInputConsole />
-        </div>
+        <>
+            <div className="fixed inset-0 pointer-events-none z-50 overflow-hidden">
+                <GlobalTabs />
+                <MainPanel />
+                <GlobalInputConsole />
+            </div>
+            <HistoryModal />
+        </>
     );
 };
 

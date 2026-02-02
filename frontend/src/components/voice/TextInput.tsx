@@ -13,18 +13,7 @@ interface InputOptions {
     drawings: Blob[];
 }
 
-const LLM_PROVIDERS = [
-    // Cloud Providers
-    { value: 'groq', label: 'Groq (Llama 3.3 70B)' },
-    { value: 'openai', label: 'OpenAI (GPT-4 Turbo)' },
-    { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
-    { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
-    { value: 'gemini-3-flash', label: 'Gemini 3 Flash' },
-    { value: 'gemini-3-pro', label: 'Gemini 3 Pro' },
-    { value: 'huggingface', label: 'HuggingFace (Llama 3 8B)' },
-    // Local Providers
-    { value: 'ollama', label: 'Ollama (Local)' },
-] as const;
+import { LLM_PROVIDERS } from '../../utils/constants';
 
 export default function TextInput({ onSubmit, onFocus }: TextInputProps) {
     const [message, setMessage] = useState('');

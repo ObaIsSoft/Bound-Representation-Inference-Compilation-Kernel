@@ -4,7 +4,7 @@ import { usePanel } from '../../contexts/PanelContext';
 import { GripVertical } from 'lucide-react';
 import { useTheme } from '../../contexts/ThemeContext';
 
-const DraggablePanel = ({ id, children, className = '', headerContent }) => {
+const DraggablePanel = ({ id, children, className = '', headerContent, zIndex = 50 }) => {
     const { panels, setPosition, setSize } = usePanel();
     const { theme } = useTheme();
     const panelState = panels[id];
@@ -96,7 +96,7 @@ const DraggablePanel = ({ id, children, className = '', headerContent }) => {
                 top: panelState.position.y,
                 width: panelState.size.width,
                 height: panelState.size.height,
-                zIndex: 50,
+                zIndex: zIndex,
                 touchAction: 'none',
                 backgroundColor: theme.colors.bg.secondary + 'E6', // High opacity
                 borderColor: theme.colors.border.secondary,
@@ -105,12 +105,12 @@ const DraggablePanel = ({ id, children, className = '', headerContent }) => {
             // Reset transform after drag allows the style.left/top to take over again
             animate={{ x: 0, y: 0 }}
             transition={{ duration: 0 }}
-            className={`flex flex-col rounded-xl shadow-2xl backdrop-blur-xl overflow-hidden ${className}`}
+            className={`flex flex-col rounded-xl shadow-2xl backdrop-blur-xl ${className}`}
         >
             {/* Drag Handle / Header */}
             <div
                 onPointerDown={(e) => dragControls.start(e)}
-                className="flex items-center justify-between px-3 py-2 cursor-grab active:cursor-grabbing select-none border-b"
+                className="flex items-center justify-between px-3 py-2 cursor-grab active:cursor-grabbing select-none rounded-t-xl"
                 style={{
                     backgroundColor: theme.colors.bg.tertiary,
                     borderColor: theme.colors.border.secondary
@@ -122,17 +122,17 @@ const DraggablePanel = ({ id, children, className = '', headerContent }) => {
             </div>
 
             {/* Content Area */}
-            <div className="flex-1 overflow-hidden relative">
+            <div className="flex-1 relative">
                 {children}
             </div>
 
             {/* Resize Handle (Bottom Right) */}
             <div
                 onPointerDown={handleResizeStart}
-                className="absolute bottom-0 right-0 w-4 h-4 cursor-nwse-resize z-50 flex items-center justify-center group"
+                className="absolute bottom-0 right-0 w-8 h-8 cursor-nwse-resize z-[100] flex items-end justify-end p-1.5 group"
             >
                 {/* Visual corner marker */}
-                <div className="w-1.5 h-1.5 rounded-full bg-gray-400/50 group-hover:bg-white/80 transition-colors" />
+                <div className="w-2.5 h-2.5 rounded-full bg-white/20 group-hover:bg-white/60 transition-colors shadow-sm" />
             </div>
         </motion.div>
     );

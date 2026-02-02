@@ -2,24 +2,19 @@ import React, { useState, useRef } from 'react';
 import { useTheme } from '../../contexts/ThemeContext';
 import { usePanel } from '../../contexts/PanelContext';
 import DraggablePanel from '../shared/DraggablePanel';
-import { Image, Pencil, Mic } from 'lucide-react';
-
-const LLM_PROVIDERS = [
-    { value: 'groq', label: 'Groq (Llama 3.3 70B)' },
-    { value: 'openai', label: 'OpenAI (GPT-4 Turbo)' },
-    { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
-    { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
-    { value: 'ollama', label: 'Ollama (Local)' },
-];
+import { Image, Pencil, Mic, History, GitGraph } from 'lucide-react';
+import { LLM_PROVIDERS } from '../../utils/constants';
 
 const GlobalInputConsole = () => {
     const { theme } = useTheme();
-    const { PANEL_IDS, addMessageToSession } = usePanel();
+    const { PANEL_IDS, panels, togglePanel, addMessageToSession, isHistoryModalOpen, setIsHistoryModalOpen, branchSession } = usePanel();
     const [message, setMessage] = useState('');
     const [llmProvider, setLlmProvider] = useState('groq');
     const [attachedImages, setAttachedImages] = useState([]);
     const [isRecording, setIsRecording] = useState(false);
     const [isTranscribing, setIsTranscribing] = useState(false);
+
+    const isMainPanelOpen = panels[PANEL_IDS.MAIN]?.isOpen;
 
     const fileInputRef = useRef(null);
     const textareaRef = useRef(null);
@@ -127,9 +122,47 @@ const GlobalInputConsole = () => {
         <DraggablePanel
             id={PANEL_IDS.INPUT}
             headerContent={null}
-            className="pointer-events-auto"
+            className="pointer-events-auto overflow-visible"
+            zIndex={60}
         >
-            <div className="flex flex-col h-full bg-white/5 backdrop-blur-md relative">
+            <div className="flex flex-col h-full bg-white/10 backdrop-blur-xl relative overflow-visible rounded-xl border border-white/10 shadow-2xl">
+                {/* Top Floating Controls (Attached to console) */}
+                <div className="absolute -top-16 left-0 right-0 flex items-center z-30 overflow-visible pointer-events-none">
+                    <div className="flex-1 flex justify-start pointer-events-none">
+                        <button
+                            onClick={() => setIsHistoryModalOpen(true)}
+                            className="flex items-center gap-2 px-3 py-1.5 rounded-lg backdrop-blur-xl border border-white/10 hover:bg-white/5 transition-all shadow-lg pointer-events-auto"
+                            style={{ backgroundColor: theme.colors.bg.secondary + 'CC' }}
+                        >
+                            <History size={14} color={theme.colors.accent.primary} />
+                            <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: theme.colors.text.primary }}>Recall</span>
+                        </button>
+                    </div>
+
+                    <div className="flex justify-center pointer-events-none">
+                        {!isMainPanelOpen && (
+                            <button
+                                onClick={() => togglePanel(PANEL_IDS.MAIN)}
+                                className="flex items-center px-4 py-1.5 rounded-lg backdrop-blur-xl border border-white/20 hover:bg-white/10 hover:border-white/30 transition-all shadow-lg pointer-events-auto animate-in fade-in slide-in-from-bottom-2 duration-300"
+                                style={{ backgroundColor: theme.colors.bg.secondary + 'E6' }}
+                            >
+                                <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: theme.colors.text.primary }}>Open Panel</span>
+                            </button>
+                        )}
+                    </div>
+
+                    <div className="flex-1 flex justify-end pointer-events-none">
+                        <button
+                            onClick={branchSession}
+                            className="flex items-center gap-2 px-3 py-1.5 rounded-lg backdrop-blur-xl border border-white/10 hover:bg-white/5 transition-all shadow-lg pointer-events-auto"
+                            style={{ backgroundColor: theme.colors.bg.secondary + 'CC' }}
+                        >
+                            <GitGraph size={14} color={theme.colors.accent.primary} />
+                            <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: theme.colors.text.primary }}>Branch</span>
+                        </button>
+                    </div>
+                </div>
+
                 {/* Voice Button (Top Right Absolute) */}
                 <button
                     onClick={toggleRecording}
@@ -145,7 +178,7 @@ const GlobalInputConsole = () => {
 
                 {/* Images Preview */}
                 {attachedImages.length > 0 && (
-                    <div className="p-3 flex gap-2 flex-wrap border-b" style={{ borderColor: theme.colors.border.primary }}>
+                    <div className="p-3 flex gap-2 flex-wrap" style={{ borderColor: theme.colors.border.primary }}>
                         {attachedImages.map((file, index) => (
                             <div key={index} className="relative group w-16 h-16 rounded-md overflow-hidden">
                                 <img src={URL.createObjectURL(file)} alt="preview" className="w-full h-full object-cover" />
@@ -174,7 +207,7 @@ const GlobalInputConsole = () => {
                 </div>
 
                 {/* Toolbar */}
-                <div className="px-3 py-2 flex items-center justify-between">
+                <div className="px-3 py-2 flex items-center justify-between pr-4">
                     <div className="flex items-center gap-2">
                         <select
                             value={llmProvider}

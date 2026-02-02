@@ -8,25 +8,32 @@ const DraggablePanel = ({ id, children, className = '', headerContent }) => {
     const { panels, setPosition, setSize } = usePanel();
     const { theme } = useTheme();
     const panelState = panels[id];
-    const constraintsRef = useRef(null);
     const resizeRef = useRef(null);
+    const dragControls = useDragControls();
 
     // Local state for resizing to avoid context thrashing
     const [isResizing, setIsResizing] = useState(false);
 
-    if (!panelState.isOpen) return null;
+    if (!panelState?.isOpen) return null;
 
     const handleDragEnd = (event, info) => {
         // Update persistent state with the delta
         // We add the drag delta to the original position
-        const newX = panelState.position.x + info.offset.x;
-        const newY = panelState.position.y + info.offset.y;
+        let newX = panelState.position.x + info.offset.x;
+        let newY = panelState.position.y + info.offset.y;
 
-        // Ensure we don't drag off screen (basic bounds)
-        const boundedX = Math.max(0, Math.min(newX, window.innerWidth - panelState.size.width));
-        const boundedY = Math.max(0, Math.min(newY, window.innerHeight - panelState.size.height));
+        // Visual viewports bounds
+        // Allow panel to go off screen but keep 50px visible
+        const minX = -panelState.size.width + 50;
+        const maxX = window.innerWidth - 50;
+        const minY = 0; // Don't allow going above top
+        const maxY = window.innerHeight - 50;
 
-        setPosition(id, { x: boundedX, y: boundedY });
+        // Constrain
+        newX = Math.max(minX, Math.min(newX, maxX));
+        newY = Math.max(minY, Math.min(newY, maxY));
+
+        setPosition(id, { x: newX, y: newY });
     };
 
     // Resize Logic
@@ -78,31 +85,36 @@ const DraggablePanel = ({ id, children, className = '', headerContent }) => {
             ref={resizeRef}
             drag
             dragMomentum={false}
+            dragElastic={0}
+            dragListener={false} // Only drag using handle
+            dragControls={dragControls}
             onDragEnd={handleDragEnd}
             initial={false}
-            // We use the persistent positions for the 'initial' layout,
-            // but while dragging, framer uses transforms.
-            // On drag end, we commit to state, causing a re-render.
-            // We must force the visual style to match the state.
             style={{
                 position: 'absolute',
                 left: panelState.position.x,
                 top: panelState.position.y,
                 width: panelState.size.width,
                 height: panelState.size.height,
-                zIndex: 50, // Could be dynamic based on focus
-                touchAction: 'none' // Important for drag
+                zIndex: 50,
+                touchAction: 'none',
+                backgroundColor: theme.colors.bg.secondary + 'E6', // High opacity
+                borderColor: theme.colors.border.secondary,
+                borderWidth: '1px',
             }}
             // Reset transform after drag allows the style.left/top to take over again
             animate={{ x: 0, y: 0 }}
-            className={`flex flex-col rounded-xl shadow-2xl backdrop-blur-xl border overflow-hidden ${className}`}
-            // dynamic border color based on theme
-            borderColor={theme.colors.border.secondary}
+            transition={{ duration: 0 }}
+            className={`flex flex-col rounded-xl shadow-2xl backdrop-blur-xl overflow-hidden ${className}`}
         >
             {/* Drag Handle / Header */}
             <div
-                className="flex items-center justify-between px-3 py-2 cursor-grab active:cursor-grabbing select-none"
-                style={{ backgroundColor: theme.colors.bg.secondary + '90' }}
+                onPointerDown={(e) => dragControls.start(e)}
+                className="flex items-center justify-between px-3 py-2 cursor-grab active:cursor-grabbing select-none border-b"
+                style={{
+                    backgroundColor: theme.colors.bg.tertiary,
+                    borderColor: theme.colors.border.secondary
+                }}
             >
                 {/* Visual texture for grip */}
                 <div className="opacity-50"><GripVertical size={14} color={theme.colors.text.tertiary} /></div>

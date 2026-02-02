@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState } from 'react';
 
 const PanelContext = createContext();
 
@@ -7,40 +7,30 @@ export const PANEL_IDS = {
     MAIN: 'mainPanel'
 };
 
-const DEFAULT_PANEL_STATE = {
-    [PANEL_IDS.INPUT]: {
-        isOpen: true,
-        position: { x: window.innerWidth / 2 - 250, y: window.innerHeight - 100 }, // Bottom center-ish
-        size: { width: 500, height: 60 },
-        isMinimized: false
-    },
-    [PANEL_IDS.MAIN]: {
-        isOpen: false,
-        position: { x: window.innerWidth - 420, y: 20 }, // Right side
-        size: { width: 400, height: window.innerHeight - 40 },
-        mode: 'unified' // 'unified' | 'history' | 'artifacts'
-    }
-};
-
 export const PanelProvider = ({ children }) => {
-    // Load persisted state or use defaults
-    const [panels, setPanels] = useState(() => {
-        const saved = localStorage.getItem('brick_panel_state_v1');
-        return saved ? JSON.parse(saved) : DEFAULT_PANEL_STATE;
+    // Minimal mock state for now to prevent crashes
+    const [panels, setPanels] = useState({
+        [PANEL_IDS.INPUT]: { isOpen: true, position: { x: window.innerWidth - 500, y: window.innerHeight - 200 }, size: { width: 450, height: 120 } },
+        [PANEL_IDS.MAIN]: { isOpen: true, position: { x: window.innerWidth - 500, y: 100 }, size: { width: 450, height: 720 } }
     });
 
-    // Mock Session State for Branching Logic
     const [activeSession, setActiveSession] = useState({
         id: 'session-main',
         branchName: 'Main',
-        parentId: null,
-        history: [] // This would connect to backend later
+        history: []
     });
 
-    // Persist on change
-    useEffect(() => {
-        localStorage.setItem('brick_panel_state_v1', JSON.stringify(panels));
-    }, [panels]);
+    // Global Floating Tabs State
+    const [openTabs, setOpenTabs] = useState([
+        { id: 'proj-1', name: 'Drone_v1.brick', type: 'project', icon: 'Package' },
+        { id: 'proj-2', name: 'Robotic_Arm.brick', type: 'project', icon: 'Package' },
+        { id: 'file-1', name: 'design_plan.md', type: 'document', icon: 'FileText' },
+        { id: 'file-2', name: 'geometry.kcl', type: 'code', icon: 'Code' },
+        { id: 'file-3', name: 'bom.md', type: 'document', icon: 'FileText' },
+    ]);
+    const [activeTab, setActiveTab] = useState('proj-1');
+
+    const [activeArtifact, setActiveArtifact] = useState(null);
 
     const updatePanel = (id, updates) => {
         setPanels(prev => ({
@@ -49,22 +39,31 @@ export const PanelProvider = ({ children }) => {
         }));
     };
 
-    const togglePanel = (id, forceState = null) => {
-        setPanels(prev => ({
+    const addMessageToSession = (message) => {
+        setActiveSession(prev => ({
             ...prev,
-            [id]: {
-                ...prev[id],
-                isOpen: forceState !== null ? forceState : !prev[id].isOpen
-            }
+            history: [...prev.history, {
+                id: Date.now(),
+                role: 'user',
+                content: message,
+                timestamp: new Date().toISOString()
+            }]
         }));
     };
 
-    const setPosition = (id, position) => {
-        updatePanel(id, { position });
+    const togglePanel = (id) => {
+        setPanels(prev => ({
+            ...prev,
+            [id]: { ...prev[id], isOpen: !prev[id].isOpen }
+        }));
     };
 
-    const setSize = (id, size) => {
-        updatePanel(id, { size });
+    const setPosition = (id, position) => updatePanel(id, { position });
+    const setSize = (id, size) => updatePanel(id, { size });
+
+    const viewArtifact = (artifact) => {
+        setActiveArtifact(artifact);
+        updatePanel(PANEL_IDS.MAIN, { isOpen: true });
     };
 
     return (
@@ -76,6 +75,15 @@ export const PanelProvider = ({ children }) => {
             setSize,
             activeSession,
             setActiveSession,
+            activeArtifact,
+            activeArtifact,
+            setActiveArtifact,
+            viewArtifact,
+            addMessageToSession,
+            openTabs,
+            setOpenTabs,
+            activeTab,
+            setActiveTab,
             PANEL_IDS
         }}>
             {children}

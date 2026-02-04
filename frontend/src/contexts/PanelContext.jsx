@@ -20,13 +20,11 @@ export const PanelProvider = ({ children }) => {
     const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
     const [activeArtifact, setActiveArtifact] = useState(null);
     const [openTabs, setOpenTabs] = useState([
-        { id: 'proj-1', name: 'Drone_v1.brick', type: 'project', icon: 'Package' },
-        { id: 'proj-2', name: 'Robotic_Arm.brick', type: 'project', icon: 'Package' },
-        { id: 'file-1', name: 'design_plan.md', type: 'document', icon: 'FileText' },
-        { id: 'file-2', name: 'geometry.kcl', type: 'code', icon: 'Code' },
-        { id: 'file-3', name: 'bom.md', type: 'document', icon: 'FileText' },
+        { id: 'chat', name: 'Conversation history', type: 'chat', icon: 'History' }
     ]);
-    const [activeTab, setActiveTab] = useState('proj-1');
+    const [activeTab, setActiveTab] = useState('chat');
+    const [isSubmitting, setIsSubmitting] = useState(false);
+    const [passiveThoughts, setPassiveThoughts] = useState([]);
 
     const activeSession = sessions.find(s => s.id === activeSessionId) || sessions[0];
 
@@ -65,6 +63,28 @@ export const PanelProvider = ({ children }) => {
     useEffect(() => {
         fetchSessions();
     }, []);
+
+    const fetchPassiveThoughts = useCallback(async () => {
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/agents/thoughts`);
+            if (!response.ok) return;
+            const data = await response.json();
+            if (data.thoughts && data.thoughts.length > 0) {
+                setPassiveThoughts(prev => {
+                    // Keep last 5 thoughts to prevent clutter
+                    const combined = [...prev, ...data.thoughts];
+                    return combined.slice(-5);
+                });
+            }
+        } catch (err) {
+            // Silently fail for polling
+        }
+    }, []);
+
+    useEffect(() => {
+        const interval = setInterval(fetchPassiveThoughts, 3000); // Relax to 3s
+        return () => clearInterval(interval);
+    }, [fetchPassiveThoughts]);
 
     const updatePanel = (id, updates) => {
         setPanels(prev => ({
@@ -155,7 +175,30 @@ export const PanelProvider = ({ children }) => {
     };
 
     const viewArtifact = (artifact) => {
+        // artifact should have { id, name, type, ... }
+        if (!artifact || !artifact.id) return;
+
         setActiveArtifact(artifact);
+
+        // Tab Lifecycle Wiring
+        setOpenTabs(prev => {
+            const exists = prev.find(t => t.id === artifact.id);
+            if (exists) return prev;
+
+            // Map artifact type to icon
+            let icon = 'Box';
+            if (artifact.type === 'document' || artifact.id.endsWith('.md')) icon = 'FileText';
+            if (artifact.type === 'code' || artifact.id.endsWith('.py') || artifact.id.endsWith('.js')) icon = 'Code';
+
+            return [...prev, {
+                id: artifact.id,
+                name: artifact.name || artifact.title || artifact.id.split('/').pop(),
+                type: artifact.type || 'artifact',
+                icon: icon
+            }];
+        });
+
+        setActiveTab(artifact.id);
         updatePanel(PANEL_IDS.MAIN, { isOpen: true });
     };
 
@@ -186,6 +229,10 @@ export const PanelProvider = ({ children }) => {
             activeTab,
             setActiveTab,
             fetchSessions,
+            isSubmitting,
+            setIsSubmitting,
+            passiveThoughts,
+            setPassiveThoughts,
             PANEL_IDS
         }}>
             {children}

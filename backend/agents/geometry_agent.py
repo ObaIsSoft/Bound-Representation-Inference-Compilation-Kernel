@@ -158,8 +158,10 @@ class GeometryAgent:
              result = asyncio.run(self.engine.compile(geometry_tree, format="glb"))
              if result.success:
                  gltf_data = result.payload
+                 model_id = result.metadata.get("model_id")
              else:
                  logger.error(f"Hybrid Engine Failed: {result.error}")
+                 model_id = None
                  
         except Exception as e:
              logger.error(f"Hybrid Compile Exception: {e}")
@@ -188,6 +190,7 @@ class GeometryAgent:
             "hwc_isa": isa if mode == "parametric" else {},
             "geometry_tree": geometry_tree,
             "gltf_data": gltf_data,
+            "model_id": model_id if 'model_id' in locals() else None,
             "validation_logs": validation.get("logs", []),
             "physics_validation": physics_validation,
             "physics_metadata": physics_validation["physics_metadata"]

@@ -1,4 +1,5 @@
 import React, { useState, useRef } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useTheme } from '../../contexts/ThemeContext';
 import { usePanel } from '../../contexts/PanelContext';
 import DraggablePanel from '../shared/DraggablePanel';
@@ -7,9 +8,25 @@ import { LLM_PROVIDERS } from '../../utils/constants';
 
 const GlobalInputConsole = () => {
     const { theme } = useTheme();
-    const { PANEL_IDS, panels, togglePanel, addMessageToSession, isHistoryModalOpen, setIsHistoryModalOpen, branchSession, activeSessionId } = usePanel();
+    const location = useLocation();
+    const {
+        PANEL_IDS,
+        panels,
+        togglePanel,
+        addMessageToSession,
+        isHistoryModalOpen,
+        setIsHistoryModalOpen,
+        branchSession,
+        activeSessionId,
+        setActiveSessionId,
+        fetchSessions,
+        activeTab,
+        activeArtifact,
+        isSubmitting,
+        setIsSubmitting
+    } = usePanel();
+
     const [message, setMessage] = useState('');
-    const [isSubmitting, setIsSubmitting] = useState(false);
     const [llmProvider, setLlmProvider] = useState('groq');
     const [attachedImages, setAttachedImages] = useState([]);
     const [isRecording, setIsRecording] = useState(false);
@@ -30,17 +47,26 @@ const GlobalInputConsole = () => {
         setIsSubmitting(true);
 
         try {
-            // 1. Update local state optimistically
-            addMessageToSession(activeSessionId, 'user', userMsg);
+            // 1. Gather View Context (Context Injection)
+            const context = {
+                pathname: location.pathname,
+                activeTab: activeTab,
+                activeArtifact: activeArtifact?.id || null,
+                timestamp: new Date().toISOString()
+            };
 
-            // 2. Call Backend
-            const response = await fetch('http://localhost:8000/api/chat/requirements', {
+            // 2. Update local state optimistically
+            addMessageToSession(activeSessionId, 'user', userMsg, { context });
+
+            // 3. Call Generic Chat Backend
+            const response = await fetch('http://localhost:8000/api/chat', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     message: userMsg,
                     session_id: activeSessionId,
-                    ai_model: llmProvider
+                    ai_model: llmProvider,
+                    context: context
                 })
             });
 
@@ -48,26 +74,20 @@ const GlobalInputConsole = () => {
 
             const data = await response.json();
 
-            // 3. Update sessions and activeSessionId if it's a new session
-            if (data.session_id) {
-                if (!activeSessionId) {
-                    setActiveSessionId(data.session_id);
-                }
+            // 4. Update sessions and activeSessionId if it's a new session
+            if (data.session_id && data.session_id !== activeSessionId) {
+                setActiveSessionId(data.session_id);
                 await fetchSessions();
             }
 
-            // 4. Add agent response to session (this might be redundant if fetchSessions is fast, 
-            // but keeps UI snappy)
+            // 5. Add agent response to session
             addMessageToSession(data.session_id, 'agent', data.response, {
-                feasibility: data.feasibility,
-                requirements_complete: data.requirements_complete,
-                requirements: data.requirements
+                intent: data.intent
             });
 
         } catch (err) {
             console.error('Chat error:', err);
-            // Optionally add an error message to the thread
-            addMessageToSession(activeSessionId, 'agent', 'Sorry, I encountered an error processing your request. Please check the backend console.');
+            addMessageToSession(activeSessionId, 'agent', 'Sorry, I encountered an error processing your request.');
         } finally {
             setIsSubmitting(false);
             setAttachedImages([]);

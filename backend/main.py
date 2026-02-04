@@ -472,6 +472,56 @@ async def transcribe_audio(file: UploadFile = File(...)):
     }
 
 
+class ChatRequest(BaseModel):
+    message: str
+    session_id: Optional[str] = None
+    ai_model: str = "groq"
+    context: Optional[Dict[str, Any]] = {} # For view context injection
+
+@app.post("/api/chat")
+async def chat_endpoint(req: ChatRequest):
+    """
+    Generic Chat Endpoint for the Reactive BRICK Interface.
+    """
+    logger.info(f"Generic Chat Request: {req.message[:50]}... Session: {req.session_id}")
+    
+    # 1. Get or Create Session
+    session_id = req.session_id or f"session-{int(time.time())}"
+    session = conversation_manager.get_or_create(session_id)
+    
+    # 2. Add user message with context
+    session.add_message("user", req.message, metadata=req.context)
+    
+    # 3. Instantiate Agent
+    from agents.conversational_agent import ConversationalAgent
+    agent = ConversationalAgent(model_name=req.ai_model)
+    
+    # 4. Run Agent
+    # Prepare history for agent
+    history = []
+    for m in session.messages:
+        history.append({"role": m.role, "content": m.content})
+        
+    result = agent.run({
+        "input_text": req.message,
+        "context": history[:-1] # History excluding the message we just added
+    })
+    
+    response_text = result.get("response", "I am standing by.")
+    intent = result.get("intent", "chat")
+    
+    # 5. Add agent response to session
+    session.add_message("agent", response_text, metadata={"intent": intent})
+    
+    # Auto-save
+    conversation_manager._auto_save()
+    
+    return {
+        "response": response_text,
+        "intent": intent,
+        "session_id": session_id
+    }
+
 # --- Phase 1 & 2: Requirements Gathering Chat Logic ---
 
 class ChatRequirementsRequest(BaseModel):
@@ -1249,6 +1299,23 @@ async def cost_estimate_endpoint(req: EstimateRequest):
         "mass_kg": 5.0 # Need to link with mass properties in real flow
     }
     return agent.quick_estimate(params, currency=req.currency)
+
+
+@app.get("/api/geometry/model/{model_id}")
+async def get_geometry_model(model_id: str):
+    """
+    Serves a compiled GLB model from the Hybrid Engine cache.
+    Used by GenomeViewer for real-time 3D rendering.
+    """
+    from geometry.hybrid_engine import get_engine
+    engine = get_engine()
+    data = engine.cache.get(model_id)
+    
+    if not data:
+        raise HTTPException(status_code=404, detail="Model not found or expired from cache.")
+        
+    from fastapi.responses import Response
+    return Response(content=data, media_type="model/gltf-binary")
 
 
 # --- Physics API ---
@@ -2095,227 +2162,53 @@ class ChatRequest(BaseModel):
     language: str = "en"
     focusedPodId: Optional[str] = None # Phase 9: Recursive ISA
 
-@app.post("/api/chat")
-async def chat(
+@app.post("/api/chat/discovery")
+async def chat_discovery(
     message: str = Form(""),
+    llm_provider: str = Form("groq"),
     context: str = Form("[]"),
-    aiModel: str = Form("mock"),
     conversation_id: Optional[str] = Form(None),
-    language: str = Form("en"),
-    focusedPodId: Optional[str] = Form(None),
+    source: str = Form("text"),
     voice: Optional[UploadFile] = File(None)
 ):
     """
-    Conversational Interface with Multi-Turn Requirement Gathering.
-    Supports both text and voice input (transcribed via STTAgent).
+    Landing Page Entry Point for Requirements Gathering.
+    Handles multi-modal input (Voice/Text) and initializes the discovery flow.
     """
     import json
     from agents.conversational_agent import ConversationalAgent
-    from agents.stt_agent import get_stt_agent
     from conversation_state import conversation_manager
-    from requirement_gatherer import RequirementGatherer
-    import uuid
     
-    # Optional STT Processing
-    voice_data = None
+    # 1. Process Voice if present
     if voice:
-        logger.info(f"[CHAT] Processing voice input: {voice.filename}")
+        from agents.stt_agent import get_stt_agent
         stt_agent = get_stt_agent()
         voice_data = await voice.read()
-        transcript = stt_agent.transcribe(voice_data, filename=voice.filename)
-        logger.info(f"[CHAT] Voice Transcript: '{transcript}'")
-        message = transcript # Use transcript as the message for the conversational agent
+        message = stt_agent.transcribe(voice_data, filename=voice.filename)
 
-    # Parse context from JSON string (sent via Form)
-    try:
-        context_list = json.loads(context)
-    except:
-        context_list = []
+    # 2. Get/Create Session
+    session_id = conversation_id or f"discovery-{int(time.time())}"
+    session = conversation_manager.get_or_create(session_id)
+    
+    # 3. Add Message
+    session.add_message("user", message, metadata={"source": source, "llm": llm_provider})
+    
+    # 4. Run Conversational Agent (Discovery Mode)
+    agent = ConversationalAgent(model_name=llm_provider)
+    result = agent.run({"input_text": message, "mode": "discovery"})
+    
+    response_text = result.get("response", "Analyzing requirements...")
+    session.add_message("agent", response_text, metadata={"intent": result.get("intent")})
+    
+    conversation_manager._auto_save()
+    
+    return {
+        "response": response_text,
+        "session_id": session_id,
+        "intent": result.get("intent")
+    }
 
-    # Get or create conversation
-    conv_id = conversation_id or str(uuid.uuid4())
-    conversation = conversation_manager.get_or_create(conv_id, language)
-    
-    # Add user message to history
-    conversation.add_message("user", message)
-    
-    # Initialize provider
-    provider = None
-    
-    # 1. Ollama
-    if aiModel == "ollama":
-        try:
-            from llm.ollama_provider import OllamaProvider
-            provider = OllamaProvider(model_name="llama3.2")
-        except ImportError:
-            logger.error("OllamaProvider import failed.")
-    
-    # 2. Groq
-    elif aiModel == "groq":
-        try:
-            from llm.groq_provider import GroqProvider
-            provider = GroqProvider()
-        except ImportError:
-            logger.error("GroqProvider import failed.")
-
-    # 3. Hugging Face
-    elif aiModel == "huggingface":
-        try:
-            from llm.huggingface_provider import HuggingFaceProvider
-            provider = HuggingFaceProvider() # Uses default meta-llama/Meta-Llama-3-8B-Instruct
-        except ImportError:
-            logger.error("HuggingFaceProvider import failed.")
-            
-    # 4. OpenAI
-    elif aiModel == "openai":
-        from llm.openai_provider import OpenAIProvider
-        provider = OpenAIProvider()
-        
-    # 3. Gemini (multiple variants)
-    elif aiModel.startswith("gemini"):
-        from llm.gemini_provider import GeminiProvider
-        
-        model_map = {
-            "gemini-robotics": "gemini-robotics-er-1.5-preview",
-            "gemini-3-pro": "gemini-3-pro-preview",
-            "gemini-3-flash": "gemini-3-flash-preview",
-            "gemini-2.5-flash": "gemini-2.5-flash",
-            "gemini-2.5-pro": "gemini-2.5-pro"
-        }
-        
-        model_name = model_map.get(aiModel, "gemini-3-flash-preview")
-        provider = GeminiProvider(model_name=model_name)
-        
-    # Default / Fallback
-    if not provider:
-        logger.info(f"No specific provider request. Using Factory default (requested: {aiModel})")
-        from llm.factory import get_llm_provider
-        provider = get_llm_provider()
-
-    # Instantiate agents
-    agent = ConversationalAgent(provider=provider)
-    gatherer = RequirementGatherer(agent)
-    
-    
-    # Run conversational agent to understand intent
-    result = agent.run({
-        "input_text": message,
-        "mode": "chat",
-        "context": context_list
-    })
-    
-    intent = result.get("intent", "unknown")
-    entities = result.get("entities", {})
-
-    # [FIX] Override intent if we are already in a design gathering flow
-    # This prevents answers to questions (e.g. "250kmh") from being misclassified as "analysis_request" or "followup"
-    if conversation.design_type:
-        logger.info(f"Overriding intent to 'design_request' due to active design session (Original: {intent})")
-        intent = "design_request"
-
-    
-    # Check if this is a design request
-    if intent == "design_request":
-        # === REQUIREMENT GATHERING PHASE ===
-        
-        # Identify design type if not already set
-        if not conversation.design_type:
-            design_type = gatherer.identify_design_type(message, intent, entities)
-            if design_type:
-                conversation.design_type = design_type
-                logger.info(f"Identified design type: {design_type}")
-        
-        # Extract any requirements from current message
-        if conversation.design_type:
-            extracted = gatherer.extract_answers(message, conversation)
-            for key, value in extracted.items():
-                conversation.update_requirement(key, value)
-                logger.info(f"Extracted requirement: {key} = {value}")
-        
-        # Check if we're ready for planning
-        ready = gatherer.check_readiness(conversation)
-        conversation.ready_for_planning = ready
-        
-        if not ready:
-            # Generate clarifying questions
-            questions = gatherer.generate_questions(conversation, max_questions=3)
-            
-            if questions:
-                # Format response with questions
-                summary = gatherer.generate_summary(conversation)
-                question_text = "\n\n".join([f"{i+1}. {q}" for i, q in enumerate(questions)])
-                
-                response_text = f"{result['response']}\n\n{summary}\n\nTo proceed, I need a bit more information:\n\n{question_text}"
-                
-                conversation.add_message("agent", response_text)
-                
-                # Return questions without triggering orchestrator
-                return {
-                    "intent": intent,
-                    "entities": entities,
-                    "response": response_text,
-                    "logs": result.get("logs", []),
-                    "conversation_id": conv_id,
-                    "gathering_requirements": True,
-                    "progress": {
-                        "gathered": len(conversation.gathered_requirements),
-                        "total": len(questions) + len(conversation.gathered_requirements)
-                    }
-                }
-        
-        # === READY FOR PLANNING ===
-        logger.info(f"Requirements complete for {conv_id}. Triggering orchestrator...")
-        
-        # Run Orchestrator with gathered requirements
-        from orchestrator import run_orchestrator
-        
-        orchestrator_result = await run_orchestrator(
-            user_intent=f"{intent}: {conversation.design_type}",
-            project_id=conv_id,
-            mode="plan",
-            focused_pod_id=focusedPodId,
-            voice_data=voice_data # Pass raw audio to swarm (Phase 27)
-        )
-        
-        # Combine responses
-        if "messages" in orchestrator_result:
-            dreamer_messages = []
-            
-            # Add completion message
-            completion_msg = "Perfect! I have all the information needed. Generating your design plan..."
-            conversation.add_message("agent", completion_msg)
-            
-            dreamer_messages.append({
-                "type": "text",
-                "content": completion_msg,
-                "agent": "THE_DREAMER"
-            })
-            
-            # Append orchestrator artifacts
-            result["messages"] = dreamer_messages + orchestrator_result["messages"]
-            
-            # Register plan in plan_reviews
-            for msg in orchestrator_result["messages"]:
-                if msg.get("type") == "artifact" and msg.get("id"):
-                    plan_id = msg["id"]
-                    if plan_id not in plan_reviews:
-                        plan_reviews[plan_id] = PlanReview(plan_id=plan_id)
-                        logger.info(f"Registered plan {plan_id} in plan_reviews")
-        
-        result["conversation_id"] = conv_id
-        result["gathering_requirements"] = False
-        
-        # Clear conversation state after planning
-        conversation_manager.delete_conversation(conv_id)
-        
-        return result
-    
-    else:
-        # Non-design request (help, chat, etc.)
-        conversation.add_message("agent", result["response"])
-        result["conversation_id"] = conv_id
-        result["gathering_requirements"] = False
-        return result
+# --- Plan Review Endpoints ---
 
 
 # --- Plan Review Endpoints ---

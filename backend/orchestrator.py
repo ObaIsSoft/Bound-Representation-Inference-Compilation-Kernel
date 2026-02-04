@@ -352,7 +352,8 @@ def geometry_node(state: AgentState) -> Dict[str, Any]:
     return {
         "kcl_code": result["kcl_code"],
         "geometry_tree": result["geometry_tree"],
-        "gltf_data": result["gltf_data"]
+        "gltf_data": result["gltf_data"],
+        "model_id": result.get("model_id")
     }
 
 def manufacturing_node(state: AgentState) -> Dict[str, Any]:
@@ -1053,7 +1054,7 @@ def planning_node(state: AgentState) -> Dict[str, Any]:
         "approval_required": True,
         # Return an artifact message to UI
         "messages": [{
-            "type": "artifact",
+            "type": "document",
             "title": doc_result["document"]["title"], 
             "content": plan_md,
             "id": f"plan-{state.get('project_id')}"

@@ -36,7 +36,7 @@ export default function Landing() {
   const handleNewChat = () => {
     setMode('idle');
     setUserIntent('');
-    setAudioStream(undefined);
+    setAudioStream(null);
     setActivePanel(null); // Close any active panels
   };
 
@@ -123,7 +123,7 @@ export default function Landing() {
         formData.append(`attachment_${index}`, file);
       });
 
-      const response = await fetch('http://localhost:8000/api/chat', {
+      const response = await fetch('http://localhost:8000/api/chat/discovery', {
         method: 'POST',
         body: formData,
       });
@@ -145,7 +145,7 @@ export default function Landing() {
   const resetToIdle = () => {
     if (audioStream) {
       audioStream.getTracks().forEach(track => track.stop());
-      setAudioStream(undefined);
+      setAudioStream(null);
     }
     setMode('idle');
     setUserIntent('');

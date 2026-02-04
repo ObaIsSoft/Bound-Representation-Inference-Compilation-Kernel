@@ -125,6 +125,9 @@ class HybridGeometryEngine:
             self.compile_count += 1
             self.total_compile_time += elapsed
             
+            # Store cache key for frontend retrieval
+            result.metadata["model_id"] = cache_key
+            
         return result
 
     def _dict_to_node(self, d: Dict) -> GeometryNode:

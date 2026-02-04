@@ -3,6 +3,9 @@ import { useTheme } from '../../contexts/ThemeContext';
 import { usePanel } from '../../contexts/PanelContext';
 import DraggablePanel from '../shared/DraggablePanel';
 import { X, ChevronDown, ChevronUp, Box, FileText, CheckCircle2, History, List } from 'lucide-react';
+import ChatMessage from '../shared/ChatMessage';
+import MarkdownViewer from '../viewers/MarkdownViewer';
+import GenomeViewer from '../viewers/GenomeViewer';
 
 const ThoughtBlock = ({ thought, theme }) => {
     const [isExpanded, setIsExpanded] = useState(false);
@@ -25,9 +28,10 @@ const ThoughtBlock = ({ thought, theme }) => {
     );
 };
 
-const ArtifactBlock = ({ artifact, theme }) => {
+const ArtifactBlock = ({ artifact, theme, onView }) => {
     return (
         <div
+            onClick={() => onView({ id: artifact.id, name: artifact.title, type: artifact.type })}
             className="my-4 rounded-xl border p-4 bg-black/20 shadow-lg group hover:border-white/20 transition-all cursor-pointer"
             style={{ borderColor: theme.colors.border.secondary }}
         >
@@ -60,16 +64,70 @@ const MainPanel = () => {
         activeSession,
         togglePanel,
         PANEL_IDS,
-        setIsHistoryModalOpen
+        setIsHistoryModalOpen,
+        activeTab,
+        activeArtifact,
+        viewArtifact,
+        openTabs
     } = usePanel();
     const scrollRef = useRef(null);
 
-    // Auto-scroll to bottom when new messages arrive
+    // Auto-scroll to bottom when new messages arrive (only if in chat tab)
     useEffect(() => {
-        if (scrollRef.current) {
+        if (scrollRef.current && activeTab === 'chat') {
             scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
         }
-    }, [activeSession.history]);
+    }, [activeSession?.history, activeTab]);
+
+    // Find active tab metadata
+    const activeTabData = openTabs.find(t => t.id === activeTab);
+
+    // Render Content Based on Active Tab
+    const renderContent = () => {
+        if (activeTab === 'chat' || !activeTab) {
+            return (
+                <div className="flex flex-col min-h-full p-4">
+                    <div className="flex-grow" />
+                    <div className="flex flex-col gap-6 py-4">
+                        {activeSession?.history.length === 0 ? (
+                            <div className="text-center opacity-30 text-xs mb-10 italic" style={{ color: theme.colors.text.secondary }}>
+                                No activity recorded. Send a prompt to begin.
+                            </div>
+                        ) : (
+                            activeSession?.history.map((msg, idx) => {
+                                if (msg.role === 'thought') {
+                                    return <ThoughtBlock key={idx} thought={msg.content} theme={theme} />;
+                                }
+                                if (msg.role === 'artifact') {
+                                    return <ArtifactBlock key={idx} artifact={msg} theme={theme} onView={viewArtifact} />;
+                                }
+                                return <ChatMessage key={idx} msg={msg} />;
+                            })
+                        )}
+                    </div>
+                </div>
+            );
+        }
+
+        // Artifact/File Rendering
+        if (activeTab.endsWith('.md') || activeTabData?.type === 'document') {
+            return <MarkdownViewer path={activeTab} fileName={activeTabData?.name || 'Document'} />;
+        }
+
+        if (activeTab.includes('genome') || activeTabData?.type === 'artifact') {
+            return <GenomeViewer
+                path={activeTab}
+                fileName={activeTabData?.name || 'Design'}
+                modelId={activeTabData?.metadata?.model_id}
+            />;
+        }
+
+        return (
+            <div className="h-full flex items-center justify-center opacity-30 text-xs italic">
+                Unsupported file type: {activeTab}
+            </div>
+        );
+    };
 
     // Simplified Header Content
     const headerContent = (
@@ -80,10 +138,10 @@ const MainPanel = () => {
                 </div>
                 <div>
                     <div className="text-[10px] font-bold uppercase tracking-widest leading-none" style={{ color: theme.colors.text.primary }}>
-                        {activeSession.title || 'Session History'}
+                        {activeTabData?.name || activeSession?.title || 'Session'}
                     </div>
                     <div className="text-[9px] opacity-40 uppercase tracking-tighter font-black mt-0.5" style={{ color: theme.colors.text.secondary }}>
-                        {activeSession.branchName || 'Main'} Branch
+                        {activeTab === 'chat' ? (activeSession?.branchName || 'Main') + ' Branch' : activeTabData?.type || 'File'}
                     </div>
                 </div>
             </div>
@@ -114,47 +172,10 @@ const MainPanel = () => {
         >
             <div
                 ref={scrollRef}
-                className="h-full flex flex-col overflow-y-auto p-4 custom-scrollbar"
+                className="h-full flex flex-col overflow-y-auto custom-scrollbar relative"
                 style={{ backgroundColor: theme.colors.bg.secondary + '80' }} // Slight transparency
             >
-                <div className="flex flex-col min-h-full">
-                    {/* Spacer to push content to bottom when list is short */}
-                    <div className="flex-grow" />
-
-                    <div className="flex flex-col gap-6 py-4">
-                        {activeSession.history.length === 0 ? (
-                            <div className="text-center opacity-30 text-xs mb-10 italic" style={{ color: theme.colors.text.secondary }}>
-                                No activity recorded. Send a prompt to begin.
-                            </div>
-                        ) : (
-                            activeSession.history.map((msg) => {
-                                if (msg.role === 'thought') {
-                                    return <ThoughtBlock key={msg.id} thought={msg.content} theme={theme} />;
-                                }
-                                if (msg.role === 'artifact') {
-                                    return <ArtifactBlock key={msg.id} artifact={msg} theme={theme} />;
-                                }
-
-                                return (
-                                    <div
-                                        key={msg.id}
-                                        className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
-                                    >
-                                        <div
-                                            className={`p-3 rounded-xl text-sm leading-relaxed shadow-sm ${msg.role === 'user'
-                                                ? 'bg-white/10 rounded-tr-none'
-                                                : 'bg-black/20 rounded-tl-none border border-white/5'
-                                                }`}
-                                            style={{ color: theme.colors.text.primary, maxWidth: '90%' }}
-                                        >
-                                            {msg.content}
-                                        </div>
-                                    </div>
-                                );
-                            })
-                        )}
-                    </div>
-                </div>
+                {renderContent()}
             </div>
         </DraggablePanel>
     );

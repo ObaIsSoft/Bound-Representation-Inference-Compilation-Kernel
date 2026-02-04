@@ -97,7 +97,7 @@ def document_plan_node(state: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "plan_markdown": plan["document"]["content"],
         "messages": [{
-            "type": "artifact",
+            "type": "document",
             "title": "Design Plan",
             "content": plan["document"]["content"],
             "id": f"plan-{state.get('project_id')}"
@@ -252,9 +252,9 @@ def final_document_node(state: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "final_documentation": final_doc["document"]["content"],
         "messages": [{
-            "type": "artifact",
+            "type": "document",
             "title": "Final Project Documentation",
-            "content": final_doc["document"]["content"],
+            "content": plan_md if 'plan_md' in locals() else final_doc["document"]["content"],
             "id": f"final-doc-{state.get('project_id')}"
         }]
     }

@@ -1,6 +1,8 @@
-import React, { createContext, useContext, useState } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 
 const PanelContext = createContext();
+
+const API_BASE_URL = 'http://localhost:8000';
 
 export const PANEL_IDS = {
     INPUT: 'inputConsole',
@@ -8,85 +10,15 @@ export const PANEL_IDS = {
 };
 
 export const PanelProvider = ({ children }) => {
-    // Minimal mock state for now to prevent crashes
     const [panels, setPanels] = useState({
         [PANEL_IDS.INPUT]: { isOpen: true, position: { x: window.innerWidth - 650, y: window.innerHeight - 250 }, size: { width: 600, height: 180 } },
         [PANEL_IDS.MAIN]: { isOpen: true, position: { x: window.innerWidth - 500, y: 50 }, size: { width: 450, height: 800 } }
     });
 
-    const [sessions, setSessions] = useState([
-        {
-            id: 'session-main',
-            title: 'Implementing Conversation History',
-            branchName: 'Main',
-            lastModified: new Date(Date.now() - 1 * 60000).toISOString(),
-            status: 'active',
-            history: []
-        },
-        {
-            id: 'session-2',
-            title: 'Integrating Forensic Agent',
-            branchName: 'brick',
-            lastModified: new Date(Date.now() - 3 * 3600000).toISOString(),
-            status: 'blocked',
-            history: []
-        },
-        {
-            id: 'session-3',
-            title: 'Adding User Icon',
-            branchName: 'brick',
-            lastModified: new Date(Date.now() - 4 * 86400000).toISOString(),
-            status: 'recent',
-            history: []
-        },
-        {
-            id: 'session-4',
-            title: 'Evolving Tier 4 Agent Capabilities',
-            branchName: 'Main',
-            lastModified: new Date(Date.now() - 7 * 86400000).toISOString(),
-            status: 'recent',
-            history: []
-        },
-        {
-            id: 'session-6',
-            title: 'Fixing Light Pen Persistence',
-            branchName: 'Main',
-            lastModified: new Date(Date.now() - 7 * 86400000).toISOString(),
-            status: 'recent',
-            history: []
-        },
-        {
-            id: 'session-5',
-            title: 'Debugging Simulation UI',
-            branchName: 'agent',
-            lastModified: new Date(Date.now() - 7 * 86400000).toISOString(),
-            status: 'other',
-            history: []
-        },
-        {
-            id: 'session-7',
-            title: 'Deploying Static Portfolio',
-            branchName: 'portfolio',
-            lastModified: new Date(Date.now() - 7 * 86400000).toISOString(),
-            status: 'other',
-            history: []
-        },
-        {
-            id: 'session-8',
-            title: 'Refining Technical Report',
-            branchName: 'os',
-            lastModified: new Date(Date.now() - 14 * 86400000).toISOString(),
-            status: 'other',
-            history: []
-        }
-    ]);
-
-    const [activeSessionId, setActiveSessionId] = useState('session-main');
+    const [sessions, setSessions] = useState([]);
+    const [activeSessionId, setActiveSessionId] = useState(null);
     const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
-
-    const activeSession = sessions.find(s => s.id === activeSessionId) || sessions[0];
-
-    // Global Floating Tabs State
+    const [activeArtifact, setActiveArtifact] = useState(null);
     const [openTabs, setOpenTabs] = useState([
         { id: 'proj-1', name: 'Drone_v1.brick', type: 'project', icon: 'Package' },
         { id: 'proj-2', name: 'Robotic_Arm.brick', type: 'project', icon: 'Package' },
@@ -96,7 +28,43 @@ export const PanelProvider = ({ children }) => {
     ]);
     const [activeTab, setActiveTab] = useState('proj-1');
 
-    const [activeArtifact, setActiveArtifact] = useState(null);
+    const activeSession = sessions.find(s => s.id === activeSessionId) || sessions[0];
+
+    const fetchSessions = useCallback(async () => {
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/sessions`);
+            if (!response.ok) throw new Error('Failed to fetch sessions');
+            const data = await response.json();
+            // Transform backend snake_case to frontend camelCase if necessary, 
+            // but our backend classes use the same names mostly.
+            const formattedSessions = data.sessions.map(s => ({
+                id: s.conversation_id,
+                title: s.title,
+                branchName: s.branch_name,
+                parentId: s.parent_id,
+                lastModified: s.updated_at,
+                history: s.messages.map(m => ({
+                    role: m.role,
+                    content: m.content,
+                    timestamp: m.timestamp,
+                    metadata: m.metadata
+                })),
+                status: s.ready_for_planning ? 'active' : 'recent', // Simple mapping
+                gatheredRequirements: s.gathered_requirements
+            }));
+
+            setSessions(formattedSessions);
+            if (!activeSessionId && formattedSessions.length > 0) {
+                setActiveSessionId(formattedSessions[0].id);
+            }
+        } catch (err) {
+            console.error('Session fetch error:', err);
+        }
+    }, [activeSessionId]);
+
+    useEffect(() => {
+        fetchSessions();
+    }, []);
 
     const updatePanel = (id, updates) => {
         setPanels(prev => ({
@@ -105,21 +73,17 @@ export const PanelProvider = ({ children }) => {
         }));
     };
 
-    const addMessageToSession = (message) => {
-        setSessions(prev => prev.map(session => {
-            if (session.id === activeSessionId) {
+    const addMessageToSession = (sessionId, role, content, metadata = {}) => {
+        // Optimistic UI update or full sync from backend
+        setSessions(prev => prev.map(s => {
+            if (s.id === sessionId) {
                 return {
-                    ...session,
+                    ...s,
                     lastModified: new Date().toISOString(),
-                    history: [...session.history, {
-                        id: Date.now(),
-                        role: 'user',
-                        content: message,
-                        timestamp: new Date().toISOString()
-                    }]
+                    history: [...s.history, { role, content, timestamp: new Date().toISOString(), metadata }]
                 };
             }
-            return session;
+            return s;
         }));
     };
 
@@ -129,10 +93,15 @@ export const PanelProvider = ({ children }) => {
         updatePanel(PANEL_IDS.MAIN, { isOpen: true });
     };
 
-    const deleteSession = (sessionId) => {
-        setSessions(prev => prev.filter(s => s.id !== sessionId));
-        if (activeSessionId === sessionId) {
-            setActiveSessionId(null);
+    const deleteSession = async (sessionId) => {
+        try {
+            await fetch(`${API_BASE_URL}/api/sessions/${sessionId}`, { method: 'DELETE' });
+            setSessions(prev => prev.filter(s => s.id !== sessionId));
+            if (activeSessionId === sessionId) {
+                setActiveSessionId(null);
+            }
+        } catch (err) {
+            console.error('Delete session error:', err);
         }
     };
 
@@ -146,61 +115,43 @@ export const PanelProvider = ({ children }) => {
     const setPosition = (id, position) => updatePanel(id, { position });
     const setSize = (id, size) => updatePanel(id, { size });
 
-    const branchSession = () => {
-        const newSession = {
-            id: `session-branch-${Date.now()}`,
-            title: `Branch: ${activeSession.title}`,
-            branchName: activeSession.branchName,
-            lastModified: new Date().toISOString(),
-            status: 'active',
-            parentId: activeSession.id, // Track parent
-            history: [...activeSession.history]
-        };
-        setSessions(prev => [newSession, ...prev]);
-        setActiveSessionId(newSession.id);
-        updatePanel(PANEL_IDS.MAIN, { isOpen: true });
+    const branchSession = async () => {
+        if (!activeSessionId) return;
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/sessions/${activeSessionId}/branch`, { method: 'POST' });
+            if (!response.ok) throw new Error('Branch failed');
+            await fetchSessions();
+            updatePanel(PANEL_IDS.MAIN, { isOpen: true });
+        } catch (err) {
+            console.error('Branch error:', err);
+        }
     };
 
-    const mergeSession = (sessionId) => {
-        const branch = sessions.find(s => s.id === sessionId);
-        if (!branch || !branch.parentId) return;
-
-        const parent = sessions.find(s => s.id === branch.parentId);
-        if (!parent) return;
-
-        // Take only the new messages from the branch
-        const newMessages = branch.history.slice(parent.history.length);
-
-        setSessions(prev => prev
-            .map(s => {
-                if (s.id === parent.id) {
-                    return {
-                        ...s,
-                        lastModified: new Date().toISOString(),
-                        history: [...s.history, ...newMessages]
-                    };
-                }
-                return s;
-            })
-            .filter(s => s.id !== sessionId) // Delete the branch after merge
-        );
-
-        setActiveSessionId(parent.id);
-        setIsHistoryModalOpen(false);
+    const mergeSession = async (sessionId) => {
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/sessions/${sessionId}/merge`, { method: 'POST' });
+            if (!response.ok) throw new Error('Merge failed');
+            await fetchSessions();
+            setIsHistoryModalOpen(false);
+        } catch (err) {
+            console.error('Merge error:', err);
+        }
     };
 
-    const createNewSession = () => {
-        const newSession = {
-            id: `session-${Date.now()}`,
-            title: 'New Conversation',
-            branchName: 'Main',
-            lastModified: new Date().toISOString(),
-            status: 'active',
-            history: []
-        };
-        setSessions(prev => [newSession, ...prev]);
-        setActiveSessionId(newSession.id);
-        updatePanel(PANEL_IDS.MAIN, { isOpen: true });
+    const createNewSession = async () => {
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/sessions`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ title: 'New Conversation' })
+            });
+            const data = await response.json();
+            await fetchSessions();
+            setActiveSessionId(data.conversation_id);
+            updatePanel(PANEL_IDS.MAIN, { isOpen: true });
+        } catch (err) {
+            console.error('Create session error:', err);
+        }
     };
 
     const viewArtifact = (artifact) => {
@@ -234,6 +185,7 @@ export const PanelProvider = ({ children }) => {
             setOpenTabs,
             activeTab,
             setActiveTab,
+            fetchSessions,
             PANEL_IDS
         }}>
             {children}

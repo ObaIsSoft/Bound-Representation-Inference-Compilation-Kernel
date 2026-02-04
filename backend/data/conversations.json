@@ -1,0 +1,56 @@
+{
+  "34af8588-8dca-4cf2-8c39-9a254b4a8bfe": {
+    "conversation_id": "34af8588-8dca-4cf2-8c39-9a254b4a8bfe",
+    "title": "New Conversation",
+    "branch_name": "Main",
+    "parent_id": null,
+    "messages": [
+      {
+        "role": "user",
+        "content": "design a laptop stand",
+        "timestamp": "2026-02-02T16:25:03.824606",
+        "metadata": {}
+      },
+      {
+        "role": "agent",
+        "content": "OpenAI Error: Error code: 401 - {'error': {'message': 'Incorrect API key provided: sk-proj-********************************************************************************************************************************************************-wQA. You can find your API key at https://platform.openai.com/account/api-keys.', 'type': 'invalid_request_error', 'code': 'invalid_api_key', 'param': None}, 'status': 401}",
+        "timestamp": "2026-02-02T16:25:09.509357",
+        "metadata": {}
+      }
+    ],
+    "design_type": null,
+    "gathered_requirements": {},
+    "missing_requirements": [],
+    "ready_for_planning": false,
+    "created_at": "2026-02-02T16:25:03.823205",
+    "updated_at": "2026-02-02T16:25:09.509370",
+    "language": "en"
+  },
+  "session-1770045915": {
+    "conversation_id": "session-1770045915",
+    "title": "New Conversation",
+    "branch_name": "Main",
+    "parent_id": null,
+    "messages": [
+      {
+        "role": "user",
+        "content": "holding my MacBook",
+        "timestamp": "2026-02-02T16:25:15.621336",
+        "metadata": {}
+      },
+      {
+        "role": "agent",
+        "content": "OpenAI Error: Error code: 401 - {'error': {'message': 'Incorrect API key provided: sk-proj-********************************************************************************************************************************************************-wQA. You can find your API key at https://platform.openai.com/account/api-keys.', 'type': 'invalid_request_error', 'code': 'invalid_api_key', 'param': None}, 'status': 401}",
+        "timestamp": "2026-02-02T16:25:17.154980",
+        "metadata": {}
+      }
+    ],
+    "design_type": null,
+    "gathered_requirements": {},
+    "missing_requirements": [],
+    "ready_for_planning": false,
+    "created_at": "2026-02-02T16:25:15.620482",
+    "updated_at": "2026-02-02T16:25:17.154995",
+    "language": "en"
+  }
+}

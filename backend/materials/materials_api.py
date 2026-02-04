@@ -1,13 +1,19 @@
 """
 External Materials API Integration
-Integrates with Materials Project, NIST, and other materials databases.
+Integrates with Materials Project, NIST, AFLOW, OQMD, COD, NOMAD and other materials databases.
 Provides access to 150,000+ materials with comprehensive properties.
 """
 import requests
 import json
 import os
-from typing import Dict, List, Optional, Any
+import re
+import time
+import concurrent.futures
+from typing import Dict, List, Optional, Any, Union
+from abc import ABC, abstractmethod
 import logging
+from dataclasses import dataclass
+from functools import wraps
 
 # Load environment variables from .env file
 try:
@@ -22,7 +28,6 @@ except ImportError:
     pass  # dotenv not installed, will use system environment variables
 
 logger = logging.getLogger(__name__)
-
 
 
 # Try to import new libraries
@@ -41,7 +46,77 @@ except ImportError:
     logger.warning("mendeleev not installed. Element properties will be limited.")
 
 
-class MaterialsProjectAPI:
+@dataclass
+class APIRetryConfig:
+    """Configuration for API retry behavior."""
+    max_retries: int = 3
+    base_delay: float = 1.0
+    max_delay: float = 60.0
+    exponential_base: float = 2.0
+    retry_on_status: tuple = (429, 500, 502, 503, 504)
+
+
+def retry_with_backoff(config: APIRetryConfig = APIRetryConfig()):
+    """Decorator for API calls with exponential backoff retry logic."""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            last_exception = None
+            
+            for attempt in range(config.max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except requests.exceptions.HTTPError as e:
+                    last_exception = e
+                    response = e.response
+                    
+                    # Don't retry on client errors (4xx) except rate limits (429)
+                    if response.status_code < 500 and response.status_code not in config.retry_on_status:
+                        raise
+                    
+                    # Check if we should retry
+                    if response.status_code not in config.retry_on_status and attempt < config.max_retries - 1:
+                        raise
+                        
+                except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+                    last_exception = e
+                    if attempt == config.max_retries - 1:
+                        raise
+                
+                # Calculate delay with exponential backoff and jitter
+                delay = min(
+                    config.base_delay * (config.exponential_base ** attempt),
+                    config.max_delay
+                )
+                # Add small random jitter to avoid thundering herd
+                import random
+                delay += random.uniform(0, 0.1 * delay)
+                
+                logger.warning(f"API call failed (attempt {attempt + 1}/{config.max_retries}). Retrying in {delay:.2f}s...")
+                time.sleep(delay)
+            
+            # All retries exhausted
+            raise last_exception if last_exception else Exception("All retries failed")
+            
+        return wrapper
+    return decorator
+
+
+class BaseMaterialsAPI(ABC):
+    """Abstract base class for materials APIs."""
+    
+    @abstractmethod
+    def search_materials(self, query: str, **kwargs) -> List[Dict]:
+        """Search for materials."""
+        pass
+    
+    @abstractmethod
+    def is_available(self) -> bool:
+        """Check if API is properly configured and available."""
+        pass
+
+
+class MaterialsProjectAPI(BaseMaterialsAPI):
     """
     Integration with Materials Project (materials.org) via official SDK (mp-api).
     Access to 150,000+ materials with DFT-calculated properties.
@@ -49,27 +124,65 @@ class MaterialsProjectAPI:
     
     def __init__(self, api_key: str = None):
         self.api_key = api_key or os.getenv("MATERIALS_PROJECT_API_KEY")
-        if not MP_API_AVAILABLE:
-            self.api_key = None # Disable if SDK not present
+        self.retry_config = APIRetryConfig(max_retries=3, base_delay=2.0)
         
+    def is_available(self) -> bool:
+        return MP_API_AVAILABLE and bool(self.api_key)
     
+    def _safe_get_attr(self, obj, attr: str, default=None):
+        """Safely extract attribute from MP doc or dict."""
+        if obj is None:
+            return default
+        if hasattr(obj, attr):
+            return getattr(obj, attr, default)
+        if isinstance(obj, dict):
+            return obj.get(attr, default)
+        return default
+    
+    def _get_float(self, obj, attr: str) -> Optional[float]:
+        """Safely get float from attribute."""
+        val = self._safe_get_attr(obj, attr, None)
+        if val is None:
+            return None
+        try:
+            if hasattr(val, 'value'):
+                return float(val.value)
+            if isinstance(val, dict):
+                return float(val.get('value', 0))
+            return float(val)
+        except (ValueError, TypeError):
+            return None
+    
+    def _with_timeout(self, func, timeout_sec=5):
+        """Cross-platform timeout using concurrent.futures."""
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(func)
+            try:
+                return future.result(timeout=timeout_sec)
+            except concurrent.futures.TimeoutError:
+                logger.warning(f"Materials Project API call timed out after {timeout_sec}s")
+                return []
+            except Exception as e:
+                logger.error(f"Materials Project API error: {e}")
+                return []
+
+    @retry_with_backoff(APIRetryConfig(max_retries=3, base_delay=2.0))
     def search_materials(self, formula: str = None, elements: List[str] = None, 
                         limit: int = 10) -> List[Dict]:
         """
-        Search for materials using MPRester.
+        Search for materials using MPRester with timeout.
         """
-        if not self.api_key or not MP_API_AVAILABLE:
+        if not self.is_available():
             logger.warning("Materials Project API key missing or SDK not installed.")
             return []
         
-        try:
+        def run_search():
             with MPRester(self.api_key) as mpr:
                 # Prepare query args
                 kwargs = {}
                 if formula:
                     kwargs["formula"] = [formula]
                 if elements:
-                    # mp-api expects list of elements
                     kwargs["elements"] = [e for e in elements if len(e) <= 2]
                 
                 # Fields to retrieve
@@ -87,52 +200,41 @@ class MaterialsProjectAPI:
                 
                 # Convert MPDocs to dictionaries
                 results = []
-                # Limit manually since search might return more
-                for doc in docs: # Process all, then sort and limit
-                    # Helper to safely get attribute from doc object
-                    def get_val(obj, attr):
-                        return getattr(obj, attr, None)
-                        
+                for doc in docs:
                     res = {
-                        "material_id": str(get_val(doc, "material_id")),
-                        "formula_pretty": str(get_val(doc, "formula_pretty")),
-                        "density": float(get_val(doc, "density")) if get_val(doc, "density") else None,
-                        "energy_above_hull": float(get_val(doc, "energy_above_hull")) if get_val(doc, "energy_above_hull") is not None else None,
-                        # Flatten elasticity
+                        "material_id": str(self._safe_get_attr(doc, "material_id")),
+                        "formula_pretty": str(self._safe_get_attr(doc, "formula_pretty")),
+                        "density": self._get_float(doc, "density"),
+                        "energy_above_hull": self._get_float(doc, "energy_above_hull"),
                         "elasticity": {
-                            "G_VRH": float(get_val(doc, "shear_modulus")) if get_val(doc, "shear_modulus") else None,
-                            "K_VRH": float(get_val(doc, "bulk_modulus")) if get_val(doc, "bulk_modulus") else None
+                            "G_VRH": self._get_float(doc, "shear_modulus"),
+                            "K_VRH": self._get_float(doc, "bulk_modulus")
                         },
+                        "symmetry": self._safe_get_attr(doc, "symmetry"),
                         "_source": "materials_project"
                     }
-                            
                     results.append(res)
                 
-                # Sort by stability (E_hull low -> high) locally
                 results.sort(key=lambda x: x["energy_above_hull"] if x["energy_above_hull"] is not None else float('inf'))
-                
                 return results[:limit]
 
-        except Exception as e:
-            logger.error(f"Materials Project API error: {e}")
-            return []
+        return self._with_timeout(run_search, timeout_sec=8)
     
+    @retry_with_backoff(APIRetryConfig(max_retries=3, base_delay=2.0))
     def get_material(self, material_id: str) -> Optional[Dict]:
         """Get detailed material properties by ID."""
-        if not self.api_key or not MP_API_AVAILABLE:
+        if not self.is_available():
             return None
         
         try:
             with MPRester(self.api_key) as mpr:
                  docs = mpr.materials.summary.search(material_ids=[material_id])
                  if docs:
-                     # Reuse the search parsing logic or manual map
-                     # For now, just return valid dict
                      d = docs[0]
                      return {
                          "material_id": str(d.material_id),
                          "formula_pretty": str(d.formula_pretty),
-                         "density": float(d.density),
+                         "density": float(d.density) if d.density else None,
                          "energy_above_hull": float(d.energy_above_hull) if d.energy_above_hull is not None else None,
                          "_source": "materials_project"
                      }
@@ -140,13 +242,270 @@ class MaterialsProjectAPI:
             logger.error(f"Materials Project API error: {e}")
             return None
 
-        """Mock data disabled."""
-        logger.warning(f"Materials Project API Key missing. Skipping search for {formula}/{elements}.")
-        return []
+
+class AFLOWAPI(BaseMaterialsAPI):
+    """
+    Integration with AFLOW (Automatic Flow for Materials Discovery).
+    Access to 3M+ compounds with DFT calculations.
+    """
     
-    def _mock_material(self, material_id: str) -> Dict:
-        """Mock material data disabled."""
-        return {}
+    def __init__(self):
+        self.base_url = "http://aflow.org/API/aflowlib/v1.0"
+        self.api_key = os.getenv("AFLOW_API_KEY")  # Optional for some endpoints
+        self.retry_config = APIRetryConfig(max_retries=3, base_delay=1.0)
+        
+    def is_available(self) -> bool:
+        # AFLOW has open endpoints but key increases rate limits
+        return True
+    
+    @retry_with_backoff(APIRetryConfig(max_retries=3, base_delay=1.0))
+    def search_materials(self, formula: str = None, elements: List[str] = None, 
+                        limit: int = 10) -> List[Dict]:
+        """Search AFLOW database."""
+        try:
+            params = {
+                "catalog": "ICSD",  # Inorganic Crystal Structure Database
+                "format": "json",
+                "limit": limit
+            }
+            
+            if formula:
+                params["compound"] = formula
+            elif elements:
+                # AFLOW uses element list
+                params["species"] = ",".join(elements)
+            
+            headers = {}
+            if self.api_key:
+                headers["Authorization"] = f"Bearer {self.api_key}"
+            
+            response = requests.get(
+                f"{self.base_url}/search",
+                params=params,
+                headers=headers,
+                timeout=30
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            results = []
+            for entry in data.get("entries", []):
+                props = entry.get("properties", {})
+                results.append({
+                    "aflow_id": entry.get("auid"),
+                    "formula": props.get("compound"),
+                    "spacegroup": props.get("spacegroup_relax"),
+                    "energy_atom": props.get("energy_atom"),
+                    "density": props.get("density"),
+                    "band_gap": props.get("Egap"),
+                    "_source": "aflow"
+                })
+            
+            return results
+            
+        except Exception as e:
+            logger.error(f"AFLOW API error: {e}")
+            return []
+    
+    def get_material(self, aflow_id: str) -> Optional[Dict]:
+        """Get specific material by AFLOW ID."""
+        try:
+            headers = {}
+            if self.api_key:
+                headers["Authorization"] = f"Bearer {self.api_key}"
+                
+            response = requests.get(
+                f"{self.base_url}/entry/{aflow_id}",
+                headers=headers,
+                timeout=30
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            props = data.get("properties", {})
+            return {
+                "aflow_id": aflow_id,
+                "formula": props.get("compound"),
+                "density": props.get("density"),
+                "band_gap": props.get("Egap"),
+                "bulk_modulus": props.get("bulk_modulus_vrh"),
+                "shear_modulus": props.get("shear_modulus_vrh"),
+                "_source": "aflow"
+            }
+        except Exception as e:
+            logger.error(f"AFLOW API error: {e}")
+            return None
+
+
+class OQMDAPI(BaseMaterialsAPI):
+    """
+    Integration with OQMD (Open Quantum Materials Database).
+    Access to 1M+ DFT calculations from Northwestern University.
+    """
+    
+    def __init__(self):
+        self.base_url = "http://oqmd.org/oqmdapi"
+        self.retry_config = APIRetryConfig(max_retries=3, base_delay=1.0)
+        
+    def is_available(self) -> bool:
+        return True  # Open API
+    
+    @retry_with_backoff(APIRetryConfig(max_retries=3, base_delay=1.0))
+    def search_materials(self, formula: str = None, elements: List[str] = None,
+                        limit: int = 10) -> List[Dict]:
+        """Search OQMD database."""
+        try:
+            params = {
+                "format": "json",
+                "limit": limit
+            }
+            
+            if formula:
+                params["composition"] = formula
+            elif elements:
+                params["element"] = ",".join(elements)
+            
+            response = requests.get(
+                f"{self.base_url}/formationenergy",
+                params=params,
+                timeout=30
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            results = []
+            for entry in data.get("data", []):
+                calc = entry.get("calculation", {})
+                results.append({
+                    "entry_id": entry.get("entry_id"),
+                    "formula": entry.get("composition"),
+                    "band_gap": calc.get("band_gap"),
+                    "energy_above_hull": entry.get("formationenergy"),
+                    "spacegroup": entry.get("spacegroup"),
+                    "_source": "oqmd"
+                })
+            
+            return results
+            
+        except Exception as e:
+            logger.error(f"OQMD API error: {e}")
+            return []
+
+
+class CODAPI(BaseMaterialsAPI):
+    """
+    Integration with COD (Crystallography Open Database).
+    Access to 500K+ experimental crystal structures.
+    """
+    
+    def __init__(self):
+        self.base_url = "http://www.crystallography.net/cod/result"
+        self.retry_config = APIRetryConfig(max_retries=3, base_delay=1.0)
+        
+    def is_available(self) -> bool:
+        return True
+    
+    @retry_with_backoff(APIRetryConfig(max_retries=3, base_delay=1.0))
+    def search_materials(self, formula: str = None, elements: List[str] = None,
+                        limit: int = 10) -> List[Dict]:
+        """Search COD for experimental structures."""
+        try:
+            params = {
+                "format": "json",
+                "limit": limit
+            }
+            
+            if formula:
+                params["formula"] = formula
+            elif elements:
+                params["el1"] = elements[0] if len(elements) > 0 else None
+                if len(elements) > 1:
+                    params["el2"] = elements[1]
+                if len(elements) > 2:
+                    params["el3"] = elements[2]
+            
+            response = requests.get(self.base_url, params=params, timeout=30)
+            response.raise_for_status()
+            data = response.json()
+            
+            results = []
+            for entry in data:
+                results.append({
+                    "cod_id": entry.get("file"),
+                    "formula": entry.get("formula"),
+                    "spacegroup": entry.get("sg"),
+                    "a": entry.get("a"),
+                    "b": entry.get("b"),
+                    "c": entry.get("c"),
+                    "alpha": entry.get("alpha"),
+                    "beta": entry.get("beta"),
+                    "gamma": entry.get("gamma"),
+                    "_source": "cod"
+                })
+            
+            return results
+            
+        except Exception as e:
+            logger.error(f"COD API error: {e}")
+            return []
+
+
+class NOMADAPI(BaseMaterialsAPI):
+    """
+    Integration with NOMAD (Novel Materials Discovery).
+    FAIR data infrastructure for materials science.
+    """
+    
+    def __init__(self):
+        self.base_url = "http://nomad-lab.eu/prod/rae/api"
+        self.retry_config = APIRetryConfig(max_retries=3, base_delay=1.0)
+        
+    def is_available(self) -> bool:
+        return True
+    
+    @retry_with_backoff(APIRetryConfig(max_retries=3, base_delay=1.0))
+    def search_materials(self, formula: str = None, elements: List[str] = None,
+                        limit: int = 10) -> List[Dict]:
+        """Search NOMAD archive."""
+        try:
+            query = {}
+            if formula:
+                query["formula"] = formula
+            elif elements:
+                query["elements"] = elements
+            
+            payload = {
+                "query": query,
+                "pagination": {"page_size": limit},
+                "required": {
+                    "include": ["formula", "energy", "band_gap"]
+                }
+            }
+            
+            response = requests.post(
+                f"{self.base_url}/entries/query",
+                json=payload,
+                timeout=30
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            results = []
+            for entry in data.get("data", []):
+                archive = entry.get("archive", {})
+                results.append({
+                    "nomad_id": entry.get("entry_id"),
+                    "formula": archive.get("formula"),
+                    "energy": archive.get("energy"),
+                    "band_gap": archive.get("band_gap"),
+                    "_source": "nomad"
+                })
+            
+            return results
+            
+        except Exception as e:
+            logger.error(f"NOMAD API error: {e}")
+            return []
 
 
 class NISTChemistryAPI:
@@ -166,29 +525,17 @@ class NISTChemistryAPI:
             self.available = False
     
     def get_compound(self, formula: str) -> Optional[Dict]:
-        """
-        Get compound data from NIST.
-        
-        Args:
-            formula: Chemical formula (e.g., "H2O")
-        
-        Returns:
-            Compound properties dictionary
-        """
+        """Get compound data from NIST."""
         if not self.available:
-            return self._mock_compound(formula)
+            return None
         
         try:
-            # Search for compound by formula
-            # Use run_search correctly (signature: query, type)
             result = self.nist.run_search(formula, 'formula')
             
-            # Load data if needed
             if result and result.success:
                  result.load_found_compounds()
                  
             if result and result.success and result.compounds:
-                print(f"[DEBUG] NIST Search Success: {len(result.compounds)} matches")
                 compound = result.compounds[0]
                 return {
                     "formula": formula,
@@ -199,14 +546,10 @@ class NISTChemistryAPI:
                     "thermochemistry": self._get_thermochemistry(compound),
                     "_source": "nist"
                 }
-            else:
-                 print(f"[DEBUG] NIST Search Failed/Empty. Result: {result}, Success: {getattr(result, 'success', 'UNK')}, Cmp: {getattr(result, 'compounds', 'UNK')}")
         except Exception as e:
             logger.error(f"NIST API error for {formula}: {e}")
-            import traceback
-            traceback.print_exc()
         
-        return self._mock_compound(formula)
+        return None
     
     def _get_thermochemistry(self, compound) -> Dict:
         """Extract thermochemical data from NIST compound."""
@@ -223,34 +566,6 @@ class NISTChemistryAPI:
             logger.debug(f"Error extracting thermochemistry: {e}")
         
         return thermo
-    
-    def search_by_name(self, name: str) -> List[Dict]:
-        """Search compounds by name."""
-        if not self.available:
-            return []
-        
-        try:
-            results = self.nist.search(name)
-            return [
-                {
-                    "name": r.name if hasattr(r, 'name') else name,
-                    "formula": r.formula if hasattr(r, 'formula') else None,
-                    "cas_number": r.cas if hasattr(r, 'cas') else None,
-                    "_source": "nist"
-                }
-                for r in results[:10]  # Limit to 10 results
-            ]
-        except Exception as e:
-            logger.error(f"NIST search error: {e}")
-            return []
-    
-    def _mock_compound(self, formula: str) -> Dict:
-        """
-        Mock compound data.
-        REMOVED: Hardcoded data removed per configuration.
-        """
-        logger.warning(f"No API access and no DB match for {formula}. Hardcoded fallback disabled.")
-        return {}
 
 
 class MatWebAPI:
@@ -261,15 +576,10 @@ class MatWebAPI:
     
     def __init__(self):
         self.base_url = "http://www.matweb.com"
-        # MatWeb doesn't have a public API, would need web scraping
-        # Using mock data for demonstration
     
     def search_alloy(self, name: str) -> List[Dict]:
         """Search for alloys by name."""
-        return self._mock_alloys(name)
-    
-    def _mock_alloys(self, name: str) -> List[Dict]:
-        """Mock alloy data disabled."""
+        logger.warning("MatWeb requires web scraping. Implementation pending.")
         return []
 
 
@@ -285,9 +595,7 @@ class RSCApi:
         self.headers = {"apikey": self.api_key} if self.api_key else {}
         
     def search_compound(self, name: str) -> List[Dict]:
-        """
-        Search for compounds by name using RSC API.
-        """
+        """Search for compounds by name using RSC API."""
         if not self.api_key:
             logger.warning("RSC API Key missing.")
             return []
@@ -297,7 +605,6 @@ class RSCApi:
             search_endpoint = f"{self.base_url}/filter/name"
             payload = {"name": name}
             
-            # Post request for search ID
             resp = requests.post(search_endpoint, json=payload, headers=self.headers, timeout=10)
             if resp.status_code == 401:
                 logger.error("RSC API Unauthorized. Check Key.")
@@ -315,8 +622,7 @@ class RSCApi:
             if not record_ids:
                 return []
                 
-            # 3. Get Details for first result (to save bandwidth)
-            # Only fetching basic details for now
+            # 3. Get Details for first result
             top_id = record_ids[0]
             details_endpoint = f"{self.base_url}/records/{top_id}/details"
             details_resp = requests.get(details_endpoint, headers=self.headers, params={"fields": "CommonName,Formula,MolecularWeight"}, timeout=10)
@@ -347,12 +653,8 @@ class PubChemAPI:
         self.base_url = "https://pubchem.ncbi.nlm.nih.gov/rest/pug"
         
     def search_compound(self, name: str) -> List[Dict]:
-        """
-        Search for compound by name and retrieve properties.
-        Properties: Formula, MolecularWeight, SMILES, InChIKey.
-        """
+        """Search for compound by name and retrieve properties."""
         try:
-            # URL: /compound/name/{name}/property/{props}/JSON
             props = "MolecularFormula,MolecularWeight,CanonicalSMILES,InChIKey,Title"
             endpoint = f"{self.base_url}/compound/name/{name}/property/{props}/JSON"
             
@@ -362,9 +664,6 @@ class PubChemAPI:
             response.raise_for_status()
             
             data = response.json()
-            # Parse Response
-            # Structure: {'PropertyTable': {'Properties': [{...}]}}
-            
             properties = data.get("PropertyTable", {}).get("Properties", [])
             results = []
             
@@ -383,15 +682,17 @@ class PubChemAPI:
             
         except Exception as e:
             logger.error(f"PubChem API Error: {e}")
+            return []
+
 
 class ThermoLibrary:
     """
     Integration with Caleb Bell's 'thermo' library.
-    Provides comprehensive chemical engineering properties (density, heat capacity, etc.).
+    Provides comprehensive chemical engineering properties.
     """
     def __init__(self):
         self.available = False
-        self._cache = {}  # Cache Chemical objects to avoid slow re-instantiation
+        self._cache = {}
         try:
             import thermo
             self.thermo = thermo
@@ -400,8 +701,17 @@ class ThermoLibrary:
         except ImportError:
             logger.warning("Thermo library not installed.")
     
-    def get_chemical(self, name: str, temperature: float = 298.15) -> 'Chemical':
-        """Get a Chemical object with caching. Returns None if not found."""
+    def _with_timeout(self, func, timeout_sec=5):
+        """Cross-platform timeout using concurrent.futures."""
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(func)
+            try:
+                return future.result(timeout=timeout_sec)
+            except concurrent.futures.TimeoutError:
+                return None
+    
+    def get_chemical(self, name: str, temperature: float = 298.15):
+        """Get a Chemical object with caching and cross-platform timeout."""
         if not self.available:
             return None
         
@@ -409,46 +719,33 @@ class ThermoLibrary:
         if cache_key in self._cache:
             return self._cache[cache_key]
         
-        # Timeout handling for Thermo library instantiation (can hang on web lookups)
-        import signal
+        def create_chemical():
+            return self.thermo.Chemical(name, T=temperature, P=101325)
         
-        def handler(signum, frame):
-            raise TimeoutError("Thermo lookup timed out")
-
         try:
-            # Set timeout of 5 seconds
-            signal.signal(signal.SIGALRM, handler)
-            signal.alarm(5)
-            
-            try:
-                # Try to instantiate the Chemical
-                c = self.thermo.Chemical(name, T=temperature, P=101325)
+            c = self._with_timeout(create_chemical, timeout_sec=5)
+            if c is not None:
                 self._cache[cache_key] = c
-                return c
-            finally:
-                # Disable alarm
-                signal.alarm(0)
-                
-        except (Exception, TimeoutError) as e:
+            return c
+        except Exception as e:
             logger.debug(f"Could not create Chemical for '{name}': {e}")
             return None
             
     def search(self, name: str) -> List[Dict]:
-        """Search for chemical by name. Returns basic info at STP."""
+        """Search for chemical by name."""
         if not self.available:
             return []
         
         c = self.get_chemical(name, 298.15)
-        if c and c.rho:  # Check if we got valid data
+        if c and c.rho:
             return [{
                 "name": c.name or name,  
                 "formula": c.formula,
-                "density": c.rho, # kg/m3 by default in thermo
-                "molecular_weight": c.MW, # g/mol
+                "density": c.rho,
+                "molecular_weight": c.MW,
                 "_source": "thermo",
-                "_chemical_name": name  # Store original name for re-lookup
+                "_chemical_name": name
             }]
-            
         return []
 
 
@@ -458,11 +755,13 @@ class UnifiedMaterialsAPI:
     Automatically queries multiple sources and combines results.
     """
     
-    
     def __init__(self, materials_project_key: str = None):
-        # self.thermo_lib = ThermoLibrary() # Moved to lazy property
         self._thermo_lib_instance = None
         self.mp_api = MaterialsProjectAPI(materials_project_key)
+        self.aflow_api = AFLOWAPI()
+        self.oqmd_api = OQMDAPI()
+        self.cod_api = CODAPI()
+        self.nomad_api = NOMADAPI()
         self.nist_api = NISTChemistryAPI()
         self.matweb_api = MatWebAPI()
         self.rsc_api = RSCApi()
@@ -477,97 +776,147 @@ class UnifiedMaterialsAPI:
             logger.warning("Pymatgen not available.")
             self.pymatgen_available = False
         
-        # Cache for reducing API calls
         self.cache = {}
         
     @property
     def thermo_lib(self):
         """Lazy load ThermoLibrary only when needed."""
         if self._thermo_lib_instance is None:
-            # logger.info("Initializing ThermoLibrary (lazy load)...")
             self._thermo_lib_instance = ThermoLibrary()
         return self._thermo_lib_instance
+    
+    def _validate_unit_conversion(self, value: float, from_unit: str, to_unit: str) -> float:
+        """Validate and perform unit conversions with bounds checking."""
+        if value is None or value < 0:
+            raise ValueError(f"Invalid value for conversion: {value}")
         
+        # Density: g/cm³ -> kg/m³ (multiply by 1000)
+        if from_unit == "g/cm3" and to_unit == "kg/m3":
+            result = value * 1000.0
+            if result > 50000:  # Osmium is ~22500 kg/m³, anything higher is suspicious
+                logger.warning(f"Unusually high density: {result} kg/m³")
+            return result
+        
+        # Pressure: GPa -> Pa
+        elif from_unit == "GPa" and to_unit == "Pa":
+            return value * 1e9
+        
+        # Energy: eV/atom -> keep as is but validate
+        elif from_unit == "eV/atom":
+            if abs(value) > 20:  # Sanity check for formation energies
+                logger.warning(f"Unusual energy value: {value} eV/atom")
+            return value
+        
+        return value
+    
     def find_material(self, query: str, source: str = "auto") -> List[Dict]:
-        """Find materials from multiple sources."""
-        # Cache check
+        """Find materials from multiple sources with improved routing."""
         cache_key = f"{source}:{query}"
         if cache_key in self.cache:
             return self.cache[cache_key]
             
         results = []
         
-        import re
-        
         # Heuristic: Is the query a chemical formula?
-        # Matches strings like "Fe2O3", "Al", "H2O", "GaAs", "Li7La3Zr2O12"
-        # Does NOT match "Water", "Polyethylene" (lowercase letters not valid in element symbols unless 2nd char)
-        formula_pattern = re.compile(r"^([A-Z][a-z]?\d*(\.\d+)?)+$")
+        formula_pattern = re.compile(r"^([A-Z][a-z]?\\d*(\\.\\d+)?)+$")
         is_formula = bool(formula_pattern.match(query))
         
-        # 1. Check Thermo Library 
-        # Only if it's a NAME (not a formula) OR we explicitly asked for thermo
-        # This prevents "Fe2O3" from triggering massive Thermo DB load
+        # Check Thermo Library (for names, not formulas)
         should_check_thermo_first = (source in ["auto", "thermo"]) and (not is_formula)
         
         if should_check_thermo_first:
              logger.info(f"Searching thermo for '{query}' (appears to be chemical/polymer name)")
              thermo_results = self.thermo_lib.search(query)
              results.extend(thermo_results)
-              
-        # 2. Check Pymatgen/MP (Metals/Semiconductors) via API
-        # Always check for formulas, or if specifically requested
         
-        # Common Name -> Formula Mapping
+        # Common Name -> Formula Mapping (expanded)
         NAME_TO_FORMULA = {
             "titanium": "Ti",
-            "steel": "Fe", "iron": "Fe", "copper": "Cu", "gold": "Au",
-            "silver": "Ag", "silicon": "Si",
+            "copper": "Cu", 
+            "gold": "Au", 
+            "silver": "Ag",
+            "silicon": "Si", 
+            "iron": "Fe", 
+            "carbon": "C",
+            "oxygen": "O",
+            "aluminum": "Al",
+            "aluminium": "Al",
+            "nickel": "Ni",
+            "chromium": "Cr"
         }
+        
         query_lower = query.lower()
         search_query = NAME_TO_FORMULA.get(query_lower, query)
         
-        if source in ["auto", "materials_project"]:
-            mp_results = self.mp_api.search_materials(formula=search_query)
-            if not mp_results and search_query != query:
-                 mp_results = self.mp_api.search_materials(formula=query)
-            results.extend([{**r, "_source": "materials_project"} for r in mp_results])
+        # Query all computational databases in parallel for formulas
+        search_tasks = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+            if source in ["auto", "materials_project"]:
+                search_tasks.append(executor.submit(self.mp_api.search_materials, formula=search_query))
+                if search_query != query:
+                    search_tasks.append(executor.submit(self.mp_api.search_materials, formula=query))
             
-        if source in ["auto", "nist"]:
-            nist_result = self.nist_api.get_compound(search_query)
-            if nist_result:
-                results.append({**nist_result, "_source": "nist"})
+            if source in ["auto", "aflow"] and is_formula:
+                search_tasks.append(executor.submit(self.aflow_api.search_materials, formula=search_query))
                 
-        if source in ["auto", "pubchem"]:
-            pc_results = self.pubchem_api.search_compound(query)
-            results.extend(pc_results)
+            if source in ["auto", "oqmd"] and is_formula:
+                search_tasks.append(executor.submit(self.oqmd_api.search_materials, formula=search_query))
+                
+            if source in ["auto", "cod"] and is_formula:
+                search_tasks.append(executor.submit(self.cod_api.search_materials, formula=search_query))
+                
+            if source in ["auto", "nist"]:
+                search_tasks.append(executor.submit(self.nist_api.get_compound, search_query))
+                
+            if source in ["auto", "pubchem"]:
+                search_tasks.append(executor.submit(self.pubchem_api.search_compound, query))
+                
+            # Wait for all tasks with a collective timeout
+            done, not_done = concurrent.futures.wait(search_tasks, timeout=8.0)
             
-        # RSC API disabled - consistently returns 400 errors
-        # if source in ["auto", "rsc"]:
-        #     rsc_results = self.rsc_api.search_compound(query)
-        #     results.extend(rsc_results)
+            for future in done:
+                try:
+                    res = future.result()
+                    if isinstance(res, list):
+                        results.extend(res)
+                    elif isinstance(res, dict):
+                        results.append(res)
+                except Exception as e:
+                    logger.debug(f"Async search task failed: {e}")
+            
+            # Cancel anything still running
+            for future in not_done:
+                future.cancel()
         
-        # Fallback: If it IS a formula but MP found nothing, try Thermo now
+        # Fallback: If formula but no results, try Thermo
         if is_formula and not results and source in ["auto", "thermo"]:
-             logger.info(f"Formula '{query}' not found in MP, trying Thermo as fallback...")
+             logger.info(f"Formula '{query}' not found in DBs, trying Thermo...")
              thermo_results = self.thermo_lib.search(query)
              results.extend(thermo_results)
             
         self.cache[cache_key] = results
         return results
 
-    # ... get_property update separate ...
-    
     def get_element_data(self, symbol: str) -> Optional[Dict]:
         """Get comprehensive element data."""
-        # Try Materials Project first
         results = self.mp_api.search_materials(elements=[symbol], limit=1)
         if results:
             return results[0]
         return None
     
     def get_alloy_data(self, name: str) -> List[Dict]:
-        """Get alloy data from all sources."""
+        """
+        Get alloy data. Note: Generic 'steel' requests are rejected.
+        Users must specify grade (e.g., 'AISI 304', '316L').
+        """
+        # Reject generic steel queries
+        if name.lower() in ["steel", "stainless steel", "carbon steel"]:
+            logger.error(f"Generic alloy name '{name}' is ambiguous. Please specify grade (e.g., 'AISI 304', '316L').")
+            raise ValueError(
+                f"'{name}' is too generic. Specify an alloy grade like 'AISI 304', '316L', '17-4PH', etc. "
+                "Or query the base element 'Fe' for elemental iron properties."
+            )
+        
         return self.find_material(name, source="auto")
     
     def get_compound_data(self, formula: str) -> Optional[Dict]:
@@ -576,7 +925,6 @@ class UnifiedMaterialsAPI:
         if nist_data:
             return nist_data
         
-        # Fall back to Materials Project
         mp_results = self.mp_api.search_materials(formula=formula, limit=1)
         if mp_results:
             return mp_results[0]
@@ -585,17 +933,12 @@ class UnifiedMaterialsAPI:
     
     def search_by_properties(self, min_density: float = None, max_density: float = None,
                             min_strength: float = None, elements: List[str] = None) -> List[Dict]:
-        """
-        Search materials by properties.
-        """
-        # This would query Materials Project with property filters
-        # For now, using mock implementation
+        """Search materials by properties."""
         results = []
         
         if elements:
             results = self.mp_api.search_materials(elements=elements, limit=50)
         
-        # Filter by properties
         if min_density or max_density:
             results = [
                 r for r in results
@@ -610,73 +953,53 @@ class UnifiedMaterialsAPI:
         if not self.pymatgen_available:
             return None
             
-        # Map common names to symbols
         NAME_TO_FORMULA = {
             "titanium": "Ti",  
             "copper": "Cu", "gold": "Au", "silver": "Ag", 
             "silicon": "Si", "iron": "Fe", "carbon": "C", 
-            "oxygen": "O", "steel": "Fe" # Approx
+            "oxygen": "O", "aluminum": "Al", "nickel": "Ni"
         }
         
         symbol = NAME_TO_FORMULA.get(material.lower(), material)
         
         try:
-            # Only reliable for elements
             el = self.pymatgen_element(symbol)
             
             if property_name == "density":
-                # density_of_solid in kg/m^3 (pymatgen uses SI mostly, but let's be careful)
-                # Verified: Pymatgen .density_of_solid returns kg/m^3
                 return float(el.density_of_solid)
-                
             elif property_name == "youngs_modulus":
-                # .youngs_modulus returns GPa
                 val = getattr(el, "youngs_modulus", None)
                 if val:
-                    return float(val * 1e9) # Convert to Pa
-                    
-            elif property_name == "yield_strength":
-                 # Elements don't have defined yield strength, it's a microstructural property
-                 pass
-                 
+                    return float(val * 1e9)
             elif property_name == "thermal_conductivity":
                 val = getattr(el, "thermal_conductivity", None)
                 if val:
                     return float(val)
-                
-                # Try Mendeleev
                 if MENDELEEV_AVAILABLE:
                     try:
                         men_el = get_mendeleev_element(symbol)
                         if men_el.thermal_conductivity:
                             return float(men_el.thermal_conductivity)
-                    except: pass
-
+                    except: 
+                        pass
             elif property_name == "specific_heat":
-                # Pymatgen doesn't have direct specific heat
-                # Try Mendeleev first for Cp (Specific Heat Capacity J/g K -> J/kg K * 1000)
-                # Actually mendeleev 'specific_heat_capacity' is usually J/(g K) or similar? 
-                # Docs say specific_heat is J / (g K) @ 20C.
                 if MENDELEEV_AVAILABLE:
                     try:
                         men_el = get_mendeleev_element(symbol)
-                        val = getattr(men_el, "specific_heat", None) # J / (g K)
+                        val = getattr(men_el, "specific_heat", None)
                         if val:
-                            return float(val * 1000.0) # Convert to J / (kg K)
-                    except: pass
+                            return float(val * 1000.0)
+                    except: 
+                        pass
                 
-                # Fallback to Pymatgen Molar Heat Capacity
                 molar_heat = getattr(el, "molar_heat_capacity", None)
                 mass = getattr(el, "atomic_mass", None)
                 if molar_heat and mass:
-                    return float((molar_heat / mass) * 1000.0) 
-            
+                    return float((molar_heat / mass) * 1000.0)
             elif property_name == "energy_above_hull":
-                 # Pure elements in standard state is 0
-                 return 0.0
+                return 0.0
                  
         except Exception:
-            # Not a valid element
             pass
             
         return None
@@ -692,37 +1015,18 @@ class UnifiedMaterialsAPI:
         Normalizes units to SI (kg, m, s, Pa, K).
         """
         
-        # 0. Try Local Library (Pymatgen) for basic elemental properties
+        # Try Local Library (Pymatgen) for basic elemental properties
         local_val = self._get_from_pymatgen(material, property_name)
         if local_val is not None:
-             # Pymatgen data is usually room temperature (STP)
              logger.info(f"Found {property_name} for {material} in Pymatgen")
              return local_val
-        
-        # 0.5 Check if we already have thermo data from find_material()
-        # This avoids slow Chemical() instantiation here
-        # Temperature-dependent lookups will be handled in candidates iteration below
-        
-        # Skip direct thermo lookup here to avoid hanging
-        # Instead, rely on find_material() to have already populated candidates
 
-
-        # 1. Search for material data in Remote APIs
+        # Search for material data in Remote APIs
         candidates = self.find_material(material)
-        
-        # [TESTING FALLBACK] Removed per user request
-        # TODO: In the future, ensure NO fallbacks exist. Fix API access or data sourcing instead.
-            
-        if not candidates:
-             if "steel" in material.lower():
-                 candidates = self.find_material("Fe")
-             else:
-                 raise ValueError(f"Material '{material}' not found in database.")
             
         if not candidates:
              raise ValueError(f"Material '{material}' not found in database.")
 
-        # Iterate through ALL candidates to collect property values
         valid_values = []
         
         for i, data in enumerate(candidates):
@@ -731,34 +1035,26 @@ class UnifiedMaterialsAPI:
             found = False
             
             try:
-                # --- DENSITY ---
                 if property_name == "density":
                     if source == "materials_project":
                         raw = data.get("density")
                         if raw and raw > 0:
-                            value = raw * 1000.0 # g/cm3 -> kg/m3
+                            # MP density is in g/cm³, validate and convert
+                            value = self._validate_unit_conversion(raw, "g/cm3", "kg/m3")
                             found = True
                     elif source == "thermo":
-                        # Re-calculate at the requested temperature
                         chem_name = data.get("_chemical_name") or data.get("name")
                         if chem_name and self.thermo_lib.available:
                             c = self.thermo_lib.get_chemical(chem_name, temperature)
                             if c and c.rho:
                                 value = c.rho
                                 found = True
-                    elif source == "pubchem":
-                        # PubChem sometimes provides density in property list if we expanded retrieval
-                        pass
-                    elif source == "nist":
-                        # NIST main strength is Isobaric/Saturation properties (fluid density)
-                        # Implemented in future expansion
-                        pass
-                    
-                # --- YIELD STRENGTH ---
-                elif property_name == "yield_strength":
-                    pass 
+                    elif source == "aflow":
+                        raw = data.get("density")
+                        if raw:
+                            value = self._validate_unit_conversion(raw, "g/cm3", "kg/m3")
+                            found = True
                          
-                # --- YOUNGS MODULUS ---
                 elif property_name == "youngs_modulus":
                     if source == "materials_project":
                         elasticity = data.get("elasticity")
@@ -767,10 +1063,17 @@ class UnifiedMaterialsAPI:
                             k_mod = elasticity.get("K_VRH") 
                             if g_mod and k_mod:
                                 e_val = (9 * k_mod * g_mod) / (3 * k_mod + g_mod)
-                                value = e_val * 1e9 
+                                value = self._validate_unit_conversion(e_val, "GPa", "Pa")
                                 found = True
+                    elif source == "aflow":
+                        # AFLOW provides VRH averages
+                        g_mod = data.get("shear_modulus")
+                        k_mod = data.get("bulk_modulus")
+                        if g_mod and k_mod:
+                            e_val = (9 * k_mod * g_mod) / (3 * k_mod + g_mod)
+                            value = self._validate_unit_conversion(e_val, "GPa", "Pa")
+                            found = True
                 
-                # --- SPECIFIC HEAT ---
                 elif property_name == "specific_heat":
                     if source == "thermo":
                         chem_name = data.get("_chemical_name") or data.get("name")
@@ -780,7 +1083,6 @@ class UnifiedMaterialsAPI:
                                 value = c.Cp  # J/kg/K
                                 found = True
                 
-                # --- THERMAL CONDUCTIVITY ---
                 elif property_name == "thermal_conductivity":
                     if source == "thermo":
                         chem_name = data.get("_chemical_name") or data.get("name")
@@ -790,35 +1092,30 @@ class UnifiedMaterialsAPI:
                                 value = c.k  # W/m/K
                                 found = True
                                 
-                # --- THERMAL & STABILITY ---
                 elif property_name == "energy_above_hull":
                     if source == "materials_project":
-                        # MP v2 usually puts this in 'thermo' dict, but sometimes top-level
                         val = data.get("energy_above_hull")
-                        
                         if val is None and "thermo" in data:
                              val = data["thermo"].get("energy_above_hull")
-                        
                         if val is not None: 
+                            value = self._validate_unit_conversion(float(val), "eV/atom", "eV/atom")
+                            found = True
+                    elif source == "oqmd":
+                        val = data.get("energy_above_hull")
+                        if val is not None:
                             value = float(val)
                             found = True
-                            
-                elif property_name == "thermal_conductivity":
-                     # MP 'thermo' dict usually has formation energy, not conductivity
-                     # Conductivity needs separate API query or ML model (matminer)
-                     pass
 
                 if found and value is not None:
-                     # Filter non-physical values if needed (except e_hull which can be 0)
                      if property_name == "energy_above_hull" or value > 0:
                         logger.info(f"Candidate {i} ({source}) has {property_name}: {value}")
                         valid_values.append(value)
                          
             except Exception as e:
+                logger.debug(f"Error extracting {property_name} from {source}: {e}")
                 continue
         
-        # Fallback: If no values found (or for specific thermal props), try Thermo library directly
-        # This handles cases where find_material skipped thermo (for elements/formulas) but MP failed to provide property
+        # Fallback to Thermo for thermal properties
         if (not valid_values) or (property_name in ["specific_heat", "thermal_conductivity"]):
              if self.thermo_lib.available:
                   try:
@@ -833,7 +1130,6 @@ class UnifiedMaterialsAPI:
                                val = c.rho
                                
                            if val is not None:
-                               # Avoid duplicates if we already found it via candidate search
                                if not any(abs(v - val) < 1e-6 for v in valid_values):
                                     logger.info(f"Fallback: Found {property_name} for {material} in Thermo: {val}")
                                     valid_values.append(val)
@@ -843,8 +1139,6 @@ class UnifiedMaterialsAPI:
         if valid_values:
             import statistics
             if property_name == "energy_above_hull":
-                # For stability, we want the MINIMUM energy above hull (ground state)
-                # aggregation should be min, not median
                 best_val = min(valid_values)
                 logger.info(f"Stability (E_hull) for '{material}': Min {best_val} eV/atom")
                 return best_val
@@ -853,7 +1147,6 @@ class UnifiedMaterialsAPI:
                 logger.info(f"Property '{property_name}' for '{material}': Found {len(valid_values)} values. Median: {median_val}")
                 return median_val
         
-        # If we exhausted all candidates and didn't find the property
         msg = f"Property '{property_name}' not found for '{material}' in any of {len(candidates)} sources."
         logger.warning(msg)
         raise ValueError(msg)

@@ -112,6 +112,97 @@ async def preview_agent_selection(state: Dict[str, Any]):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# --- Design Genome API ---
+from agents.unified_design_agent import UnifiedDesignAgent
+
+# Global instance for stateful operations like exploration
+unified_design_agent = UnifiedDesignAgent()
+
+class DesignInterpretRequest(BaseModel):
+    prompt: str
+
+class DesignExploreRequest(BaseModel):
+    prompt: str
+    strategy: str = "diverse"
+    count: int = 4
+
+class DesignEvolveRequest(BaseModel):
+    parent_ids: List[str]
+    count: int = 4
+
+@app.post("/api/design/interpret")
+async def interpret_design(req: DesignInterpretRequest):
+    """Convert prompt to a single base genome"""
+    try:
+        res = unified_design_agent.run({"mode": "interpret", "prompt": req.prompt})
+        return {
+            "success": True,
+            "genome": res["genome"]
+        }
+    except Exception as e:
+        logger.error(f"Interpretation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/design/explore")
+async def explore_design(req: DesignExploreRequest):
+    """Generate variants from a prompt"""
+    try:
+        res = unified_design_agent.run({
+            "mode": "explore", 
+            "prompt": req.prompt, 
+            "count": req.count
+        })
+        return {
+            "success": True,
+            "variants": res["variants"]
+        }
+    except Exception as e:
+        logger.error(f"Exploration error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/design/evolve")
+async def evolve_design(req: DesignEvolveRequest):
+    """Breed new variants from selected parents"""
+    try:
+        res = unified_design_agent.run({
+            "mode": "evolve", 
+            "parent_ids": req.parent_ids, 
+            "count": req.count
+        })
+        if res.get("status") == "error":
+            raise HTTPException(status_code=400, detail=res["message"])
+            
+        return {
+            "success": True,
+            "variants": res["variants"]
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Evolution error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/design/select")
+async def select_variant(variant_id: str):
+    """Select a specific variant from the current exploration session"""
+    try:
+        # In a unified agent, the explorer is held in state
+        if not unified_design_agent.active_explorer:
+            raise HTTPException(status_code=404, detail="No active exploration session")
+            
+        selected = unified_design_agent.active_explorer.user_select(variant_id)
+        if not selected:
+            raise HTTPException(status_code=404, detail="Variant not found")
+            
+        return {
+            "success": True,
+            "selected_genome": selected.to_3d_generation_payload()
+        }
+    except Exception as e:
+        logger.error(f"Selection error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # --- Legacy Version Removed ---
 
 
@@ -186,28 +277,65 @@ async def get_system_status():
     """
     Get real-time status of core solvers (ARES, LDP) and agents.
     """
-    # 1. ARES (Physics core) Status
-    # Check if physics agent is responsive (mock check for now, can be real later)
     ares_status = "OK"
-    try:
-        # In a real system, we'd ping the physics kernel or check last heartbeat
-        pass
-    except Exception as e:
-        logger.debug(f"ARES status check failed: {e}")
-        ares_status = "OFFLINE"
-
-    # 2. LDP (Latent Design Propagation / Gradient Optimization) Status
-    # This refers to the optimization graph state
     ldp_status = "CONVERGED" 
-    # Logic: If optimization loop is running → "OPTIMIZING"
-    # If error -> "DIVERGED"
-    # If stable -> "CONVERGED"
     
     return {
         "ares": ares_status,
         "ldp": ldp_status,
         "timestamp": datetime.now().isoformat()
     }
+
+# --- Session Management API ---
+from conversation_state import conversation_manager
+
+@app.get("/api/sessions")
+async def list_sessions():
+    """List all available conversation sessions."""
+    return {
+        "sessions": [s.to_dict() for s in conversation_manager.conversations.values()]
+    }
+
+class CreateSessionRequest(BaseModel):
+    title: Optional[str] = "New Conversation"
+    language: Optional[str] = "en"
+
+@app.post("/api/sessions")
+async def create_session(req: CreateSessionRequest):
+    """Create a new conversation session."""
+    session_id = f"session-{int(time.time())}"
+    session = conversation_manager.create_conversation(session_id, title=req.title, language=req.language)
+    return session.to_dict()
+
+@app.get("/api/sessions/{session_id}")
+async def get_session(session_id: str):
+    """Get details of a specific session."""
+    session = conversation_manager.get_conversation(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return session.to_dict()
+
+@app.delete("/api/sessions/{session_id}")
+async def delete_session(session_id: str):
+    """Delete a specific session."""
+    conversation_manager.delete_conversation(session_id)
+    return {"status": "success"}
+
+@app.post("/api/sessions/{session_id}/branch")
+async def branch_session(session_id: str):
+    """Branch an existing session."""
+    branch = conversation_manager.branch_session(session_id)
+    if not branch:
+        raise HTTPException(status_code=404, detail="Parent session not found")
+    return branch.to_dict()
+
+@app.post("/api/sessions/{session_id}/merge")
+async def merge_session(session_id: str):
+    """Merge a branch session back into its parent."""
+    parent = conversation_manager.merge_session(session_id)
+    if not parent:
+        raise HTTPException(status_code=400, detail="Invalid merge request. Branch not found or no parent.")
+    return parent.to_dict()
 
 import time
 
@@ -348,7 +476,7 @@ async def transcribe_audio(file: UploadFile = File(...)):
 
 class ChatRequirementsRequest(BaseModel):
     message: str
-    conversation_history: List[str] = []
+    session_id: Optional[str] = None
     user_intent: str = ""
     mode: str = "requirements_gathering"
     ai_model: str = "groq"
@@ -357,69 +485,62 @@ class ChatRequirementsRequest(BaseModel):
 async def chat_requirements_endpoint(req: ChatRequirementsRequest):
     """
     Intelligent Chat Endpoint for Requirements Gathering.
-    
-    Orchestrates:
-    1. ConversationalAgent: To talk to the user.
-    2. GeometryEstimator: To check physical feasibility (Validation).
-    3. CostAgent: To check budget (Validation).
-    4. EnvironmentAgent: To detect environment context.
     """
-    logger.info(f"Chat Requirements Request: {req.message[:50]}...")
+    logger.info(f"Chat Requirements Request: {req.message[:50]}... Session: {req.session_id}")
     
-    # 1. Instantiate Agents (Lazy Load)
+    # 1. Get or Create Session
+    session_id = req.session_id or f"session-{int(time.time())}"
+    session = conversation_manager.get_or_create(session_id)
+    
+    # Add user message to session
+    session.add_message("user", req.message)
+    
+    # 2. Instantiate Agents
     from agents.conversational_agent import ConversationalAgent
     from agents.geometry_estimator import GeometryEstimator
     from agents.cost_agent import CostAgent
     from agents.environment_agent import EnvironmentAgent
-    
-    # Registry lookup (consistent with architecture)
-    # Note: Using direct imports for now as some agents like GeometryEstimator might be helper classes
     
     conv_agent = ConversationalAgent(model_name=req.ai_model)
     geom_estimator = GeometryEstimator()
     cost_agent = CostAgent()
     env_agent = EnvironmentAgent()
     
-    # 2. Run Conversational Agent (The "Face")
-    # It analyzes the history and the new message
+    # Get history for the agent
+    history_strings = [f"{m.role}: {m.content}" for m in session.messages]
+    
+    # 3. Run Conversational Agent
     response_text = conv_agent.chat(
         user_input=req.message,
-        history=req.conversation_history,
+        history=history_strings[:-1], # Don't include the last message yet
         current_intent=req.user_intent
     )
     
-    # 3. Background Agent Processing (The "Brain")
-    # We run these strictly to get metadata/updates, not to generate text
+    # Add agent response to session
+    session.add_message("agent", response_text)
     
-    # A. Environment Detection
-    # Update state based on cumulative intent
+    # 4. Background Agent Processing
     updated_intent = f"{req.user_intent} {req.message}"
     env_result = env_agent.detect_environment(updated_intent)
     
-    # B. Geometry Feasibility
-    # We pass the intent and any extracted params (mocked for now)
-    # In a full run, ConversationalAgent would return extracted params
-    design_params = {"max_dim": 1.0} # Default
+    design_params = {"max_dim": 1.0}
     geom_result = geom_estimator.estimate(updated_intent, design_params)
     
-    # C. Cost Estimation
-    cost_params = {
-        "mass_kg": 5.0,
-        "complexity": "moderate",
-        "material_name": "aluminum" # assumption
-    }
+    cost_params = {"mass_kg": 5.0, "complexity": "moderate", "material_name": "aluminum"}
     cost_result = cost_agent.quick_estimate(cost_params)
     
-    # 4. Check for "Completeness"
-    # Logic: If conversational agent says "I have enough info" or similar
-    # For now, we use a heuristic or explicit flag from the agent
-    requirements_complete = conv_agent.is_requirements_complete(req.conversation_history + [f"You: {req.message}", f"Agent: {response_text}"])
+    # 5. Check for Completeness
+    all_history = [f"{m.role}: {m.content}" for m in session.messages]
+    requirements_complete = conv_agent.is_requirements_complete(all_history)
     
-    # 5. Extract Requirements
-    # If complete, we ask the agent to summarize
     final_requirements = {}
     if requirements_complete:
-        final_requirements = conv_agent.extract_structured_requirements(req.conversation_history)
+        final_requirements = conv_agent.extract_structured_requirements(all_history)
+        session.gathered_requirements = final_requirements
+        session.ready_for_planning = True
+    
+    # Ensure session is saved
+    conversation_manager._auto_save()
     
     return {
         "response": response_text,
@@ -428,10 +549,9 @@ async def chat_requirements_endpoint(req: ChatRequirementsRequest):
             "cost": cost_result,
             "environment": env_result
         },
-        "conversation_id": f"conv-{int(time.time())}",
+        "session_id": session_id,
         "requirements_complete": requirements_complete,
         "requirements": final_requirements
-        # Artifacts would be generated by the Orchestrator /plan endpoint, not here
     }
 
 

@@ -234,35 +234,32 @@ def topological_node(state: AgentState) -> Dict[str, Any]:
 
 def designer_node(state: AgentState) -> Dict[str, Any]:
     """
-    Executes the Designer Agent.
-    Generates aesthetic parameters (colors, materials, finish).
+    Executes the Design stage using the UnifiedDesignAgent.
+    Generates aesthetic 'DNA' (genome) from user intent.
     """
-    from agents.designer_agent import DesignerAgent
+    from agents.unified_design_agent import UnifiedDesignAgent
+    from main import inject_thought
     
     intent = state.get("user_intent", "")
-    params = state.get("design_parameters", {})
     
-    agent = DesignerAgent()
-    # Pass structured params (e.g. style, base_color derived from Dreamer)
-    design_scheme = agent.run(params) 
+    # 1. Run Unified Agent in 'interpret' mode
+    agent = UnifiedDesignAgent()
+    result = agent.run({"mode": "interpret", "prompt": intent})
     
-    # CRITIC HOOK: Monitor Aesthetic Diversity
-    if "design_critic" in state.get("active_critics", []):
-        critic = get_critic("design")
-        critic.observe(
-            params=params, 
-            result=design_scheme,
-            # User feedback loop not directly available here in batch, 
-            # but usually triggered by subsequent user action.
-            # We assume None implies "Generated, pending review"
-        )
+    if result.get("status") == "error":
+        return {"error": result.get("message")}
+        
+    genome_payload = result["genome"]
+    
+    # 2. XAI: Inject Interpretation Thoughts
+    thought = f"[DesignerAgent] {result.get('thought', 'Design DNA generated.')}"
+    inject_thought("DesignerAgent", thought)
     
     return {
-        "design_scheme": design_scheme,
-        # Update material if designer suggests specific alloy
-        "material": design_scheme.get("aesthetics", {}).get("description", state.get("material", "Aluminum 6061")),
-        # Propagate sketched primitives
-        "geometry_sketch": design_scheme.get("primitives", [])
+        "design_scheme": genome_payload,
+        "material": state.get("material", "Aluminum 6061"), # Fallback or keep current
+        "design_exploration": {"base_genome": genome_payload},
+        "geometry_sketch": genome_payload.get("geometry_params", {}).get("primitives", [])
     }
 
 async def ldp_node(state: AgentState) -> Dict[str, Any]:

@@ -1,5 +1,6 @@
 import logging
 import os
+from typing import List, Dict, Any, Optional
 from llm.provider import LLMProvider
 from context_manager import EnhancedContextManager, ContextScope
 import asyncio

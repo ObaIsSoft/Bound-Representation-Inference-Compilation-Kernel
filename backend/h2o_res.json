@@ -1,0 +1,36 @@
+{
+    "success": true,
+    "genome": {
+        "id": "3d_81806",
+        "prompt": "Modernist Clean 3D asset",
+        "style_vector": [
+            0.5,
+            0.5,
+            0.5,
+            0.5,
+            0.5,
+            0.5,
+            0.5,
+            0.5,
+            0.5,
+            0.5,
+            0.5,
+            0.5,
+            0.5,
+            0.5,
+            0.5
+        ],
+        "geometry_params": {},
+        "colors": [],
+        "material_overrides": [
+            {
+                "roughness": 0.5,
+                "metalness": 0.0,
+                "base_type": "standard",
+                "material_name": null,
+                "physics": {}
+            }
+        ],
+        "seed": 2598856769
+    }
+}

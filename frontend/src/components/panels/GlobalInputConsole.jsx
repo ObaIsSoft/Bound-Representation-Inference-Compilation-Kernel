@@ -7,8 +7,9 @@ import { LLM_PROVIDERS } from '../../utils/constants';
 
 const GlobalInputConsole = () => {
     const { theme } = useTheme();
-    const { PANEL_IDS, panels, togglePanel, addMessageToSession, isHistoryModalOpen, setIsHistoryModalOpen, branchSession } = usePanel();
+    const { PANEL_IDS, panels, togglePanel, addMessageToSession, isHistoryModalOpen, setIsHistoryModalOpen, branchSession, activeSessionId } = usePanel();
     const [message, setMessage] = useState('');
+    const [isSubmitting, setIsSubmitting] = useState(false);
     const [llmProvider, setLlmProvider] = useState('groq');
     const [attachedImages, setAttachedImages] = useState([]);
     const [isRecording, setIsRecording] = useState(false);
@@ -21,13 +22,56 @@ const GlobalInputConsole = () => {
     const mediaRecorderRef = useRef(null);
     const audioChunksRef = useRef([]);
 
-    const handleSubmit = () => {
-        if (!message.trim()) return;
-        console.log('Sending message:', message, { llmProvider, attachedImages });
-        // TODO: Wire to actual backend or session context
-        addMessageToSession(message);
-        setMessage('');
-        setAttachedImages([]);
+    const handleSubmit = async () => {
+        if (!message.trim() || isSubmitting) return;
+
+        const userMsg = message;
+        setMessage(''); // Clear input early for responsiveness
+        setIsSubmitting(true);
+
+        try {
+            // 1. Update local state optimistically
+            addMessageToSession(activeSessionId, 'user', userMsg);
+
+            // 2. Call Backend
+            const response = await fetch('http://localhost:8000/api/chat/requirements', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    message: userMsg,
+                    session_id: activeSessionId,
+                    ai_model: llmProvider
+                })
+            });
+
+            if (!response.ok) throw new Error('Chat request failed');
+
+            const data = await response.json();
+
+            // 3. Update sessions and activeSessionId if it's a new session
+            if (data.session_id) {
+                if (!activeSessionId) {
+                    setActiveSessionId(data.session_id);
+                }
+                await fetchSessions();
+            }
+
+            // 4. Add agent response to session (this might be redundant if fetchSessions is fast, 
+            // but keeps UI snappy)
+            addMessageToSession(data.session_id, 'agent', data.response, {
+                feasibility: data.feasibility,
+                requirements_complete: data.requirements_complete,
+                requirements: data.requirements
+            });
+
+        } catch (err) {
+            console.error('Chat error:', err);
+            // Optionally add an error message to the thread
+            addMessageToSession(activeSessionId, 'agent', 'Sorry, I encountered an error processing your request. Please check the backend console.');
+        } finally {
+            setIsSubmitting(false);
+            setAttachedImages([]);
+        }
     };
 
     const handleKeyDown = (e) => {

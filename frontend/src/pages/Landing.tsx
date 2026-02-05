@@ -24,7 +24,7 @@ export default function Landing() {
   const { theme } = useTheme();
   const navigate = useNavigate();
   const [mode, setMode] = useState<Mode>('idle');
-  const [audioStream, setAudioStream] = useState<MediaStream | null>(null);
+  const [audioStream, setAudioStream] = useState<MediaStream | undefined>(undefined);
   const [userIntent, setUserIntent] = useState<string>('');
   const [activePanel, setActivePanel] = useState<string | null>(null);
   const [fadeOut, setFadeOut] = useState(false);
@@ -36,7 +36,7 @@ export default function Landing() {
   const handleNewChat = () => {
     setMode('idle');
     setUserIntent('');
-    setAudioStream(null);
+    setAudioStream(undefined);
     setActivePanel(null); // Close any active panels
   };
 
@@ -145,7 +145,7 @@ export default function Landing() {
   const resetToIdle = () => {
     if (audioStream) {
       audioStream.getTracks().forEach(track => track.stop());
-      setAudioStream(null);
+      setAudioStream(undefined);
     }
     setMode('idle');
     setUserIntent('');

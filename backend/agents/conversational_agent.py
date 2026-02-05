@@ -140,6 +140,7 @@ class ConversationalAgent:
         """
         text = params.get("input_text", "")
         context = params.get("context", [])
+        initial_intent = params.get("initial_intent", "")
         
         logs = [f"[CONVERSATIONAL] Processing input: '{text}'"]
         
@@ -147,7 +148,14 @@ class ConversationalAgent:
              return {"response": "I didn't hear anything.", "intent": "none", "logs": logs}
 
         # Re-hydrate EnhancedContextManager from request params (Stateless adaptation)
-        cm = EnhancedContextManager(agent_id="conversational", enable_vector_search=False) # Disable vector for fast stateless
+        cm = EnhancedContextManager(agent_id="conversational", enable_vector_search=False)
+        
+        # Prepend initial intent if provided and history is fresh
+        if initial_intent and len(context) == 0:
+            logs.append(f"[CONVERSATIONAL] Injecting initial intent context: {initial_intent}")
+            from context_manager import MemoryFragment
+            fragment = MemoryFragment(content=f"Primary Goal: {initial_intent}", role="system", scope=ContextScope.EPHEMERAL)
+            cm.working_memory.append(fragment)
         
         async def hydrate():
             if context:
@@ -362,7 +370,8 @@ Respond helpfully. Do NOT ask questions that were already answered.
         
         params = {
             "input_text": user_input,
-            "context": context
+            "context": context,
+            "initial_intent": current_intent
         }
         
         # Determine if we should force discovery based on intent?

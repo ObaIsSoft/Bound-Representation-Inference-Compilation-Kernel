@@ -24,6 +24,7 @@ export default function RequirementsGatheringPage() {
     const [planArtifacts, setPlanArtifacts] = useState([]);
     const [planGenerating, setPlanGenerating] = useState(false);
     const [conversationComplete, setConversationComplete] = useState(false);
+    const [sessionId, setSessionId] = useState(null);
 
     // Initialize conversation with first agent question
     useEffect(() => {
@@ -65,7 +66,8 @@ export default function RequirementsGatheringPage() {
                     conversation_history: agentMessages,
                     user_intent: userIntent,
                     mode: 'requirements_gathering',
-                    ai_model: llmProvider
+                    ai_model: llmProvider,
+                    session_id: sessionId
                 }),
             });
 
@@ -74,6 +76,7 @@ export default function RequirementsGatheringPage() {
             }
 
             const data = await response.json();
+            if (data.session_id) setSessionId(data.session_id);
 
             // Simulate typing delay for better UX
             await new Promise(resolve => setTimeout(resolve, 800));

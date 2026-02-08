@@ -63,12 +63,10 @@ class LatencyMiddleware(BaseHTTPMiddleware):
 app.add_middleware(LatencyMiddleware)
 
 # --- Agent Registry ---
-# --- Agent Registry ---
 AGENTS = get_agent_registry()
 
-# --- Passive XAI Stream --
-from collections import deque
-THOUGHT_STREAM = deque(maxlen=50) # Buffer for last 50 thoughts
+# --- Passive XAI Stream (via centralized module to avoid circular imports) ---
+from xai_stream import get_thoughts, inject_thought
 
 @app.get("/api/agents/thoughts")
 async def get_passive_thoughts():
@@ -76,9 +74,7 @@ async def get_passive_thoughts():
     Polls for recent 'Inner Monologue' thoughts from agents.
     Returns and clears the buffer (destructive read for polling).
     """
-    thoughts = list(THOUGHT_STREAM)
-    THOUGHT_STREAM.clear()
-    return {"thoughts": thoughts}
+    return {"thoughts": get_thoughts(clear=True)}
 
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -91,14 +87,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         content={"detail": exc.errors(), "body": exc.body},
     )
 
-# Helper to inject thoughts (to be called by orchestrator/agents)
-def inject_thought(agent_name: str, thought_text: str):
-    timestamp = datetime.now().isoformat()
-    THOUGHT_STREAM.append({
-        "agent": agent_name,
-        "text": thought_text,
-        "timestamp": timestamp
-    })
+# inject_thought is now imported from xai_stream to avoid circular imports
 
 # --- ISA Handshake API ---
 
@@ -550,34 +539,13 @@ class ChatRequirementsRequest(BaseModel):
 
 @app.post("/api/chat/requirements")
 async def chat_requirements_endpoint(
-    message: str = Form(...),
-    session_id: Optional[str] = Form(None),
-    user_intent: str = Form(""),
-    mode: str = Form("requirements_gathering"),
-    ai_model: str = Form("groq"),
-    conversation_history: str = Form("[]"), # Received as JSON string
-    files: List[UploadFile] = File(default=[])
+    req: ChatRequirementsRequest
 ):
     """
     Intelligent Chat Endpoint for Requirements Gathering.
-    Handles Multipart/Form-Data for file uploads.
+    Accepts JSON body for structured data.
     """
-    # Deserialize conversation_history
-    try:
-        history_list = json.loads(conversation_history)
-    except json.JSONDecodeError:
-        logger.warning("Failed to parse conversation_history JSON, defaulting to empty list.")
-        history_list = []
-
-    # Construct the request object manually
-    req = ChatRequirementsRequest(
-        message=message,
-        session_id=session_id,
-        user_intent=user_intent,
-        mode=mode,
-        ai_model=ai_model,
-        conversation_history=history_list
-    )
+    logger.info(f"Chat Requirements Request: {req.message[:50]}... Session: {req.session_id}")
 
     logger.info(f"Chat Requirements Request: {req.message[:50]}... Session: {req.session_id} Files: {len(files)}")
     
@@ -874,42 +842,56 @@ app.add_middleware(
 async def health_check():
     return {"status": "ok", "system": "BRICK OS"}
 
+class OrchestratorRunRequest(BaseModel):
+    user_intent: str
+    project_id: str
+    mode: str = "run"  # plan, run, step
+    focused_pod_id: Optional[str] = None
+    # Note: voice_data should be sent as base64 string if needed
+    voice_data_base64: Optional[str] = None
+
 @app.post("/api/orchestrator/run")
-async def run_orchestrator_endpoint(
-    user_intent: str = Form(...),
-    project_id: str = Form(...),
-    mode: str = Form("run"), # plan, run, step
-    focused_pod_id: Optional[str] = Form(None),
-    voice_data: Optional[UploadFile] = File(None)
-):
+async def run_orchestrator_endpoint(req: OrchestratorRunRequest):
     """
     Central Orchestrator Endpoint.
     Handles Voice/Text Intent -> Agent Execution -> Artifact Generation.
+    """
+    # Handle base64 voice data if provided
+    voice_data = None
+    if req.voice_data_base64:
+        import base64
+        from io import BytesIO
+        voice_bytes = base64.b64decode(req.voice_data_base64)
+        voice_data = BytesIO(voice_bytes)
+    
+    return await run_orchestrator_internal(
+        user_intent=req.user_intent,
+        project_id=req.project_id,
+        mode=req.mode,
+        focused_pod_id=req.focused_pod_id,
+        voice_data=voice_data
+    )
+
+async def run_orchestrator_internal(
+    user_intent: str,
+    project_id: str,
+    mode: str = "run",
+    focused_pod_id: Optional[str] = None,
+    voice_data = None
+):
+    """
+    Internal orchestrator logic (shared between endpoints).
     """
     logger.info(f"Orchestrator Request: {user_intent} (Mode: {mode}, Voice: {voice_data is not None})")
     
     # 1. Handle Voice Data (Strict Routing to ConversationalAgent)
     transcript = ""
-    # Check if we have valid voice data (UploadFile)
     if voice_data and hasattr(voice_data, "read"):
-        from agents.conversational_agent import ConversationalAgent
-        # We process voice to get transcript for intent augmentation
-        # In a real swarm, the audio bytes might be passed directly too
-        # checking "conversational" in registry
-        conv_agent = AGENTS.get("conversational")
-        if not conv_agent:
-            # Use global conversational_agent instead of re-instantiating
-            conv_agent = conversational_agent
-            
-        # Transcribe via helper or agent method
-        # Assuming agent has access to STT or we use STT agent directly
         from agents.stt_agent import get_stt_agent
         stt = get_stt_agent()
         content = await voice_data.read()
         transcript = stt.transcribe(content, filename="voice_command.wav")
         logger.info(f"Voice Transcript: {transcript}")
-        
-        # Augment intent
         user_intent = f"{user_intent} {transcript}".strip()
 
     # 2. Run Orchestrator
@@ -1152,41 +1134,64 @@ async def delete_project_state(project_id: str, branch: str = "main"):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class OrchestratorPlanRequest(BaseModel):
+    user_intent: str
+    project_id: str
+
 @app.post("/api/orchestrator/plan")
 async def plan_orchestrator_endpoint(
-    user_intent: str = Form(...),
-    project_id: str = Form(...)
+    req: OrchestratorPlanRequest
 ):
     """Shortcut for Planning Mode"""
-    return await run_orchestrator_endpoint(user_intent=user_intent, project_id=project_id, mode="plan")
+    # Handle voice data if provided as base64
+    voice_data = None
+    if req.voice_data_base64:
+        import base64
+        from io import BytesIO
+        voice_bytes = base64.b64decode(req.voice_data_base64)
+        voice_data = BytesIO(voice_bytes)
+    
+    return await run_orchestrator_internal(
+        user_intent=req.user_intent, 
+        project_id=req.project_id, 
+        mode="plan",
+        focused_pod_id=req.focused_pod_id if hasattr(req, 'focused_pod_id') else None,
+        voice_data=voice_data
+    )
+
+class OrchestratorApproveRequest(BaseModel):
+    project_id: str
+    approved: bool
+    user_intent: Optional[str] = None
 
 @app.post("/api/orchestrator/approve")
 async def approve_plan_endpoint(
-    project_id: str = Form(...),
-    approved: bool = Form(...),
-    user_intent: Optional[str] = Form(None)
+    req: OrchestratorApproveRequest
 ):
     """
     Handle User Approval Gate.
     Resumes execution from Phase 3 if approved.
     """
-    if not approved:
+    if not req.approved:
          return {"status": "rejected", "message": "Plan rejected by user."}
          
     # Resume execution (Phase 3+)
     # We pass mode="run" to bypass the planning stop
-    return await run_orchestrator_endpoint(
-        user_intent=user_intent or "Resume execution", 
-        project_id=project_id, 
+    return await run_orchestrator_internal(
+        user_intent=req.user_intent or "Resume execution", 
+        project_id=req.project_id, 
         mode="run",
-        voice_data=None,         # Explicitly None to avoid File(None)
-        focused_pod_id=None      # Explicitly None to avoid Form(None)
+        voice_data=None,
+        focused_pod_id=None
     )
+
+class OrchestratorFeedbackRequest(BaseModel):
+    project_id: str
+    feedback: str
 
 @app.post("/api/orchestrator/feedback")
 async def feedback_plan_endpoint(
-    project_id: str = Form(...),
-    feedback: str = Form(...)
+    req: OrchestratorFeedbackRequest
 ):
     """
     Handle User Feedback on Plan.
@@ -1194,12 +1199,12 @@ async def feedback_plan_endpoint(
     """
     # Append feedback to intent or context. 
     # For MVP, we treat feedback as a new intent refinement.
-    return await run_orchestrator_endpoint(
-        user_intent=f"Refine plan with feedback: {feedback}",
-        project_id=project_id,
+    return await run_orchestrator_internal(
+        user_intent=f"Refine plan with feedback: {req.feedback}",
+        project_id=req.project_id,
         mode="plan",
-        voice_data=None,         # Explicitly None
-        focused_pod_id=None      # Explicitly None
+        voice_data=None,
+        focused_pod_id=None
     )
 
 
@@ -2777,6 +2782,234 @@ async def check_compliance(request: ComplianceCheckRequest):
 def _sse_event(event_type: str, data: Dict) -> str:
     """Format SSE event"""
     return f"event: {event_type}\\ndata: {json.dumps(data)}\\n\\n"
+
+
+# =============================================================================
+# Phase 5: WebSocket Real-time Updates & Performance Monitoring
+# =============================================================================
+
+# --- WebSocket Orchestrator Endpoint ---
+from websocket_manager import ws_handler, ws_manager
+from performance_monitor import perf_monitor
+
+@app.websocket("/ws/orchestrator/{project_id}")
+async def websocket_orchestrator(websocket: WebSocket, project_id: str):
+    """
+    WebSocket endpoint for real-time orchestrator updates.
+    
+    Clients subscribe to a specific project_id to receive:
+    - Agent progress updates
+    - XAI thought stream
+    - State changes
+    - Completion/error notifications
+    - Performance metrics
+    """
+    await ws_handler.handle_connection(websocket, project_id)
+
+
+# --- Performance Monitoring API Endpoints ---
+
+class PerformanceOverviewResponse(BaseModel):
+    """Response model for performance overview."""
+    active_pipelines: int
+    completed_pipelines: int
+    total_agent_executions: int
+    total_failures: int
+    failure_rate: float
+    agent_count: int
+    timestamp: str
+
+
+@app.get("/api/performance/overview", response_model=PerformanceOverviewResponse)
+async def get_performance_overview():
+    """
+    Get system-wide performance overview.
+    
+    Returns:
+        - Active pipeline count
+        - Completed pipeline count
+        - Total agent executions
+        - Failure statistics
+        - System timestamp
+    """
+    return perf_monitor.get_system_overview()
+
+
+@app.get("/api/performance/pipelines/active")
+async def get_active_pipelines():
+    """
+    Get list of currently active pipelines with their progress.
+    
+    Returns list of active pipelines with:
+        - project_id
+        - duration_ms
+        - completed_agents / total_agents
+        - status
+    """
+    return {"pipelines": perf_monitor.get_active_pipelines()}
+
+
+@app.get("/api/performance/pipelines/recent")
+async def get_recent_pipelines(limit: int = 10):
+    """
+    Get recently completed pipelines.
+    
+    Args:
+        limit: Number of recent pipelines to return (default: 10)
+    
+    Returns list of completed pipelines with timing and bottleneck info.
+    """
+    return {"pipelines": perf_monitor.get_recent_pipelines(limit)}
+
+
+@app.get("/api/performance/pipeline/{project_id}")
+async def get_pipeline_performance(project_id: str):
+    """
+    Get detailed performance metrics for a specific pipeline.
+    
+    Args:
+        project_id: The project ID to query
+    
+    Returns:
+        - Pipeline timing
+        - Agent execution details
+        - Identified bottlenecks
+        - Status
+    """
+    metrics = perf_monitor.get_pipeline_metrics(project_id)
+    if not metrics:
+        raise HTTPException(status_code=404, detail=f"Pipeline {project_id} not found")
+    
+    return {
+        "project_id": metrics.project_id,
+        "start_time": metrics.start_time.isoformat(),
+        "end_time": metrics.end_time.isoformat() if metrics.end_time else None,
+        "duration_ms": metrics.duration_ms,
+        "status": metrics.status,
+        "total_agents": metrics.total_agents,
+        "completed_agents": metrics.completed_agents,
+        "failed_agents": metrics.failed_agents,
+        "bottlenecks": metrics.bottlenecks,
+        "agent_timings": {
+            agent: [
+                {
+                    "duration_ms": e.duration_ms,
+                    "status": e.status,
+                    "timestamp": e.start_time.isoformat()
+                }
+                for e in executions
+            ]
+            for agent, executions in metrics.agent_timings.items()
+        }
+    }
+
+
+@app.get("/api/performance/agents")
+async def get_agent_performance(agent_name: Optional[str] = None):
+    """
+    Get performance statistics for agents.
+    
+    Args:
+        agent_name: Optional specific agent to query. If not provided,
+                   returns stats for all agents.
+    
+    Returns:
+        - Total executions
+        - Average duration
+        - Min/max duration
+        - Failure count
+    """
+    stats = perf_monitor.get_agent_stats(agent_name)
+    return {"agents": stats}
+
+
+@app.get("/api/performance/agents/slowest")
+async def get_slowest_agents(limit: int = 5):
+    """
+    Get the slowest agents by average execution time.
+    
+    Args:
+        limit: Number of slowest agents to return (default: 5)
+    
+    Returns list of agents sorted by average duration (slowest first).
+    """
+    return {"slowest_agents": perf_monitor.get_slowest_agents(limit)}
+
+
+@app.get("/api/performance/websocket/status")
+async def get_websocket_status():
+    """
+    Get WebSocket connection status.
+    
+    Returns:
+        - Total active connections
+        - Active projects
+        - Connection count per project
+    """
+    active_projects = ws_manager.get_active_projects()
+    return {
+        "total_connections": ws_manager.get_connection_count(),
+        "active_projects": active_projects,
+        "connections_per_project": {
+            project_id: ws_manager.get_connection_count(project_id)
+            for project_id in active_projects
+        }
+    }
+
+
+# --- WebSocket Broadcast Integration with Orchestrator ---
+
+# These functions are imported by orchestrator to broadcast updates
+# They provide a fire-and-forget interface for the LangGraph pipeline
+
+def broadcast_orchestrator_progress(project_id: str, agent_name: str, progress: Dict[str, Any]):
+    """
+    Broadcast agent progress to WebSocket clients.
+    Called by orchestrator nodes during execution.
+    """
+    from websocket_manager import broadcast_agent_progress
+    broadcast_agent_progress(project_id, agent_name, progress)
+
+
+def broadcast_orchestrator_thought(project_id: str, agent_name: str, thought: str):
+    """
+    Broadcast XAI thought to WebSocket clients.
+    Called by agents during execution.
+    """
+    from websocket_manager import broadcast_thought
+    broadcast_thought(project_id, agent_name, thought)
+
+
+def broadcast_orchestrator_state(project_id: str, state_update: Dict[str, Any]):
+    """
+    Broadcast state update to WebSocket clients.
+    Called by orchestrator after node completion.
+    """
+    from websocket_manager import broadcast_state_update
+    broadcast_state_update(project_id, state_update)
+
+
+def broadcast_orchestrator_completion(project_id: str, result: Dict[str, Any]):
+    """
+    Broadcast pipeline completion to WebSocket clients.
+    Called by orchestrator when pipeline finishes.
+    """
+    from websocket_manager import broadcast_completion
+    broadcast_completion(project_id, result)
+
+
+def broadcast_orchestrator_error(project_id: str, error: str, details: Optional[Dict] = None):
+    """
+    Broadcast error to WebSocket clients.
+    Called by orchestrator on failure.
+    """
+    from websocket_manager import broadcast_error
+    broadcast_error(project_id, error, details)
+
+
+# =============================================================================
+# Server Startup
+# =============================================================================
 
 if __name__ == "__main__":
     import uvicorn

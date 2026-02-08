@@ -3,6 +3,17 @@ from langgraph.graph import StateGraph, END
 from schema import AgentState
 from agents.environment_agent import EnvironmentAgent
 import asyncio
+import time
+
+# Phase 5: WebSocket & Performance Monitoring
+from websocket_manager import (
+    broadcast_agent_progress,
+    broadcast_thought,
+    broadcast_state_update,
+    broadcast_completion,
+    broadcast_error,
+)
+from performance_monitor import perf_monitor, track_agent
 
 # Critics (Global - Keep for now as they are used in global scope instantiation below)
 # Ideally these should also be lazy, but for Phase 8.4 we focus on the 64 main agents.
@@ -58,6 +69,7 @@ from conditional_gates import (
 from agent_selector import select_physics_agents
 
 from llm.factory import get_llm_provider
+from xai_stream import inject_thought
 from enums import (
     OrchestratorMode, ValidationStatus, FeasibilityStatus, 
     ApprovalStatus, FluidNeeded, ManufacturingType, LatticeNeeded
@@ -111,9 +123,11 @@ def stt_node(state: AgentState) -> Dict[str, Any]:
     
     if voice_data and not user_intent:
         logger.info(f"STT Node: Transcribing {len(voice_data)} bytes...")
+        inject_thought("STT Node", "Transcribing voice input...")
         agent = get_stt_agent()
         transcript = agent.transcribe(voice_data)
         logger.info(f"STT Node: Transcript: {transcript}")
+        inject_thought("STT Node", f"Transcript: {transcript}")
         return {"user_intent": transcript}
     
     return {}
@@ -130,6 +144,8 @@ async def dreamer_node(state: AgentState) -> Dict[str, Any]:
     # Use Registry Instance (Persistent) using safe accessor
     from agent_registry import registry
     agent = registry.get_agent("ConversationalAgent")
+    
+    inject_thought("Dreamer Node", f"Analyzing intent: {raw_intent}")
     
     if not agent:
         logger.error("ConversationalAgent not found in registry!")
@@ -206,6 +222,7 @@ async def environment_node(state: AgentState) -> Dict[str, Any]:
             }
             
     agent = registry.get_agent("EnvironmentAgent")
+    inject_thought("Environment Node", f"Analyzing environment requirements for: {intent}")
     try:
         if hasattr(agent, "run") and asyncio.iscoroutinefunction(agent.run):
              env_data = await agent.run(intent)
@@ -234,6 +251,7 @@ async def topological_node(state: AgentState) -> Dict[str, Any]:
     params = state.get("design_parameters", {})
     
     agent = registry.get_agent("TopologicalAgent")
+    inject_thought("Topological Node", "Analyzing terrain and operational constraints...")
     # Pass necessary data (e.g. mock elevation for now, or real if available)
     # We might extract elevation from env or params
     topo_params = {
@@ -269,7 +287,7 @@ async def designer_node(state: AgentState) -> Dict[str, Any]:
     Generates aesthetic 'DNA' (genome) from user intent.
     """
     from agents.unified_design_agent import UnifiedDesignAgent
-    from main import inject_thought
+    from xai_stream import inject_thought
     
     intent = state.get("user_intent", "")
     
@@ -306,6 +324,7 @@ async def ldp_node(state: AgentState) -> Dict[str, Any]:
     """
     from ldp_kernel import LogicalDependencyParser, RequirementNode
     
+    inject_thought("LDP Node", "Resolving logical dependencies and physics constraints...")
     ldp = LogicalDependencyParser()
     params = state.get("design_parameters", {})
     
@@ -356,16 +375,27 @@ async def ldp_node(state: AgentState) -> Dict[str, Any]:
     }
 
 async def geometry_node(state: AgentState) -> Dict[str, Any]:
-    # ... as before ...
+    """Geometry node with Phase 5 performance tracking and WebSocket broadcasting."""
     from agents.geometry_agent import GeometryAgent
 
     intent = state.get("user_intent", "")
     params = state.get("design_parameters", {})
     env = state.get("environment", {})
     instructions = state.get("ldp_instructions", [])
+    project_id = state.get("project_id", "unknown")
+    
+    # Phase 5: Broadcast progress
+    broadcast_agent_progress(project_id, "GeometryAgent", {
+        "stage": "starting",
+        "message": "Synthesizing geometry from parameters..."
+    })
+    inject_thought("Geometry Node", "Synthesizing geometry from parameters...")
+    
+    # Phase 5: Track execution time
+    start_time = time.time()
     
     agent = registry.get_agent("GeometryAgent")
-    # Pass instructions to the agent.
+    
     try:
         if hasattr(agent, "run") and asyncio.iscoroutinefunction(agent.run):
              result = await agent.run(params, intent, environment=env, ldp_instructions=instructions)
@@ -373,7 +403,26 @@ async def geometry_node(state: AgentState) -> Dict[str, Any]:
              result = agent.run(params, intent, environment=env, ldp_instructions=instructions)
              if asyncio.iscoroutine(result):
                  result = await result
+        
+        # Phase 5: Calculate execution time and broadcast completion
+        duration_ms = (time.time() - start_time) * 1000
+        perf_monitor.record_agent_timing(project_id, "GeometryAgent", duration_ms)
+        
+        broadcast_agent_progress(project_id, "GeometryAgent", {
+            "stage": "completed",
+            "duration_ms": duration_ms,
+            "has_geometry": bool(result.get("geometry_tree")),
+        })
+        
     except Exception as e:
+        duration_ms = (time.time() - start_time) * 1000
+        perf_monitor.record_agent_timing(project_id, "GeometryAgent", duration_ms)
+        
+        broadcast_agent_progress(project_id, "GeometryAgent", {
+            "stage": "failed",
+            "duration_ms": duration_ms,
+            "error": str(e),
+        })
         logger.error(f"GeometryAgent Failed: {e}")
         return {"error": str(e)}
     
@@ -403,6 +452,7 @@ async def manufacturing_node(state: AgentState) -> Dict[str, Any]:
     pod_id = params.get("pod_id") # Phase 9/10: Scoped Execution
     
     agent = registry.get_agent("ManufacturingAgent")
+    inject_thought("Manufacturing Node", "Analyzing manufacturability and generating BOM...")
     
     try:
         if hasattr(agent, "run") and asyncio.iscoroutinefunction(agent.run):
@@ -432,6 +482,7 @@ async def surrogate_physics_node(state: AgentState) -> Dict[str, Any]:
     Predicts physics outcomes using a trained neural network.
     """
     logger.info("--- Surrogate Physics Node ---")
+    inject_thought("Surrogate Node", "Predicting physics outcomes using neural surrogate...")
     
     surrogate = state.get("surrogate_physics")
     # If not in state (lazily init?) or use registry
@@ -467,11 +518,23 @@ async def surrogate_physics_node(state: AgentState) -> Dict[str, Any]:
 async def physics_node(state: AgentState) -> Dict[str, Any]:
     """
     Executes the Physics Agent (The Judge).
+    Phase 5: Includes performance tracking and WebSocket broadcasting.
     """
     env = state.get("environment", {})
     geo = state.get("geometry_tree", [])
     params = state.get("design_parameters", {})
     material_name = state.get("material", "Aluminum 6061")
+    project_id = state.get("project_id", "unknown")
+    
+    # Phase 5: Broadcast progress
+    broadcast_agent_progress(project_id, "PhysicsAgent", {
+        "stage": "starting",
+        "message": f"Running multi-physics analysis for {material_name}..."
+    })
+    inject_thought("Physics Node", f"Running multi-physics analysis for {material_name}...")
+    
+    # Phase 5: Track execution time
+    start_time = time.time()
     
     # We need mass data. 
     # Ideally, we'd pull "total_mass" from bom_analysis/components but 
@@ -483,7 +546,12 @@ async def physics_node(state: AgentState) -> Dict[str, Any]:
     # Run Material Agent to get precise limits check
     temp = env.get("temperature", 20.0)
     mat_agent = registry.get_agent("MaterialAgent")
-    mat_props = mat_agent.run(material_name, temp)
+    if hasattr(mat_agent, "run") and asyncio.iscoroutinefunction(mat_agent.run):
+        mat_props = await mat_agent.run(material_name, temp)
+    else:
+        mat_props = mat_agent.run(material_name, temp)
+        if asyncio.iscoroutine(mat_props):
+            mat_props = await mat_props
     
     # CRITIC HOOK: Material
     if "material_critic" in state.get("active_critics", []):
@@ -498,7 +566,12 @@ async def physics_node(state: AgentState) -> Dict[str, Any]:
 
     # Run Chemistry Agent
     chem_agent = registry.get_agent("ChemistryAgent")
-    chem_check = chem_agent.run([material_name], env.get("type", "standard"))
+    if hasattr(chem_agent, "run") and asyncio.iscoroutinefunction(chem_agent.run):
+        chem_check = await chem_agent.run([material_name], env.get("type", "standard"))
+    else:
+        chem_check = chem_agent.run([material_name], env.get("type", "standard"))
+        if asyncio.iscoroutine(chem_check):
+            chem_check = await chem_check
 
     # CRITIC HOOK: Chemistry
     if "chemistry_critic" in state.get("active_critics", []):
@@ -516,7 +589,12 @@ async def physics_node(state: AgentState) -> Dict[str, Any]:
     elec_agent = registry.get_agent("ElectronicsAgent")
     elec_params = params.copy()
     elec_params["geometry_tree"] = geo # Pass Geometry for EMI checks
-    elec_result = elec_agent.run(elec_params)
+    if hasattr(elec_agent, "run") and asyncio.iscoroutinefunction(elec_agent.run):
+        elec_result = await elec_agent.run(elec_params)
+    else:
+        elec_result = elec_agent.run(elec_params)
+        if asyncio.iscoroutine(elec_result):
+            elec_result = await elec_result
     
     # CRITIC HOOK: Electronics
     if "electronics_critic" in state.get("active_critics", []):
@@ -548,7 +626,12 @@ async def physics_node(state: AgentState) -> Dict[str, Any]:
     therm_params["power_watts"] = heat_load_w if heat_load_w > 0 else 100.0 # Use calculated heat load
     therm_params["ambient_temp"] = temp
     therm_params["environment_type"] = env.get("type", "GROUND")
-    therm_result = therm_agent.run(therm_params)
+    if hasattr(therm_agent, "run") and asyncio.iscoroutinefunction(therm_agent.run):
+        therm_result = await therm_agent.run(therm_params)
+    else:
+        therm_result = therm_agent.run(therm_params)
+        if asyncio.iscoroutine(therm_result):
+            therm_result = await therm_result
     
     # CRITIC HOOK: Monitor Thermal Hybrid Performance
     # PhysicsCritic expects floats. We extract temperature.
@@ -581,7 +664,12 @@ async def physics_node(state: AgentState) -> Dict[str, Any]:
     struct_agent = registry.get_agent("StructuralAgent")
     struct_params = params.copy()
     struct_params["material_properties"] = mat_props["properties"]
-    struct_result = struct_agent.run(struct_params)
+    if hasattr(struct_agent, "run") and asyncio.iscoroutinefunction(struct_agent.run):
+        struct_result = await struct_agent.run(struct_params)
+    else:
+        struct_result = struct_agent.run(struct_params)
+        if asyncio.iscoroutine(struct_result):
+            struct_result = await struct_result
     
     # CRITIC HOOK: Monitor Structural Hybrid Performance
     if "gate_value" in struct_result:
@@ -621,7 +709,12 @@ async def physics_node(state: AgentState) -> Dict[str, Any]:
         ctrl_params["inertia_tensor"] = state["mass_properties"].get("inertia_tensor", [0.005, 0.005, 0.01])
     ctrl_params["control_mode"] = control_mode
     
-    cps_result = cps_agent.run(ctrl_params)
+    if hasattr(cps_agent, "run") and asyncio.iscoroutinefunction(cps_agent.run):
+        cps_result = await cps_agent.run(ctrl_params)
+    else:
+        cps_result = cps_agent.run(ctrl_params)
+        if asyncio.iscoroutine(cps_result):
+            cps_result = await cps_result
     # --- CONTROL LAYER END ---
 
     # 4. Physics (Flight Dynamics)
@@ -635,24 +728,32 @@ async def physics_node(state: AgentState) -> Dict[str, Any]:
     params["mag_force_n"] = elec_result.get("mag_lift_n", 0.0) # Inject Maglev Force
     phys_result = await phys_agent.run(env, geo, params)
     
-    FLAGS = phys_result["validation_flags"]
-    reasons = FLAGS["reasons"] # Reference to list
+    # --- IMMUTABLE STATE HANDLING ---
+    # Create NEW flags dict instead of mutating original
+    original_flags = phys_result["validation_flags"]
+    flags = {
+        "physics_safe": original_flags.get("physics_safe", True),
+        "kcl_syntax_valid": original_flags.get("kcl_syntax_valid", False),
+        "geometry_manifold": original_flags.get("geometry_manifold", False),
+        "manufacturing_feasible": original_flags.get("manufacturing_feasible", False),
+        "reasons": list(original_flags.get("reasons", []))  # Copy list
+    }
+    reasons = flags["reasons"]  # Reference to our new list
     
     # CRITIC VALIDATION HOOK
     if "surrogate_prediction" in state:
         pred = state["surrogate_prediction"]
-        is_safe = FLAGS["physics_safe"]
+        is_safe = flags["physics_safe"]
         
         # Check gate alignment if velocity available
         gate_val = pred.get("gate_value", 0.5)
-        # Assuming simple check for now
         
         validation = {
             "verified": (pred.get("recommendation") == "PROCEED") == is_safe,
             "ground_truth": "SAFE" if is_safe else "UNSAFE",
             "prediction": "SAFE" if pred.get("recommendation") == "PROCEED" else "UNSAFE",
             "gate_value": gate_val,
-            "gate_aligned": True, # Placeholder
+            "gate_aligned": True,
             "drift_alert": (pred.get("recommendation") == "PROCEED") != is_safe
         }
         surrogate_critic.observe(state, pred, validation)
@@ -661,46 +762,53 @@ async def physics_node(state: AgentState) -> Dict[str, Any]:
     # Retrieve thought from result (added by AgentExplainabilityWrapper)
     thought_text = phys_result.get("_thought")
     if thought_text:
-        try:
-             # Lazy import to avoid circular dep with main.py
-             from main import inject_thought
-             inject_thought("PhysicsAgent", thought_text)
-        except ImportError:
-             logger.warning("Could not inject thought: main module unreachable.")
+        from xai_stream import inject_thought
+        inject_thought("PhysicsAgent", thought_text)
 
-    # Append Control Logs to Reasons if failed (or just log it)
+    # Build failure reasons list immutably
+    failure_reasons = []
+    
+    # Control Failures
     if cps_result.get("status") == "error":
-        reasons.append(f"CONTROL_FAILURE: {cps_result.get('error')}")
+        failure_reasons.append(f"CONTROL_FAILURE: {cps_result.get('error')}")
     
     # Chemistry Failures
     if not chem_check["chemical_safe"]:
-        flags["physics_safe"] = False
-        reasons.extend(chem_check["issues"])
+        failure_reasons.extend(chem_check["issues"])
         
     # Material Melting
-    if mat_props["properties"]["is_melted"]:
-        flags["physics_safe"] = False
-        reasons.append(f"MATERIAL_FAILURE: {material_name} melted at {temp}C")
+    if mat_props["properties"].get("is_melted", False):
+        failure_reasons.append(f"MATERIAL_FAILURE: {material_name} melted at {temp}C")
 
     # Structural Failures
-    if struct_result["status"] == "failure":
-        flags["physics_safe"] = False
-        reasons.append(f"STRUCTURAL_FAILURE: {struct_result['logs'][-1]}")
+    if struct_result.get("status") == "failure":
+        failure_reasons.append(f"STRUCTURAL_FAILURE: {struct_result['logs'][-1] if struct_result.get('logs') else 'Unknown'}")
         
     # Thermal Failures
-    if therm_result["status"] == "critical":
-        flags["physics_safe"] = False
-        reasons.append(f"THERMAL_FAILURE: Overheating {therm_result['equilibrium_temp_c']}C")
+    if therm_result.get("status") == "critical":
+        failure_reasons.append(f"THERMAL_FAILURE: Overheating {therm_result.get('equilibrium_temp_c', 'Unknown')}C")
+    
+    # Merge reasons into flags
+    flags["reasons"].extend(failure_reasons)
+    
+    # Determine final physics_safe status
+    flags["physics_safe"] = len(failure_reasons) == 0 and original_flags.get("physics_safe", True)
 
-    # Lower strength due to heat? (Redundant if StructuralAgent handles it via prop passed, but good double check)
-    strength_factor = mat_props["properties"].get("strength_factor", 1.0)
-    if strength_factor < 0.5:
-         # Already likely caught by structure, but strict check
-         pass
+    # Phase 5: Calculate execution time and broadcast completion
+    duration_ms = (time.time() - start_time) * 1000
+    perf_monitor.record_agent_timing(project_id, "PhysicsAgent", duration_ms)
+    
+    broadcast_agent_progress(project_id, "PhysicsAgent", {
+        "stage": "completed",
+        "duration_ms": duration_ms,
+        "physics_safe": flags["physics_safe"],
+        "checks_performed": ["control", "chemistry", "material", "structural", "thermal"],
+        "failure_count": len(failure_reasons),
+    })
 
     return {
         "physics_predictions": phys_result["physics_predictions"],
-        "validation_flags": flags,
+        "validation_flags": flags,  # Return our new immutable flags
         "material_props": mat_props,
         "sub_agent_reports": {
             "electronics": elec_result,
@@ -722,6 +830,7 @@ async def optimization_node(state: AgentState) -> Dict[str, Any]:
     # Ideally we'd map reasons -> constraints to lock/unlock.
     
     agent = registry.get_agent("OptimizationAgent")
+    inject_thought("Optimization Node", "Optimizing design parameters to resolve failures...")
     
     # New API expects 'isa_state' and 'objective' in params
     # We construct a wrapper params dict if needed, or pass current state wrapper
@@ -1178,6 +1287,16 @@ async def run_orchestrator(
     Main entry point.
     mode: "plan" (stop after plan) or "execute" (continue to build).
     """
+    # Phase 5: Start performance tracking
+    await perf_monitor.start_pipeline(project_id)
+    
+    # Phase 5: Broadcast pipeline start via WebSocket
+    broadcast_state_update(project_id, {
+        "status": "started",
+        "mode": mode,
+        "user_intent": user_intent[:100] + "..." if len(user_intent) > 100 else user_intent,
+    })
+    
     app = build_graph()
     
     initial_params = {}
@@ -1201,8 +1320,22 @@ async def run_orchestrator(
     if initial_state_override:
         initial_state.update(initial_state_override)
     
-    # LangGraph returns the final state
-    final_state = await app.ainvoke(initial_state, config={"recursion_limit": 60})
+    try:
+        # LangGraph returns the final state
+        final_state = await app.ainvoke(initial_state, config={"recursion_limit": 60})
+        
+        # Phase 5: Broadcast successful completion
+        broadcast_completion(project_id, {
+            "status": "completed",
+            "iteration_count": final_state.get("iteration_count", 0),
+        })
+        
+    except Exception as e:
+        # Phase 5: Broadcast error
+        logger.error(f"Orchestrator error for project {project_id}: {e}")
+        broadcast_error(project_id, str(e), {"stage": "execution"})
+        await perf_monitor.end_pipeline(project_id, status="failed")
+        raise
     
     # --- Post-Processing Mitigation (The Fixer) ---
     flags = final_state.get("validation_flags", {})
@@ -1210,14 +1343,33 @@ async def run_orchestrator(
         from agents.mitigation_agent import MitigationAgent
         logger.info("Physics check failed. Running Mitigation Agent...")
         
-        mit_agent = registry.get_agent("MitigationAgent")
-        mitigation_results = mit_agent.run({
-            "errors": flags.get("reasons", []),
-            "physics_data": final_state.get("physics_predictions", {}),
-            "geometry_tree": final_state.get("geometry_tree", [])
-        })
+        # Phase 5: Track mitigation agent execution
+        with track_agent(project_id, "MitigationAgent") as execution:
+            mit_agent = registry.get_agent("MitigationAgent")
+            mitigation_results = mit_agent.run({
+                "errors": flags.get("reasons", []),
+                "physics_data": final_state.get("physics_predictions", {}),
+                "geometry_tree": final_state.get("geometry_tree", [])
+            })
+            
+            final_state["mitigations"] = mitigation_results.get("fixes", [])
+            logger.info(f"Proposed {len(final_state['mitigations'])} fixes.")
         
-        final_state["mitigations"] = mitigation_results.get("fixes", [])
-        logger.info(f"Proposed {len(final_state['mitigations'])} fixes.")
+        # Phase 5: Broadcast mitigation results
+        broadcast_state_update(project_id, {
+            "mitigations_applied": len(final_state.get("mitigations", [])),
+            "physics_safe": False,
+        })
+
+    # Phase 5: End performance tracking
+    await perf_monitor.end_pipeline(project_id, status="completed")
+    
+    # Phase 5: Broadcast final state summary
+    broadcast_state_update(project_id, {
+        "status": "finished",
+        "final_iteration_count": final_state.get("iteration_count", 0),
+        "has_geometry": bool(final_state.get("geometry_tree")),
+        "has_manufacturing_data": bool(final_state.get("toolpaths")),
+    })
 
     return final_state

@@ -5,6 +5,11 @@ from agents.explainable_agent import create_xai_wrapper
 
 logger = logging.getLogger(__name__)
 
+
+class AgentNotFoundError(RuntimeError):
+    """Raised when an agent is not found in the registry."""
+    pass
+
 class GlobalAgentRegistry:
     """
     Singleton registry for all BRICK OS agents.
@@ -110,10 +115,19 @@ class GlobalAgentRegistry:
         # In lazy mode, we don't load anything upfront.
         self._initialized = True
 
-    def get_agent(self, name: str) -> Optional[Any]:
+    def get_agent(self, name: str) -> Any:
         """
         Get an agent instance by name (case-insensitive).
         Instantiates the agent if it's the first time being requested.
+        
+        Args:
+            name: Agent name (e.g., "MaterialAgent" or "Material")
+            
+        Returns:
+            Agent instance
+            
+        Raises:
+            RuntimeError: If agent cannot be found or loaded
         """
         # 1. Check if already instantiated
         if name in self._agents:
@@ -127,7 +141,6 @@ class GlobalAgentRegistry:
                 return instance
 
         # 3. If not found, try to LAZY LOAD from Metadata
-        # We need to find the correct key in AVAILABLE_AGENTS
         target_key = None
         if name in self.AVAILABLE_AGENTS:
             target_key = name
@@ -144,32 +157,63 @@ class GlobalAgentRegistry:
         if target_key:
             return self._lazy_load(target_key)
         
-        logger.warning(f"Agent '{name}' not found in registry or metadata.")
-        return None
+        # 4. Agent not found - raise explicit error
+        available = list(self.AVAILABLE_AGENTS.keys())
+        raise AgentNotFoundError(
+            f"Agent '{name}' not found in registry. "
+            f"Did you mean one of: {[a for a in available if name.lower() in a.lower()][:3]}? "
+            f"Available agents: {available}"
+        )
 
-    def _lazy_load(self, name: str) -> Optional[Any]:
-        """Internal method to import and instantiate an agent."""
+    def _lazy_load(self, name: str) -> Any:
+        """
+        Internal method to import and instantiate an agent.
+        
+        Raises:
+            RuntimeError: If agent cannot be loaded (never returns None)
+        """
         if name not in self.AVAILABLE_AGENTS:
-            return None
+            raise AgentNotFoundError(
+                f"Agent '{name}' not found in AVAILABLE_AGENTS. "
+                f"Available agents: {list(self.AVAILABLE_AGENTS.keys())}"
+            )
             
         module_path, class_name = self.AVAILABLE_AGENTS[name]
+        
         try:
-            logger.info(f"Lazy loading {name}...")
+            logger.info(f"Lazy loading {name} from {module_path}.{class_name}...")
             module = importlib.import_module(module_path)
             cls = getattr(module, class_name)
             instance = cls()
             
             # Wrap with XAI (Skip XAI agent itself to prevent recursion)
-            # Check both name and class name to be safe
             if name != "ExplainableAgent" and "Explainable" not in name:
-                logger.info(f"🔍 Injecting Observability Wrapper into {name}")
+                logger.info(f"Injecting Observability Wrapper into {name}")
                 instance = create_xai_wrapper(instance)
             
             self._agents[name] = instance
+            logger.info(f"Successfully loaded agent: {name}")
             return instance
+            
+        except ImportError as e:
+            logger.error(f"Failed to import module for {name}: {e}")
+            raise RuntimeError(
+                f"Cannot load agent '{name}': Module '{module_path}' not found. "
+                f"Ensure all dependencies are installed. Error: {e}"
+            ) from e
+            
+        except AttributeError as e:
+            logger.error(f"Failed to find class for {name}: {e}")
+            raise RuntimeError(
+                f"Cannot load agent '{name}': Class '{class_name}' not found in {module_path}. "
+                f"Check AVAILABLE_AGENTS mapping. Error: {e}"
+            ) from e
+            
         except Exception as e:
-            logger.error(f"Failed to lazy load {name}: {e}")
-            return None
+            logger.critical(f"Unexpected error loading agent {name}: {e}")
+            raise RuntimeError(
+                f"Unexpected failure loading agent '{name}' from {module_path}.{class_name}: {e}"
+            ) from e
 
     def list_known_agents(self) -> List[str]:
         """Return list of all known agent names (instantiated or not)."""

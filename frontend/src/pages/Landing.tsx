@@ -127,22 +127,21 @@ export default function Landing() {
       addMessageToSession(sessionId, 'user', message);
 
       // 3. Send initial message to Discovery/Requirements endpoint
-      const formData = new FormData();
-      formData.append('message', message);
-      formData.append('llm_provider', llmProvider);
-      formData.append('source', source);
-      formData.append('session_id', sessionId); // Attach session ID
-
-      attachedImages.forEach((file, index) => {
-        formData.append(`attachment_${index}`, file);
-      });
+      // Using JSON payload instead of FormData
+      const payload = {
+        message: message,
+        user_intent: message,
+        ai_model: llmProvider,
+        mode: 'requirements_gathering',
+        session_id: sessionId,
+        conversation_history: []
+        // Note: File uploads (attachedImages) need separate handling
+      };
 
       // We fire and forget the actual API call here so navigation is instant,
       // OR we await it if we want the agent's first response to be ready.
       // For better UX, let's await it so the next page has data.
-      const data = await apiClient.post('/chat/requirements', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
+      const data = await apiClient.post('/chat/requirements', payload);
 
       // 4. Update session with agent response
       addMessageToSession(sessionId, 'agent', data.response);

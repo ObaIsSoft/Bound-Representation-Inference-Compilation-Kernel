@@ -1,0 +1,26 @@
+# Test dependencies for BRICK OS
+
+# Core testing
+pytest>=7.0
+pytest-asyncio>=0.21.0
+pytest-timeout>=2.1.0
+pytest-cov>=4.0.0
+
+# HTTP testing
+httpx>=0.24.0
+
+# Linting and code quality (for CI)
+black>=23.0
+isort>=5.12.0
+ruff>=0.1.0
+mypy>=1.5.0
+
+# Coverage reporting
+codecov>=2.1.0
+
+# Test utilities
+factory-boy>=3.3.0
+faker>=20.0.0
+
+# Mocking
+respx>=0.20.0  # For mocking httpx

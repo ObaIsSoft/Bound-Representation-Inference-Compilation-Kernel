@@ -2,6 +2,7 @@ import os
 import re
 import logging
 import math
+import asyncio
 from typing import Dict, Any, List, Optional
 from physics import get_physics_kernel
 
@@ -43,9 +44,12 @@ class GeometryAgent:
         
         self.zoo_client = None
 
-    def run(self, params: Dict[str, Any], intent: str, environment: Dict[str, Any] = None, ldp_instructions: List[Dict] = None) -> Dict[str, Any]:
+    async def run(self, params: Dict[str, Any], intent: str, environment: Dict[str, Any] = None, ldp_instructions: List[Dict] = None) -> Dict[str, Any]:
         """
         Main execution entry point.
+        
+        NOTE: This method is now async to support concurrent execution and
+        non-blocking I/O operations (geometry compilation, validation).
         """
         if environment is None: environment = {}
         if ldp_instructions: 
@@ -96,6 +100,7 @@ class GeometryAgent:
         kcl_code = ""
         glsl_code = "" # New Output
         include_scad = False
+        hwc = None  # Initialize to None
 
         if mode == "parametric":
             # --- PHASE 22: ASSEMBLY JOINING ---
@@ -131,37 +136,27 @@ class GeometryAgent:
             # Generative Fallback (LLM Stub)
             kcl_code = self.generate_kcl_from_prompt(intent)
             geometry_tree = [{"id": "gen_1", "type": "generative_mesh", "mass_kg": 1.0}]
+            isa = {}  # Empty ISA for generative mode
 
         # 3. Append High-Fidelity Components (Procedural Library)
         components_to_render = params.get("components", [])
         if components_to_render:
             kcl_code = self._append_component_placeholders(kcl_code, components_to_render)
 
-        # 4. Compile (Zoo or Stub)
         # 4. Compile (Hybrid Engine: Local First)
-        # Replaces previous KCL/Zoo logic
         # We now generate a GLB for the frontend using Manifold (Hot Path)
-        import asyncio
+        # NOTE: Now properly awaited since this method is async
         
-        # We need to await the engine, but 'run' is synchronous? 
-        # Ideally GeometryAgent.run should be async, but for now we might bridge it 
-        # or rely on the Orchestrator calling a wrapper.
-        # IF run is sync, we must run the async loop here or use a sync wrapper in engine.
-        # For this refactor, let's assume we can run a quick loop or use `asyncio.run` if strict sync.
-        
-        # NOTE: Orchestrator likely calls this. If Orchestrator expects Sync, we block.
-        # Since Manifold is fast, blocking for <100ms is acceptable for now.
+        gltf_data = None
+        model_id = None
         
         try:
-             # run in new loop if needed, or get current?
-             # Simplest strategy for Sync Agent:
-             result = asyncio.run(self.engine.compile(geometry_tree, format="glb"))
-             if result.success:
-                 gltf_data = result.payload
-                 model_id = result.metadata.get("model_id")
-             else:
-                 logger.error(f"Hybrid Engine Failed: {result.error}")
-                 model_id = None
+            result = await self.engine.compile(geometry_tree, format="glb")
+            if result.success:
+                gltf_data = result.payload
+                model_id = result.metadata.get("model_id")
+            else:
+                logger.error(f"Hybrid Engine Failed: {result.error}")
                  
         except Exception as e:
              logger.error(f"Hybrid Compile Exception: {e}")
@@ -170,7 +165,13 @@ class GeometryAgent:
         # 5. Validation (Manifold Agent)
         from agents.manifold_agent import ManifoldAgent
         manifold_agent = ManifoldAgent()
-        manifold_res = manifold_agent.run({"geometry_tree": geometry_tree})
+        
+        # Handle both sync and async ManifoldAgent
+        manifold_params = {"geometry_tree": geometry_tree}
+        if hasattr(manifold_agent, 'run') and asyncio.iscoroutinefunction(manifold_agent.run):
+            manifold_res = await manifold_agent.run(manifold_params)
+        else:
+            manifold_res = manifold_agent.run(manifold_params)
         
         validation = manifold_res.get("validation", {})
         if not validation.get("is_watertight", True):
@@ -190,7 +191,7 @@ class GeometryAgent:
             "hwc_isa": isa if mode == "parametric" else {},
             "geometry_tree": geometry_tree,
             "gltf_data": gltf_data,
-            "model_id": model_id if 'model_id' in locals() else None,
+            "model_id": model_id,
             "validation_logs": validation.get("logs", []),
             "physics_validation": physics_validation,
             "physics_metadata": physics_validation["physics_metadata"]

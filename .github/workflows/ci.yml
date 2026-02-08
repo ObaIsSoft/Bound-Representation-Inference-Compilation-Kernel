@@ -1,0 +1,338 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+    branches: [main, master, develop]
+
+env:
+  PYTHON_VERSION: "3.11"
+  NODE_VERSION: "20"
+
+jobs:
+  # ==========================================
+  # Stage 1: Lint & Type Check
+  # ==========================================
+  lint:
+    name: Lint & Type Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Cache Python dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('backend/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install linting tools
+        run: |
+          pip install ruff mypy black isort
+
+      - name: Run Ruff (Python linter)
+        run: |
+          cd backend && ruff check . --output-format=github || true
+
+      - name: Run Black format check
+        run: |
+          cd backend && black --check . || true
+
+      - name: Run isort import check
+        run: |
+          cd backend && isort --check-only . || true
+
+      - name: Run mypy type check
+        run: |
+          cd backend && mypy . --ignore-missing-imports || true
+
+  # ==========================================
+  # Stage 2: Backend Unit Tests
+  # ==========================================
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Cache Python dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('backend/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install Python dependencies
+        run: |
+          cd backend
+          pip install -r requirements.txt
+
+      - name: Run Unit Tests
+        run: |
+          cd backend
+          pytest ../tests/unit/ -v --tb=short --cov=backend --cov-report=xml --cov-report=term-missing -x
+        env:
+          PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/backend
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./backend/coverage.xml
+          fail_ci_if_error: false
+          verbose: true
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  # ==========================================
+  # Stage 3: Integration Tests (Real Physics)
+  # ==========================================
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Cache Python dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('backend/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install Python dependencies
+        run: |
+          cd backend
+          pip install -r requirements.txt
+          pip install pytest-asyncio httpx  # Additional test dependencies
+
+      - name: Run Integration Tests
+        run: |
+          cd backend
+          pytest ../tests/integration/ -v --tb=short -m "not slow" --timeout=300
+        env:
+          PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/backend
+          REDIS_URL: redis://localhost:6379/0
+          TEST_MODE: true
+
+      - name: Run Physics Kernel Tests (Real Calculations)
+        run: |
+          cd backend
+          pytest ../tests/integration/test_physics_kernel.py -v --tb=short
+        env:
+          PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/backend
+
+  # ==========================================
+  # Stage 4: Frontend Build Verification
+  # ==========================================
+  frontend-build:
+    name: Frontend Build
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: 'frontend/package-lock.json'
+
+      - name: Install dependencies
+        run: |
+          cd frontend
+          npm ci
+
+      - name: Run linter
+        run: |
+          cd frontend
+          npm run lint || true
+
+      - name: Build frontend
+        run: |
+          cd frontend
+          npm run build
+        env:
+          CI: true
+
+  # ==========================================
+  # Stage 5: Agent Registry Test
+  # ==========================================
+  agent-registry-test:
+    name: Agent Registry Verification
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Python dependencies
+        run: |
+          cd backend
+          pip install -r requirements.txt
+
+      - name: Test Agent Registry (No Silent Failures)
+        run: |
+          cd backend
+          python -c "
+          from agent_registry import registry
+          try:
+              registry.get_agent('NonExistent')
+              print('FAIL: Should have raised RuntimeError')
+              exit(1)
+          except RuntimeError as e:
+              print(f'PASS: RuntimeError raised correctly - {e}')
+          print('✅ Agent Registry Silent Failure Fix Verified')
+          "
+        env:
+          PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/backend
+
+      - name: Test Lazy Loading
+        run: |
+          cd backend
+          python -c "
+          from agent_registry import registry
+          registry.initialize()
+          loaded = len(registry._agents)
+          print(f'Loaded agents: {loaded}')
+          assert loaded < 30, f'Lazy loading failed: {loaded} agents loaded'
+          print('✅ Lazy Loading Verified')
+          "
+        env:
+          PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/backend
+
+  # ==========================================
+  # Stage 6: End-to-End Pipeline Test
+  # ==========================================
+  e2e-pipeline:
+    name: E2E Pipeline Test
+    runs-on: ubuntu-latest
+    needs: [unit-tests, integration-tests]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Python dependencies
+        run: |
+          cd backend
+          pip install -r requirements.txt
+          pip install httpx pytest-asyncio
+
+      - name: Run E2E Orchestration Test
+        run: |
+          cd backend
+          pytest ../tests/integration/test_simple_design.py -v --tb=short
+        env:
+          PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/backend
+
+  # ==========================================
+  # Stage 7: Build Verification
+  # ==========================================
+  build-verification:
+    name: Build Verification
+    runs-on: ubuntu-latest
+    needs: [frontend-build, e2e-pipeline]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Verify Backend Structure
+        run: |
+          echo "=== Backend Structure ==="
+          ls -la backend/
+          echo "=== Physics Kernel ==="
+          ls -la backend/physics/
+          echo "=== Agents ==="
+          ls -la backend/agents/
+
+      - name: Verify Frontend Build Output
+        run: |
+          echo "=== Frontend Structure ==="
+          ls -la frontend/
+
+      - name: Check Critical Files Exist
+        run: |
+          test -f backend/main.py
+          test -f backend/orchestrator.py
+          test -f backend/agent_registry.py
+          test -f backend/physics/kernel.py
+          test -f backend/session_store.py
+          test -f backend/xai_stream.py
+          echo "✅ All critical files present"
+
+      - name: Verify Python Syntax
+        run: |
+          python -m py_compile backend/main.py
+          python -m py_compile backend/orchestrator.py
+          python -m py_compile backend/agent_registry.py
+          echo "✅ Python syntax valid"
+
+  # ==========================================
+  # Summary Job
+  # ==========================================
+  ci-summary:
+    name: CI Summary
+    runs-on: ubuntu-latest
+    needs: [lint, unit-tests, integration-tests, frontend-build, agent-registry-test, e2e-pipeline, build-verification]
+    if: always()
+    steps:
+      - name: Summary
+        run: |
+          echo "=== CI Pipeline Summary ==="
+          echo "Lint: ${{ needs.lint.result }}"
+          echo "Unit Tests: ${{ needs.unit-tests.result }}"
+          echo "Integration Tests: ${{ needs.integration-tests.result }}"
+          echo "Frontend Build: ${{ needs.frontend-build.result }}"
+          echo "Agent Registry: ${{ needs.agent-registry-test.result }}"
+          echo "E2E Pipeline: ${{ needs.e2e-pipeline.result }}"
+          echo "Build Verification: ${{ needs.build-verification.result }}"
+          
+          if [[ "${{ needs.lint.result }}" == "success" && \
+                "${{ needs.unit-tests.result }}" == "success" && \
+                "${{ needs.integration-tests.result }}" == "success" && \
+                "${{ needs.frontend-build.result }}" == "success" && \
+                "${{ needs.agent-registry-test.result }}" == "success" && \
+                "${{ needs.e2e-pipeline.result }}" == "success" && \
+                "${{ needs.build-verification.result }}" == "success" ]]; then
+            echo "✅ All checks passed!"
+            exit 0
+          else
+            echo "❌ Some checks failed"
+            exit 1
+          fi

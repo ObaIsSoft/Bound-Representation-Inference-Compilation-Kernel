@@ -52,17 +52,16 @@ export default function RequirementsGatheringPage() {
                 setIsAgentProcessing(true);
 
                 try {
-                    const formData = new FormData();
-                    formData.append('message', userIntent);
-                    formData.append('conversation_history', '[]');
-                    formData.append('user_intent', userIntent);
-                    formData.append('mode', 'requirements_gathering');
-                    formData.append('ai_model', llmProvider);
-                    if (localSessionId) {
-                        formData.append('session_id', localSessionId);
-                    }
+                    const payload = {
+                        message: userIntent,
+                        conversation_history: [],
+                        user_intent: userIntent,
+                        mode: 'requirements_gathering',
+                        ai_model: llmProvider,
+                        session_id: localSessionId
+                    };
 
-                    const data = await apiClient.post('/chat/requirements', formData);
+                    const data = await apiClient.post('/chat/requirements', payload);
 
                     // Add response
                     setAgentMessages(prev => [...prev, `Agent: ${data.response}`]);
@@ -103,21 +102,17 @@ export default function RequirementsGatheringPage() {
         setIsAgentProcessing(true); // Enable polling
 
         try {
-            // Call backend API for conversational agent
-            // Create FormData for the request
-            const formData = new FormData();
-            formData.append('message', userInput);
-            formData.append('conversation_history', JSON.stringify(agentMessages));
-            formData.append('user_intent', userIntent);
-            formData.append('mode', 'requirements_gathering');
-            formData.append('ai_model', llmProvider);
-            if (localSessionId) {
-                formData.append('session_id', localSessionId);
-            }
+            // Call backend API for conversational agent with JSON payload
+            const payload = {
+                message: userInput,
+                conversation_history: agentMessages,
+                user_intent: userIntent,
+                mode: 'requirements_gathering',
+                ai_model: llmProvider,
+                session_id: localSessionId
+            };
 
-            // Call backend API with FormData
-            // Axios will automatically set Content-Type to multipart/form-data
-            const data = await apiClient.post('/chat/requirements', formData);
+            const data = await apiClient.post('/chat/requirements', payload);
 
 
             // Simulate typing delay for better UX
@@ -183,13 +178,13 @@ export default function RequirementsGatheringPage() {
         setPlanGenerating(true);
 
         try {
-            // Trigger planning phase (plan generation)
-            // Backend expects Form data, not JSON
-            const formData = new FormData();
-            formData.append('user_intent', userIntent || 'Design requirement from conversation');
-            formData.append('project_id', activeSessionId || conversationId || `project-${Date.now()}`);
+            // Trigger planning phase (plan generation) with JSON
+            const payload = {
+                user_intent: userIntent || 'Design requirement from conversation',
+                project_id: activeSessionId || conversationId || `project-${Date.now()}`
+            };
 
-            const planData = await apiClient.post('/orchestrator/plan', formData);
+            const planData = await apiClient.post('/orchestrator/plan', payload);
 
             setPlanArtifacts(planData.artifacts || []);
 

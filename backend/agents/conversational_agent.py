@@ -16,6 +16,7 @@ from contextlib import asynccontextmanager
 
 from llm.provider import LLMProvider
 from context_manager import EnhancedContextManager, ContextScope, MemoryFragment
+from session_store import SessionStore, InMemorySessionStore, create_session_store
 
 logger = logging.getLogger(__name__)
 
@@ -68,47 +69,8 @@ class DiscoveryContext:
         }
 
 
-class SessionStore(ABC):
-    """Abstract session storage for stateless deployments."""
-    
-    @abstractmethod
-    async def get_discovery_state(self, session_id: str) -> Optional[Dict]:
-        pass
-    
-    @abstractmethod
-    async def set_discovery_state(self, session_id: str, state: Dict, ttl: int = 3600):
-        pass
-    
-    @abstractmethod
-    async def delete_discovery_state(self, session_id: str):
-        pass
-
-
-class InMemorySessionStore(SessionStore):
-    """Development/testing store. Use Redis for production."""
-    
-    def __init__(self):
-        self._store: Dict[str, Dict] = {}
-        self._timestamps: Dict[str, float] = {}
-    
-    async def get_discovery_state(self, session_id: str) -> Optional[Dict]:
-        self._cleanup_expired()
-        return self._store.get(session_id)
-    
-    async def set_discovery_state(self, session_id: str, state: Dict, ttl: int = 3600):
-        self._store[session_id] = state
-        self._timestamps[session_id] = time.time() + ttl
-    
-    async def delete_discovery_state(self, session_id: str):
-        self._store.pop(session_id, None)
-        self._timestamps.pop(session_id, None)
-    
-    def _cleanup_expired(self):
-        now = time.time()
-        expired = [sid for sid, exp in self._timestamps.items() if now > exp]
-        for sid in expired:
-            self._store.pop(sid, None)
-            self._timestamps.pop(sid, None)
+# SessionStore implementations moved to session_store.py module
+# Available: InMemorySessionStore, RedisSessionStore, create_session_store()
 
 
 class DiscoveryManager:
@@ -438,9 +400,11 @@ class ConversationalAgent:
             self.provider = get_llm_provider(preferred=preferred)
         
         # Session-scoped discovery (not instance-scoped!)
+        # Use provided store or create one based on environment (Redis vs In-Memory)
+        effective_store = session_store or create_session_store()
         self.discovery = DiscoveryManager(
             config=discovery_config,
-            session_store=session_store
+            session_store=effective_store
         )
         
         # VMK connection pooling

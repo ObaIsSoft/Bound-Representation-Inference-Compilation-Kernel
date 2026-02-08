@@ -16,6 +16,7 @@
         "@react-three/fiber": "^8.18.0",
         "@react-three/postprocessing": "^3.0.4",
         "@typegpu/three": "^0.9.1",
+        "axios": "^1.13.4",
         "framer-motion": "^12.29.0",
         "jspdf": "^4.0.0",
         "jspdf-autotable": "^5.0.7",

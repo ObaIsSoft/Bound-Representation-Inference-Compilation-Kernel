@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { ArrowLeft, MessageCircle, Send, Mic, Loader, CheckCircle, FileText } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';
+import { usePanel } from '../contexts/PanelContext';
+import apiClient from '../utils/apiClient';
 
 export default function RequirementsGatheringPage() {
     const location = useLocation();
@@ -24,24 +26,69 @@ export default function RequirementsGatheringPage() {
     const [planArtifacts, setPlanArtifacts] = useState([]);
     const [planGenerating, setPlanGenerating] = useState(false);
     const [conversationComplete, setConversationComplete] = useState(false);
-    const [sessionId, setSessionId] = useState(null);
+    const { activeSessionId, setIsAgentProcessing, startNewSession } = usePanel();
+    const [localSessionId, setLocalSessionId] = useState(null);
 
-    // Initialize conversation with first agent question
+    // CRITICAL: Create a fresh session for this new conversation
     useEffect(() => {
-        if (userIntent && agentMessages.length === 0) {
-            setLoading(true);
-            setIsTyping(true);
-            // Simulate initial agent response
-            setTimeout(() => {
-                setAgentMessages([
-                    `Thank you for sharing your intent: "${userIntent}".Let me ask you a few questions to better understand your requirements.`,
-                    'What is the primary use case or application for this design?'
-                ]);
-                setLoading(false);
-                setIsTyping(false);
-            }, 1500);
-        }
-    }, [userIntent]);
+        const initSession = async () => {
+            // Always create a NEW session when entering requirements gathering
+            // This prevents contamination from old activeSessionId
+            const newSessionId = await startNewSession();
+            setLocalSessionId(newSessionId);
+        };
+        initSession();
+    }, []); // Run once on mount
+
+    // Initial trigger using userIntent
+    useEffect(() => {
+        const initChat = async () => {
+            if (agentMessages.length === 0 && userIntent && !loading) {
+                // Display user intent as first message
+                setAgentMessages([`You: ${userIntent}`]);
+
+                setLoading(true);
+                setIsTyping(true);
+                setIsAgentProcessing(true);
+
+                try {
+                    const formData = new FormData();
+                    formData.append('message', userIntent);
+                    formData.append('conversation_history', '[]');
+                    formData.append('user_intent', userIntent);
+                    formData.append('mode', 'requirements_gathering');
+                    formData.append('ai_model', llmProvider);
+                    if (localSessionId) {
+                        formData.append('session_id', localSessionId);
+                    }
+
+                    const data = await apiClient.post('/chat/requirements', formData);
+
+                    // Add response
+                    setAgentMessages(prev => [...prev, `Agent: ${data.response}`]);
+
+                    if (data.feasibility) {
+                        setRequirements(prev => ({
+                            ...prev,
+                            environment: data.feasibility.environment,
+                            feasibility: data.feasibility
+                        }));
+                    }
+                } catch (error) {
+                    console.error("Initial chat failed:", error);
+                    setAgentMessages(prev => [...prev, "Agent: I'm ready to help. Please tell me more about your requirements."]);
+                } finally {
+                    setLoading(false);
+                    setIsTyping(false);
+                    // Keep processing true if we want to prompt immediately? 
+                    // No, let user reply.
+                    setIsAgentProcessing(false);
+                }
+            }
+        };
+
+        initChat();
+    }, []); // Run once on mount
 
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -53,30 +100,25 @@ export default function RequirementsGatheringPage() {
         setUserInput('');
         setLoading(true);
         setIsTyping(true);
+        setIsAgentProcessing(true); // Enable polling
 
         try {
             // Call backend API for conversational agent
-            const response = await fetch('http://localhost:8000/api/chat/requirements', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    message: userInput,
-                    conversation_history: agentMessages,
-                    user_intent: userIntent,
-                    mode: 'requirements_gathering',
-                    ai_model: llmProvider,
-                    session_id: sessionId
-                }),
-            });
-
-            if (!response.ok) {
-                throw new Error(`API failed: ${response.statusText} `);
+            // Create FormData for the request
+            const formData = new FormData();
+            formData.append('message', userInput);
+            formData.append('conversation_history', JSON.stringify(agentMessages));
+            formData.append('user_intent', userIntent);
+            formData.append('mode', 'requirements_gathering');
+            formData.append('ai_model', llmProvider);
+            if (localSessionId) {
+                formData.append('session_id', localSessionId);
             }
 
-            const data = await response.json();
-            if (data.session_id) setSessionId(data.session_id);
+            // Call backend API with FormData
+            // Axios will automatically set Content-Type to multipart/form-data
+            const data = await apiClient.post('/chat/requirements', formData);
+
 
             // Simulate typing delay for better UX
             await new Promise(resolve => setTimeout(resolve, 800));
@@ -84,6 +126,9 @@ export default function RequirementsGatheringPage() {
             // Add agent response
             setAgentMessages([...newMessages, `Agent: ${data.response} `]);
             setIsTyping(false);
+            if (!data.requirements_complete) {
+                setIsAgentProcessing(false); // Disable polling if done for now
+            }
 
             // Update Feasibility State (Live Agent Feedback)
             if (data.feasibility) {
@@ -96,6 +141,7 @@ export default function RequirementsGatheringPage() {
 
             // Check if conversation is complete
             if (data.requirements_complete) {
+                setIsAgentProcessing(false); // Ensure polling stops
                 setRequirements(data.requirements || {});
                 setConversationComplete(true);
 
@@ -127,6 +173,7 @@ export default function RequirementsGatheringPage() {
             console.error('Failed to get agent response:', error);
             setAgentMessages([...newMessages, 'Agent: Sorry, I encountered an error. Please try again.']);
             setIsTyping(false);
+            setIsAgentProcessing(false); // Disable on error
         } finally {
             setLoading(false);
         }
@@ -136,26 +183,15 @@ export default function RequirementsGatheringPage() {
         setPlanGenerating(true);
 
         try {
-            const response = await fetch('http://localhost:8000/api/orchestrator/plan', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    requirements,
-                    user_intent: userIntent,
-                    conversation_id: conversationId,
-                    mode: 'plan',
-                    ai_model: llmProvider
-                }),
-            });
+            // Trigger planning phase (plan generation)
+            // Backend expects Form data, not JSON
+            const formData = new FormData();
+            formData.append('user_intent', userIntent || 'Design requirement from conversation');
+            formData.append('project_id', activeSessionId || conversationId || `project-${Date.now()}`);
 
-            if (!response.ok) {
-                throw new Error(`Plan generation failed: ${response.statusText} `);
-            }
+            const planData = await apiClient.post('/orchestrator/plan', formData);
 
-            const data = await response.json();
-            setPlanArtifacts(data.artifacts || []);
+            setPlanArtifacts(planData.artifacts || []);
 
             // Transition to planning phase
             setTimeout(() => {

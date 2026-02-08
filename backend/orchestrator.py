@@ -2,6 +2,7 @@ from typing import Dict, Any, TypedDict, Literal, List, Optional
 from langgraph.graph import StateGraph, END
 from schema import AgentState
 from agents.environment_agent import EnvironmentAgent
+import asyncio
 
 # Critics (Global - Keep for now as they are used in global scope instantiation below)
 # Ideally these should also be lazy, but for Phase 8.4 we focus on the 64 main agents.
@@ -57,6 +58,10 @@ from conditional_gates import (
 from agent_selector import select_physics_agents
 
 from llm.factory import get_llm_provider
+from enums import (
+    OrchestratorMode, ValidationStatus, FeasibilityStatus, 
+    ApprovalStatus, FluidNeeded, ManufacturingType, LatticeNeeded
+)
 
 from ares import AresMiddleware, AresUnitError
 import logging
@@ -81,18 +86,18 @@ physics_critic = PhysicsCritic(window_size=100) # For future hybrid agents
 
 
 # --- Global Registry Integration ---
-from agent_registry import registry as global_registry
+from agent_registry import registry
 
 def get_agent_registry():
     """
     Returns a dict of all instantiated agents from the Global Registry.
     Phase 10 Optimization: Uses singleton pattern to avoid re-instantiation.
     """
-    if not global_registry._initialized:
+    if not registry._initialized:
         # Fallback lazily if not explicitly initialized (though main.py should do it)
-        global_registry.initialize()
+        registry.initialize()
         
-    return global_registry._agents
+    return registry._agents
 
 # --- Nodes ---
 
@@ -113,13 +118,14 @@ def stt_node(state: AgentState) -> Dict[str, Any]:
     
     return {}
 
-def dreamer_node(state: AgentState) -> Dict[str, Any]:
+async def dreamer_node(state: AgentState) -> Dict[str, Any]:
     """
     Executes the Conversational Agent ("The Dreamer").
     This is the ENTRY POINT. It parses raw user intent into structured constraints.
     """
     raw_intent = state.get("user_intent", "")
     current_params = state.get("design_parameters", {})
+    session_id = state.get("project_id", "default_session") # Use project_id as session_id for now
     
     # Use Registry Instance (Persistent) using safe accessor
     from agent_registry import registry
@@ -130,10 +136,28 @@ def dreamer_node(state: AgentState) -> Dict[str, Any]:
         return {"error": "Agent missing"}
     
     # Call the agent to extract entities/intent
-    result = agent.run({
-        "input_text": raw_intent,
-        "context": state.get("messages", [])
-    })
+    # Update for Async/Await and correct signature
+    messages = state.get("messages", [])
+    history_str = "\n".join([str(m) for m in messages]) if messages else ""
+    
+    try:
+        # Check if agent is the new Async ConversationalAgent
+        if hasattr(agent, "run") and asyncio.iscoroutinefunction(agent.run):
+             result = await agent.run(
+                 params={"input_text": raw_intent, "context": messages},
+                 session_id=session_id
+             )
+        else:
+             # Fallback for legacy generic agents?
+             result = agent.run({
+                "input_text": raw_intent,
+                "context": messages
+             })
+             if asyncio.iscoroutine(result):
+                 result = await result
+    except Exception as e:
+        logger.error(f"Dreamer Agent Failed: {e}")
+        return {"error": str(e)}
     
     # Extract Logic
     detected_intent = result.get("intent", "design_request")
@@ -154,7 +178,7 @@ def dreamer_node(state: AgentState) -> Dict[str, Any]:
         "messages": [result.get("response", "")] # Store agent response?
     }
 
-def environment_node(state: AgentState) -> Dict[str, Any]:
+async def environment_node(state: AgentState) -> Dict[str, Any]:
     """
     Executes the Environment Agent.
     Updates the 'environment' key in the state.
@@ -181,15 +205,24 @@ def environment_node(state: AgentState) -> Dict[str, Any]:
                 "validation_flags": {"physics_safe": False, "reasons": [f"ARES_BLOCK: {e}"]}
             }
             
-    agent = EnvironmentAgent()
-    env_data = agent.run(intent)
+    agent = registry.get_agent("EnvironmentAgent")
+    try:
+        if hasattr(agent, "run") and asyncio.iscoroutinefunction(agent.run):
+             env_data = await agent.run(intent)
+        else:
+             env_data = agent.run(intent)
+             if asyncio.iscoroutine(env_data):
+                 env_data = await env_data
+    except Exception as e:
+        logger.error(f"EnvironmentAgent Failed: {e}")
+        return {"error": str(e)}
     
     return {
         "environment": env_data,
         "planning_doc": f"Environment identified as {env_data.get('type')} ({env_data.get('regime')})"
     }
 
-def topological_node(state: AgentState) -> Dict[str, Any]:
+async def topological_node(state: AgentState) -> Dict[str, Any]:
     """
     Executes the Topological Agent.
     Analyzes terrain and recommends operational mode.
@@ -200,7 +233,7 @@ def topological_node(state: AgentState) -> Dict[str, Any]:
     env = state.get("environment", {})
     params = state.get("design_parameters", {})
     
-    agent = TopologicalAgent()
+    agent = registry.get_agent("TopologicalAgent")
     # Pass necessary data (e.g. mock elevation for now, or real if available)
     # We might extract elevation from env or params
     topo_params = {
@@ -208,20 +241,18 @@ def topological_node(state: AgentState) -> Dict[str, Any]:
         "elevation_data": env.get("elevation_data", []) 
     }
     
-    result = agent.run(topo_params)
+    if hasattr(agent, "run") and asyncio.iscoroutinefunction(agent.run):
+         result = await agent.run(topo_params)
+    else:
+         result = agent.run(topo_params)
+         if asyncio.iscoroutine(result):
+             result = await result
     
     # CRITIC HOOK: Monitor Navigation Prediction
     if "topological_critic" in state.get("active_critics", []):
-         critic = get_critic("topological")
-         critic.observe(
-             params=topo_params,
-             prediction=result,
-             # Ground truth outcome not yet known in this node (it happens later or in sim)
-             # We assume success/failure comes from Physics/Simulation step.
-             # Ideally we'd log this prediction ID and match it later.
-             # For now, we just log the prediction step.
-             outcome={} # Pending
-         )
+         # critic = get_critic("topological") # Not defined in imports
+         # Placeholder until critic system is fully async aware
+         pass
          
     return {
         "topology_report": result,
@@ -232,7 +263,7 @@ def topological_node(state: AgentState) -> Dict[str, Any]:
         }
     }
 
-def designer_node(state: AgentState) -> Dict[str, Any]:
+async def designer_node(state: AgentState) -> Dict[str, Any]:
     """
     Executes the Design stage using the UnifiedDesignAgent.
     Generates aesthetic 'DNA' (genome) from user intent.
@@ -243,8 +274,14 @@ def designer_node(state: AgentState) -> Dict[str, Any]:
     intent = state.get("user_intent", "")
     
     # 1. Run Unified Agent in 'interpret' mode
-    agent = UnifiedDesignAgent()
-    result = agent.run({"mode": "interpret", "prompt": intent})
+    agent = registry.get_agent("DesignerAgent") # Unified Name
+    
+    if hasattr(agent, "run") and asyncio.iscoroutinefunction(agent.run):
+         result = await agent.run({"mode": "interpret", "prompt": intent})
+    else:
+         result = agent.run({"mode": "interpret", "prompt": intent})
+         if asyncio.iscoroutine(result):
+             result = await result
     
     if result.get("status") == "error":
         return {"error": result.get("message")}
@@ -318,7 +355,7 @@ async def ldp_node(state: AgentState) -> Dict[str, Any]:
         "physics_state": ldp.state
     }
 
-def geometry_node(state: AgentState) -> Dict[str, Any]:
+async def geometry_node(state: AgentState) -> Dict[str, Any]:
     # ... as before ...
     from agents.geometry_agent import GeometryAgent
 
@@ -327,16 +364,18 @@ def geometry_node(state: AgentState) -> Dict[str, Any]:
     env = state.get("environment", {})
     instructions = state.get("ldp_instructions", [])
     
-    agent = GeometryAgent()
-    # Pass instructions to the agent. We can pass it as a kwarg or inside params, 
-    # but explicit kwarg is cleaner if signature supports it.
-    # I'll update signature in next step. For now, pass via params as specific key to avoid signature break?
-    # No, I should update signature. Or just pass in kwargs.
-    # GeometryAgent.run definitions usually are strict. 
-    # Let's pass it in 'params' as a hidden field for minimal friction, 
-    # OR update logic in next step.
-    # User likes clean arch. I will update `run` signature in GeometryAgent.
-    result = agent.run(params, intent, environment=env, ldp_instructions=instructions)
+    agent = registry.get_agent("GeometryAgent")
+    # Pass instructions to the agent.
+    try:
+        if hasattr(agent, "run") and asyncio.iscoroutinefunction(agent.run):
+             result = await agent.run(params, intent, environment=env, ldp_instructions=instructions)
+        else:
+             result = agent.run(params, intent, environment=env, ldp_instructions=instructions)
+             if asyncio.iscoroutine(result):
+                 result = await result
+    except Exception as e:
+        logger.error(f"GeometryAgent Failed: {e}")
+        return {"error": str(e)}
     
     # CRITIC HOOK: Geometry Robustness
     if "geometry_critic" in state.get("active_critics", []):
@@ -356,15 +395,25 @@ def geometry_node(state: AgentState) -> Dict[str, Any]:
         "model_id": result.get("model_id")
     }
 
-def manufacturing_node(state: AgentState) -> Dict[str, Any]:
+async def manufacturing_node(state: AgentState) -> Dict[str, Any]:
     # ... as before ...
     geometry = state.get("geometry_tree", [])
     material = state.get("material", "Aluminum 6061")
     params = state.get("design_parameters", {})
     pod_id = params.get("pod_id") # Phase 9/10: Scoped Execution
     
-    agent = ManufacturingAgent()
-    result = agent.run(geometry, material, pod_id=pod_id)
+    agent = registry.get_agent("ManufacturingAgent")
+    
+    try:
+        if hasattr(agent, "run") and asyncio.iscoroutinefunction(agent.run):
+             result = await agent.run(geometry, material, pod_id=pod_id)
+        else:
+             result = agent.run(geometry, material, pod_id=pod_id)
+             if asyncio.iscoroutine(result):
+                 result = await result
+    except Exception as e:
+        logger.error(f"ManufacturingAgent Failed: {e}")
+        return {"error": str(e)}
     
     # Manufacturing agent populates mass in the BOM! 
     # We should pass this back to state for Physics agent to see.
@@ -377,7 +426,7 @@ def manufacturing_node(state: AgentState) -> Dict[str, Any]:
         "bom_analysis": result["bom_analysis"]
     }
 
-def surrogate_physics_node(state: AgentState) -> Dict[str, Any]:
+async def surrogate_physics_node(state: AgentState) -> Dict[str, Any]:
     """
     Executes the Surrogate Physics Agent (Fast Filter).
     Predicts physics outcomes using a trained neural network.
@@ -387,17 +436,27 @@ def surrogate_physics_node(state: AgentState) -> Dict[str, Any]:
     surrogate = state.get("surrogate_physics")
     # If not in state (lazily init?) or use registry
     if not surrogate:
-        surrogate = MockSurrogateAgent() # Fallback
+        surrogate = registry.get_agent("SurrogateAgent") or registry.get_agent("MockSurrogateAgent") # Fallback
         
     # Run Prediction
-    prediction = surrogate.run(state)
+    try:
+        if hasattr(surrogate, "run") and asyncio.iscoroutinefunction(surrogate.run):
+             prediction = await surrogate.run(state)
+        else:
+             prediction = surrogate.run(state)
+             if asyncio.iscoroutine(prediction):
+                 prediction = await prediction
+    except Exception as e:
+        logger.error(f"Surrogate Physics Failed: {e}")
+        prediction = {"error": str(e), "confidence": 0.0}
+
     logger.info(f"Surrogate Prediction: {prediction}")
     
     # CRITIC OBSERVATION (Part 1: Prediction)
-    # We don't have ground truth yet, so we just log the input/prediction.
-    # The Critic will need to wait for PhysicsAgent to run to validate.
-    # Alternatively, we store this prediction in state and observing it later.
-    surrogate_critic.observe(state, prediction)
+    # We don't have ground truth yet, so we just log the prediction.
+    if "surrogate_critic" in state.get("active_critics", []):
+         # surrogate_critic.observe(state, prediction)
+         pass
     
     return {
         "surrogate_prediction": prediction,
@@ -423,7 +482,7 @@ async def physics_node(state: AgentState) -> Dict[str, Any]:
     
     # Run Material Agent to get precise limits check
     temp = env.get("temperature", 20.0)
-    mat_agent = MaterialAgent()
+    mat_agent = registry.get_agent("MaterialAgent")
     mat_props = mat_agent.run(material_name, temp)
     
     # CRITIC HOOK: Material
@@ -438,7 +497,7 @@ async def physics_node(state: AgentState) -> Dict[str, Any]:
          )
 
     # Run Chemistry Agent
-    chem_agent = ChemistryAgent()
+    chem_agent = registry.get_agent("ChemistryAgent")
     chem_check = chem_agent.run([material_name], env.get("type", "standard"))
 
     # CRITIC HOOK: Chemistry
@@ -454,7 +513,7 @@ async def physics_node(state: AgentState) -> Dict[str, Any]:
     # --- NEW: Integrated Sub-Agents ---
     
     # 1. Electronics (Power & Heat Source)
-    elec_agent = ElectronicsAgent()
+    elec_agent = registry.get_agent("ElectronicsAgent")
     elec_params = params.copy()
     elec_params["geometry_tree"] = geo # Pass Geometry for EMI checks
     elec_result = elec_agent.run(elec_params)
@@ -484,7 +543,7 @@ async def physics_node(state: AgentState) -> Dict[str, Any]:
          pass
 
     # 2. Thermal (Uses Heat from Electronics + Environment)
-    therm_agent = ThermalAgent()
+    therm_agent = registry.get_agent("ThermalAgent")
     therm_params = params.copy()
     therm_params["power_watts"] = heat_load_w if heat_load_w > 0 else 100.0 # Use calculated heat load
     therm_params["ambient_temp"] = temp
@@ -519,7 +578,7 @@ async def physics_node(state: AgentState) -> Dict[str, Any]:
         )
     
     # 3. Structural (Uses Material Props)
-    struct_agent = StructuralAgent()
+    struct_agent = registry.get_agent("StructuralAgent")
     struct_params = params.copy()
     struct_params["material_properties"] = mat_props["properties"]
     struct_result = struct_agent.run(struct_params)
@@ -553,7 +612,7 @@ async def physics_node(state: AgentState) -> Dict[str, Any]:
     if "RL" in user_intent_str or "LEARNING" in user_intent_str:
         control_mode = "RL"
         
-    cps_agent = ControlAgent()
+    cps_agent = registry.get_agent("ControlAgent")
     # Pass inertia from MassProperties (simulated/real)
     # Ideally should run MassProps first, but PhysicsAgent does some of it.
     # For now, pass generic params or mass properties if they exist
@@ -650,7 +709,7 @@ async def physics_node(state: AgentState) -> Dict[str, Any]:
         }
     }
 
-def optimization_node(state: AgentState) -> Dict[str, Any]:
+async def optimization_node(state: AgentState) -> Dict[str, Any]:
     """
     Executes the Optimization Agent (The Healer).
     Adjusts parameters based on failure reasons.
@@ -662,7 +721,7 @@ def optimization_node(state: AgentState) -> Dict[str, Any]:
     # Pack reasons into the state for context (Bandit uses 'constraints' but could use 'reasons' too)
     # Ideally we'd map reasons -> constraints to lock/unlock.
     
-    agent = OptimizationAgent()
+    agent = registry.get_agent("OptimizationAgent")
     
     # New API expects 'isa_state' and 'objective' in params
     # We construct a wrapper params dict if needed, or pass current state wrapper
@@ -675,7 +734,16 @@ def optimization_node(state: AgentState) -> Dict[str, Any]:
         # In real usage, objective comes from UserIntent
     }
     
-    result = agent.run(opt_payload)
+    try:
+        if hasattr(agent, "run") and asyncio.iscoroutinefunction(agent.run):
+             result = await agent.run(opt_payload)
+        else:
+             result = agent.run(opt_payload)
+             if asyncio.iscoroutine(result):
+                 result = await result
+    except Exception as e:
+        logger.error(f"OptimizationAgent Failed: {e}")
+        return {"error": str(e)}
     
     # CRITIC HOOK: Monitor Optimization Performance
     # We need to know if this step actually improved things.
@@ -683,23 +751,30 @@ def optimization_node(state: AgentState) -> Dict[str, Any]:
     # However, OptimizationCritic monitors the *Agent's* internal success/efficiency first.
     
     if "optimization_critic" in state.get("active_critics", []):
-        opt_critic = get_critic("optimization")
-        opt_critic.observe(
-            agent_name="OptimizationAgent",
-            input_state=opt_payload,
-            output=result,
-            metadata={"timestamp": time.time()} 
-        )
+         critic = get_critic("optimization")
+         critic.observe(
+             agent_name="OptimizationAgent",
+             input_state=opt_payload,
+             output=result,
+             metadata={"timestamp": time.time()} 
+         )
 
     # 5.3 INTEGRATION: Feedback Loop
     from agents.feedback_agent import FeedbackAgent
-    feedback_agent = FeedbackAgent()
-    feedback = feedback_agent.analyze_failure(state)
-    logger.info(f"Feedback: {feedback.get('priority_fix')}")
+    feedback_agent = registry.get_agent("FeedbackAgent")
+    # check if feedback_agent needs async call
+    if feedback_agent:
+         if hasattr(feedback_agent, "analyze_failure") and asyncio.iscoroutinefunction(feedback_agent.analyze_failure):
+            feedback = await feedback_agent.analyze_failure(state)
+         else:
+            feedback = feedback_agent.analyze_failure(state) # assuming this might be sync or async
+            if asyncio.iscoroutine(feedback):
+                feedback = await feedback
+         
+         logger.info(f"Feedback: {feedback.get('priority_fix')}")
+         # Store feedback in state for next iteration or user
+         state["feedback_analysis"] = feedback
     
-    # Store feedback in state for next iteration or user
-    state["feedback_analysis"] = feedback
-
     # Increment counter
     count = state.get("iteration_count", 0) + 1
     
@@ -723,16 +798,25 @@ def optimization_node(state: AgentState) -> Dict[str, Any]:
         "design_parameters": new_params
     }
 
-def sourcing_node(state: AgentState) -> Dict[str, Any]:
+async def sourcing_node(state: AgentState) -> Dict[str, Any]:
     """
     Executes the Component Agent to select COTS parts.
     """
     params = state.get("design_parameters", {})
     reqs = params.get("requirements", {}) # e.g. {"requirements": {"min_power_w": 100}}
     
-    agent = ComponentAgent()
+    agent = registry.get_agent("ComponentAgent")
     # 'volatility' could be dynamic based on 'temperature' or user intent? 
-    result = agent.run({"requirements": reqs, "limit": 3, "volatility": 0.0})
+    try:
+        if hasattr(agent, "run") and asyncio.iscoroutinefunction(agent.run):
+             result = await agent.run({"requirements": reqs, "limit": 3, "volatility": 0.0})
+        else:
+             result = agent.run({"requirements": reqs, "limit": 3, "volatility": 0.0})
+             if asyncio.iscoroutine(result):
+                 result = await result
+    except Exception as e:
+        logger.error(f"ComponentAgent Failed: {e}")
+        return {"error": str(e)}
     
     # CRITIC HOOK: Component
     if "component_critic" in state.get("active_critics", []):
@@ -749,35 +833,27 @@ def sourcing_node(state: AgentState) -> Dict[str, Any]:
 
 # --- Conditional Edges ---
 
-def check_validation(state: AgentState) -> Literal["optimization_agent", END]:
-    """
-    Decides if we loop back for optimization or finish.
-    """
-    flags = state.get("validation_flags", {})
-    count = state.get("iteration_count", 0)
-    
-    # IF physics said NO, and we haven't looped too many times...
-    if not flags.get("physics_safe", True) and count < 3:
-        logger.info(f"Validation FAILED. Loop {count}/3. Triggering Forensics -> Optimization.")
-        # NEW FLOW: Fail -> Forensic -> Optimization
-        return "forensic_node"
-    
-    return END
 
-    return END
+async def training_node(state: AgentState) -> Dict[str, Any]:
+    """
+    Simulated deep learning training loop.
+    """
+    agent = registry.get_agent("TrainingAgent")
+    # For now, just a stub call
+    try:
+        if hasattr(agent, "run") and asyncio.iscoroutinefunction(agent.run):
+             result = await agent.run(state)
+        else:
+             result = agent.run(state)
+             if asyncio.iscoroutine(result):
+                 result = await result
+    except Exception as e:
+        logger.error(f"TrainingAgent Failed: {e}")
+        result = {"error": str(e)}
 
-def training_node(state: AgentState) -> Dict[str, Any]:
-    """
-    Executes the Training Agent (The Scribe).
-    Logs the final state of this iteration to the dataset.
-    """
-    agent = TrainingAgent()
-    result = agent.run(state)
-    agent = TrainingAgent()
-    result = agent.run(state)
     return {"training_log": result}
 
-def forensic_node(state: AgentState) -> Dict[str, Any]:
+async def forensic_node(state: AgentState) -> Dict[str, Any]:
     """
     Executes the Forensic Agent (The Investigator).
     Triggered locally when validation fails.
@@ -924,8 +1000,8 @@ def build_graph():
         "cost_estimator",
         check_feasibility,
         {
-            "feasible": "stt_node",
-            "infeasible": END
+            FeasibilityStatus.FEASIBLE: "stt_node",
+            FeasibilityStatus.INFEASIBLE: END
         }
     )
     
@@ -942,9 +1018,9 @@ def build_graph():
         "review_plan",
         check_user_approval,
         {
-            "approved": "designer_agent",
-            "rejected": "dreamer_node",  # Loop back to revise
-            "plan_only": END
+            ApprovalStatus.APPROVED: "designer_agent",
+            ApprovalStatus.REJECTED: "dreamer_node",  # Loop back to revise
+            ApprovalStatus.PLAN_ONLY: END
         }
     )
     
@@ -959,8 +1035,8 @@ def build_graph():
         "structural_analysis",
         check_fluid_needed,
         {
-            "fluid_needed": "fluid_analysis",
-            "skip_fluid": "geometry_validator"
+            FluidNeeded.RUN: "fluid_analysis",
+            FluidNeeded.SKIP: "geometry_validator"
         }
     )
     
@@ -977,8 +1053,9 @@ def build_graph():
         "surrogate_physics_agent",
         check_manufacturing_type,
         {
-            "3d_print": "slicer_agent",
-            "assembly": "manufacturing_agent"
+            ManufacturingType.PRINT_3D: "slicer_agent",
+            ManufacturingType.ASSEMBLY: "manufacturing_agent",
+            ManufacturingType.STANDARD: "validation_node" # Add standard case
         }
     )
     
@@ -989,8 +1066,8 @@ def build_graph():
         "manufacturing_agent",
         check_lattice_needed,
         {
-            "lattice_needed": "lattice_synthesis",
-            "no_lattice": "training_agent"
+            LatticeNeeded.YES: "lattice_synthesis",
+            LatticeNeeded.NO: "training_agent"
         }
     )
     
@@ -1004,9 +1081,9 @@ def build_graph():
         "validation_node",
         check_validation,
         {
-            "valid": "asset_sourcing",
-            "needs_optimization": "optimization_agent",
-            "forensic_node": "forensic_node"
+            ValidationStatus.VALID: "asset_sourcing",
+            ValidationStatus.NEEDS_OPTIMIZATION: "optimization_agent",
+            ValidationStatus.FORENSIC: "forensic_node"
         }
     )
     
@@ -1032,7 +1109,7 @@ def build_graph():
     # Compile and return
     return workflow.compile()
 
-def planning_node(state: AgentState) -> Dict[str, Any]:
+async def planning_node(state: AgentState) -> Dict[str, Any]:
     """
     Synthesize the Design Brief / Plan.
     Uses DocumentAgent to generate proper Markdown.
@@ -1044,8 +1121,23 @@ def planning_node(state: AgentState) -> Dict[str, Any]:
     params = state.get("design_parameters", {})
     llm_provider = state.get("llm_provider")  # Get LLM provider from state
     
-    doc_agent = DocumentAgent(llm_provider=llm_provider)
-    doc_result = doc_agent.generate_design_plan(intent, env, params)
+    doc_agent = registry.get_agent("DocumentAgent")
+    # Note: doc_agent might need llm_provider injection if not global.
+    # registry.get_agent returns a singleton/instance.
+    # If DocumentAgent stores state, we need to be careful.
+    if hasattr(doc_agent, 'set_provider'):
+         doc_agent.set_provider(llm_provider)
+
+    try:
+        if hasattr(doc_agent, "generate_design_plan") and asyncio.iscoroutinefunction(doc_agent.generate_design_plan):
+             doc_result = await doc_agent.generate_design_plan(intent, env, params)
+        else:
+             doc_result = doc_agent.generate_design_plan(intent, env, params)
+             if asyncio.iscoroutine(doc_result):
+                 doc_result = await doc_result
+    except Exception as e:
+        logger.error(f"Planning Node Failed: {e}")
+        return {"error": str(e)}
     
     plan_md = doc_result["document"]["content"]
 
@@ -1067,9 +1159,9 @@ def check_planning_mode(state: AgentState) -> Literal["designer_agent", "geometr
     If we are in 'execution' mode (resumed), we continue.
     """
 
-    if state.get("execution_mode") == "plan":
-        return "plan"
-    return "execute"
+    if state.get("execution_mode") == OrchestratorMode.PLAN:
+        return OrchestratorMode.PLAN
+    return OrchestratorMode.EXECUTE
 
 # --- Public Interface ---
 
@@ -1077,7 +1169,7 @@ async def run_orchestrator(
     user_intent: str, 
     project_id: str = "default",  # defaulted for compatibility
     context: List[Dict] = [],  # Added context for chat history
-    mode: str = "plan", 
+    mode: str = OrchestratorMode.PLAN, 
     initial_state_override: Dict = None,
     focused_pod_id: Optional[str] = None, # Phase 9: Recursive ISA
     voice_data: Optional[bytes] = None # Phase 27: Integrated STT
@@ -1118,7 +1210,7 @@ async def run_orchestrator(
         from agents.mitigation_agent import MitigationAgent
         logger.info("Physics check failed. Running Mitigation Agent...")
         
-        mit_agent = MitigationAgent()
+        mit_agent = registry.get_agent("MitigationAgent")
         mitigation_results = mit_agent.run({
             "errors": flags.get("reasons", []),
             "physics_data": final_state.get("physics_predictions", {}),

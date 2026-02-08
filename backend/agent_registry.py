@@ -1,6 +1,7 @@
 import logging
 import importlib
 from typing import Dict, Any, Optional, List
+from agents.explainable_agent import create_xai_wrapper
 
 logger = logging.getLogger(__name__)
 
@@ -157,6 +158,13 @@ class GlobalAgentRegistry:
             module = importlib.import_module(module_path)
             cls = getattr(module, class_name)
             instance = cls()
+            
+            # Wrap with XAI (Skip XAI agent itself to prevent recursion)
+            # Check both name and class name to be safe
+            if name != "ExplainableAgent" and "Explainable" not in name:
+                logger.info(f"🔍 Injecting Observability Wrapper into {name}")
+                instance = create_xai_wrapper(instance)
+            
             self._agents[name] = instance
             return instance
         except Exception as e:

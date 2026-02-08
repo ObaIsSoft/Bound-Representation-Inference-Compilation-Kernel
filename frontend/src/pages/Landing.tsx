@@ -11,6 +11,8 @@ import SettingsPage from '../components/settings/SettingsPage';
 import AccountPage from '../components/settings/AccountPage';
 import DocumentationPage from '../components/settings/DocumentationPage';
 import { DEFAULT_PANEL_SIZES } from '../utils/constants';
+import apiClient from '../utils/apiClient';
+import { usePanel } from '../contexts/PanelContext';
 
 type Mode = 'idle' | 'text' | 'voice';
 
@@ -29,6 +31,7 @@ export default function Landing() {
   const [activePanel, setActivePanel] = useState<string | null>(null);
   const [fadeOut, setFadeOut] = useState(false);
   const [leftWidth] = useState(DEFAULT_PANEL_SIZES.left);
+  const { startNewSession, addMessageToSession } = usePanel();
 
   const currentHour = new Date().getHours();
   const greeting = currentHour < 12 ? 'Good morning' : currentHour < 18 ? 'Good afternoon' : 'Good evening';
@@ -96,7 +99,8 @@ export default function Landing() {
 
   const handleTextSubmit = (message: string, options: InputOptions) => {
     setUserIntent(message);
-    submitToChat(message, 'text', options);
+    setUserIntent(message);
+    // submitToChat(message, 'text', options); // Moved to RequirementsGatheringPage for better UX/State sync
 
     // Fade out before navigation
     setFadeOut(true);
@@ -111,31 +115,38 @@ export default function Landing() {
   };
 
   const submitToChat = async (message: string, source: 'text' | 'voice', options: InputOptions) => {
-    const { llmProvider, attachedImages, drawings } = options;
+    const { llmProvider, attachedImages } = options;
 
     try {
+      // 1. Start a new session via Context
+      const sessionId = await startNewSession();
+      if (!sessionId) throw new Error('Failed to start session');
+
+      // 2. Optimistically add user message to the new session
+      // (This will appear in history immediately)
+      addMessageToSession(sessionId, 'user', message);
+
+      // 3. Send initial message to Discovery/Requirements endpoint
       const formData = new FormData();
       formData.append('message', message);
       formData.append('llm_provider', llmProvider);
       formData.append('source', source);
+      formData.append('session_id', sessionId); // Attach session ID
 
       attachedImages.forEach((file, index) => {
         formData.append(`attachment_${index}`, file);
       });
 
-      const response = await fetch('http://localhost:8000/api/chat/discovery', {
-        method: 'POST',
-        body: formData,
+      // We fire and forget the actual API call here so navigation is instant,
+      // OR we await it if we want the agent's first response to be ready.
+      // For better UX, let's await it so the next page has data.
+      const data = await apiClient.post('/chat/requirements', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
       });
 
-      if (!response.ok) {
-        throw new Error(`Chat API failed: ${response.statusText}`);
-      }
+      // 4. Update session with agent response
+      addMessageToSession(sessionId, 'agent', data.response);
 
-      const data = await response.json();
-      console.log('Conversational agent response:', data);
-
-      // TODO: Handle response appropriately (display, navigate, etc.)
     } catch (error) {
       console.error('Failed to submit chat:', error);
       alert('Failed to submit your request. Please check the console for details.');

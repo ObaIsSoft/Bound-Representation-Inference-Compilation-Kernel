@@ -5,6 +5,7 @@ import { usePanel } from '../../contexts/PanelContext';
 import DraggablePanel from '../shared/DraggablePanel';
 import { Image, Pencil, Mic, History, GitGraph } from 'lucide-react';
 import { LLM_PROVIDERS } from '../../utils/constants';
+import apiClient from '../../utils/apiClient';
 
 const GlobalInputConsole = () => {
     const { theme } = useTheme();
@@ -59,20 +60,16 @@ const GlobalInputConsole = () => {
             addMessageToSession(activeSessionId, 'user', userMsg, { context });
 
             // 3. Call Generic Chat Backend
-            const response = await fetch('http://localhost:8000/api/chat', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    message: userMsg,
-                    session_id: activeSessionId,
-                    ai_model: llmProvider,
-                    context: context
-                })
+            // 3. Call Generic Chat Backend
+            const data = await apiClient.post('/chat', {
+                message: userMsg,
+                session_id: activeSessionId,
+                ai_model: llmProvider,
+                context: context
             });
 
-            if (!response.ok) throw new Error('Chat request failed');
 
-            const data = await response.json();
+
 
             // 4. Update sessions and activeSessionId if it's a new session
             if (data.session_id && data.session_id !== activeSessionId) {
@@ -150,14 +147,11 @@ const GlobalInputConsole = () => {
             formData.append('audio', audioBlob, 'recording.webm');
             formData.append('format', 'webm');
 
-            const response = await fetch('http://localhost:8000/api/stt/transcribe', {
-                method: 'POST',
-                body: formData,
+            const data = await apiClient.post('/stt/transcribe', formData, {
+                headers: {
+                    'Content-Type': 'multipart/form-data',
+                }
             });
-
-            if (!response.ok) throw new Error('Transcription failed');
-
-            const data = await response.json();
             if (data.transcript) {
                 setMessage(prev => (prev ? prev + ' ' + data.transcript : data.transcript));
             }

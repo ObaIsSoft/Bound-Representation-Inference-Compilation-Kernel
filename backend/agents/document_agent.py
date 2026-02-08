@@ -2,7 +2,8 @@ from typing import Dict, Any, List, Optional
 import logging
 from llm.provider import LLMProvider
 from agent_registry import registry
-
+import asyncio
+import logging
 logger = logging.getLogger(__name__)
 
 class DocumentAgent:
@@ -17,15 +18,15 @@ class DocumentAgent:
         self.name = "DocumentAgent"
         self.llm_provider = llm_provider
     
-    def run(self, params: Dict[str, Any]) -> Dict[str, Any]:
+    async def run(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Legacy run method."""
-        return self.generate_design_plan(
+        return await self.generate_design_plan(
             intent=params.get("project_name", "Untitled"),
             env=params.get("environment", {}),
             params=params.get("metrics", {})
         )
     
-    def generate_design_plan(self, intent: str, env: Dict[str, Any], params: Dict[str, Any], design_scheme: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    async def generate_design_plan(self, intent: str, env: Dict[str, Any], params: Dict[str, Any], design_scheme: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Generate comprehensive design plan by orchestrating specialized agents.
         
@@ -39,15 +40,15 @@ class DocumentAgent:
         logger.info(f"{self.name} orchestrating agents for comprehensive plan: '{intent}'...")
         
         # Step 1: Gather data from specialized agents
-        agent_data = self._gather_agent_data(intent, env, params)
+        agent_data = await self._gather_agent_data(intent, env, params)
         
         # Step 2: Synthesize with LLM (if available)
         if self.llm_provider:
-            return self._synthesize_with_llm(intent, env, params, agent_data)
+            return await self._synthesize_with_llm(intent, env, params, agent_data)
         else:
-            return self._generate_structured_plan(intent, env, params, agent_data)
+            return await self._generate_structured_plan(intent, env, params, agent_data)
     
-    def _gather_agent_data(self, intent: str, env: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
+    async def _gather_agent_data(self, intent: str, env: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
         """Orchestrate specialized agents to gather design data"""
         data = {}
         
@@ -59,10 +60,20 @@ class DocumentAgent:
                 
             # Fix: MaterialAgent.run expects (material_name: str, temperature: float)
             target_material = params.get("material_preference", "Titanium")
-            material_result = material_agent.run(
-                material_name=target_material,
-                temperature=env.get("temp_c", 20)
-            )
+            
+            if hasattr(material_agent, "run") and asyncio.iscoroutinefunction(material_agent.run):
+                 material_result = await material_agent.run(
+                    material_name=target_material,
+                    temperature=env.get("temp_c", 20)
+                 )
+            else:
+                 material_result = material_agent.run(
+                    material_name=target_material,
+                    temperature=env.get("temp_c", 20)
+                 )
+                 if asyncio.iscoroutine(material_result):
+                     material_result = await material_result
+
             data["materials"] = material_result
             logger.info("MaterialAgent: Gathered material recommendations")
         except Exception as e:
@@ -77,10 +88,20 @@ class DocumentAgent:
                  
             # Extract material for explicit passing
             primary_material = data["materials"].get("primary_material", "Titanium")
-            mfg_result = mfg_agent.run(
-                geometry_tree=[], # No geometry in planning phase
-                material=primary_material
-            )
+            
+            if hasattr(mfg_agent, "run") and asyncio.iscoroutinefunction(mfg_agent.run):
+                 mfg_result = await mfg_agent.run(
+                    geometry_tree=[], # No geometry in planning phase
+                    material=primary_material
+                 )
+            else:
+                 mfg_result = mfg_agent.run(
+                    geometry_tree=[], # No geometry in planning phase
+                    material=primary_material
+                 )
+                 if asyncio.iscoroutine(mfg_result):
+                     mfg_result = await mfg_result
+
             data["manufacturing"] = mfg_result
             logger.info("ManufacturingAgent: Gathered DFM analysis")
         except Exception as e:
@@ -92,14 +113,22 @@ class DocumentAgent:
             cost_agent = registry.get_agent("CostAgent")
             if not cost_agent:
                  raise ValueError("CostAgent not found in registry")
-                 
-            cost_result = cost_agent.run({
+            
+            cost_payload = {
                 "materials": data.get("materials", {}),
                 "manufacturing": data.get("manufacturing", {}),
                 "requirements": params
-            })
+            }
+            
+            if hasattr(cost_agent, "run") and asyncio.iscoroutinefunction(cost_agent.run):
+                 cost_result = await cost_agent.run(cost_payload)
+            else:
+                 cost_result = cost_agent.run(cost_payload)
+                 if asyncio.iscoroutine(cost_result):
+                     cost_result = await cost_result
+
             data["cost"] = cost_result
-            logger.info("CostAgent: Calculated cost estimates")
+            logger.info("CostAgent: Gathered cost estimates")
         except Exception as e:
             logger.warning(f"CostAgent failed: {e}")
             data["cost"] = {"total_estimate": 5000, "breakdown": {"materials": 2000, "manufacturing": 3000}}
@@ -135,7 +164,7 @@ class DocumentAgent:
             "acceptance_criteria": "Meets all specified requirements within ±5% tolerance"
         }
     
-    def _synthesize_with_llm(self, intent: str, env: Dict, params: Dict, agent_data: Dict) -> Dict[str, Any]:
+    async def _synthesize_with_llm(self, intent: str, env: Dict, params: Dict, agent_data: Dict) -> Dict[str, Any]:
         """Use LLM to synthesize agent data into readable plan"""
         
         prompt = f"""Synthesize a comprehensive design plan from specialized agent data.
@@ -155,10 +184,19 @@ Create a professional design plan with: Overview, Architecture, Materials (use a
 Use the agent data as source of truth - don't make up numbers."""
 
         try:
-            plan_content = self.llm_provider.generate(
-                prompt=prompt,
-                system_prompt="You synthesize engineering data into clear documentation."
-            )
+            # If provider.generate is async, we await it. If sync, we just call it.
+            # Assuming provider.generate might be sync for now, but good to be safe or wrap it.
+            # For now, keeping it sync but method is async to allow for future async LLM calls
+            if asyncio.iscoroutinefunction(self.llm_provider.generate):
+                 plan_content = await self.llm_provider.generate(
+                    prompt=prompt,
+                    system_prompt="You synthesize engineering data into clear documentation."
+                )
+            else:
+                 plan_content = self.llm_provider.generate(
+                    prompt=prompt,
+                    system_prompt="You synthesize engineering data into clear documentation."
+                )
             
             pdf_path = None
             try:
@@ -188,9 +226,9 @@ Use the agent data as source of truth - don't make up numbers."""
             }
         except Exception as e:
             logger.error(f"LLM synthesis failed: {e}")
-            return self._generate_structured_plan(intent, env, params, agent_data)
+            return await self._generate_structured_plan(intent, env, params, agent_data)
     
-    def _generate_structured_plan(self, intent: str, env: Dict, params: Dict, agent_data: Dict) -> Dict[str, Any]:
+    async def _generate_structured_plan(self, intent: str, env: Dict, params: Dict, agent_data: Dict) -> Dict[str, Any]:
         """Generate structured plan from agent data (no LLM needed)"""
         
         materials = agent_data.get("materials", {})

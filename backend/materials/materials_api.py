@@ -818,16 +818,8 @@ class UnifiedMaterialsAPI:
         results = []
         
         # Heuristic: Is the query a chemical formula?
-        formula_pattern = re.compile(r"^([A-Z][a-z]?\\d*(\\.\\d+)?)+$")
+        formula_pattern = re.compile(r"^([A-Z][a-z]?\d*(\.\d+)?)+$")
         is_formula = bool(formula_pattern.match(query))
-        
-        # Check Thermo Library (for names, not formulas)
-        should_check_thermo_first = (source in ["auto", "thermo"]) and (not is_formula)
-        
-        if should_check_thermo_first:
-             logger.info(f"Searching thermo for '{query}' (appears to be chemical/polymer name)")
-             thermo_results = self.thermo_lib.search(query)
-             results.extend(thermo_results)
         
         # Common Name -> Formula Mapping (expanded)
         NAME_TO_FORMULA = {
@@ -848,7 +840,18 @@ class UnifiedMaterialsAPI:
         query_lower = query.lower()
         search_query = NAME_TO_FORMULA.get(query_lower, query)
         
-        # Query all computational databases in parallel for formulas
+        # Re-check if it's a formula after mapping (e.g., 'titanium' -> 'Ti')
+        is_mapped_formula = bool(formula_pattern.match(search_query))
+
+        # Check Thermo Library (mostly for complex/proprietary names, skip for pure elements)
+        should_check_thermo_first = (source in ["auto", "thermo"]) and (not is_mapped_formula)
+        
+        if should_check_thermo_first:
+             logger.info(f"Searching thermo for '{query}' (appears to be chemical/polymer name)")
+             thermo_results = self.thermo_lib.search(query)
+             results.extend(thermo_results)
+        
+        # Query all computational databases in parallel for formulas (using search_query)
         search_tasks = []
         with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
             if source in ["auto", "materials_project"]:

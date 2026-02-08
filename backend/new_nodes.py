@@ -77,7 +77,7 @@ def cost_quick_estimate_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
 # ========== PHASE 2: PLANNING NODES ==========
 
-def document_plan_node(state: Dict[str, Any]) -> Dict[str, Any]:
+async def document_plan_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """
     Generate markdown design plan AFTER feasibility confirmed.
     Creates initial documentation for user review.
@@ -90,7 +90,7 @@ def document_plan_node(state: Dict[str, Any]) -> Dict[str, Any]:
     design_scheme = state.get("design_scheme", {})
     
     doc_agent = DocumentAgent()
-    plan = doc_agent.generate_design_plan(intent, env, params, design_scheme)
+    plan = await doc_agent.generate_design_plan(intent, env, params, design_scheme)
     
     logger.info("Design plan generated")
     

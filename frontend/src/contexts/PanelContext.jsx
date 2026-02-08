@@ -1,8 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import apiClient from '../utils/apiClient';
 
 const PanelContext = createContext();
-
-const API_BASE_URL = 'http://localhost:8000';
 
 export const PANEL_IDS = {
     INPUT: 'inputConsole',
@@ -26,13 +25,14 @@ export const PanelProvider = ({ children }) => {
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [passiveThoughts, setPassiveThoughts] = useState([]);
 
+    const [isAgentProcessing, setIsAgentProcessing] = useState(false);
+
     const activeSession = sessions.find(s => s.id === activeSessionId) || sessions[0];
 
+    // ... (fetchSessions restored) ...
     const fetchSessions = useCallback(async () => {
         try {
-            const response = await fetch(`${API_BASE_URL}/api/sessions`);
-            if (!response.ok) throw new Error('Failed to fetch sessions');
-            const data = await response.json();
+            const data = await apiClient.get('/sessions');
             // Transform backend snake_case to frontend camelCase if necessary, 
             // but our backend classes use the same names mostly.
             const formattedSessions = data.sessions.map(s => ({
@@ -66,9 +66,7 @@ export const PanelProvider = ({ children }) => {
 
     const fetchPassiveThoughts = useCallback(async () => {
         try {
-            const response = await fetch(`${API_BASE_URL}/api/agents/thoughts`);
-            if (!response.ok) return;
-            const data = await response.json();
+            const data = await apiClient.get('/agents/thoughts');
             if (data.thoughts && data.thoughts.length > 0) {
                 setPassiveThoughts(prev => {
                     // Keep last 5 thoughts to prevent clutter
@@ -82,9 +80,12 @@ export const PanelProvider = ({ children }) => {
     }, []);
 
     useEffect(() => {
+        if (!isAgentProcessing) return;
+
+        fetchPassiveThoughts(); // Initial fetch on activation
         const interval = setInterval(fetchPassiveThoughts, 3000); // Relax to 3s
         return () => clearInterval(interval);
-    }, [fetchPassiveThoughts]);
+    }, [fetchPassiveThoughts, isAgentProcessing]);
 
     const updatePanel = (id, updates) => {
         setPanels(prev => ({
@@ -115,7 +116,7 @@ export const PanelProvider = ({ children }) => {
 
     const deleteSession = async (sessionId) => {
         try {
-            await fetch(`${API_BASE_URL}/api/sessions/${sessionId}`, { method: 'DELETE' });
+            await apiClient.delete(`/sessions/${sessionId}`);
             setSessions(prev => prev.filter(s => s.id !== sessionId));
             if (activeSessionId === sessionId) {
                 setActiveSessionId(null);
@@ -138,8 +139,7 @@ export const PanelProvider = ({ children }) => {
     const branchSession = async () => {
         if (!activeSessionId) return;
         try {
-            const response = await fetch(`${API_BASE_URL}/api/sessions/${activeSessionId}/branch`, { method: 'POST' });
-            if (!response.ok) throw new Error('Branch failed');
+            await apiClient.post(`/sessions/${activeSessionId}/branch`);
             await fetchSessions();
             updatePanel(PANEL_IDS.MAIN, { isOpen: true });
         } catch (err) {
@@ -149,8 +149,7 @@ export const PanelProvider = ({ children }) => {
 
     const mergeSession = async (sessionId) => {
         try {
-            const response = await fetch(`${API_BASE_URL}/api/sessions/${sessionId}/merge`, { method: 'POST' });
-            if (!response.ok) throw new Error('Merge failed');
+            await apiClient.post(`/sessions/${sessionId}/merge`);
             await fetchSessions();
             setIsHistoryModalOpen(false);
         } catch (err) {
@@ -160,18 +159,27 @@ export const PanelProvider = ({ children }) => {
 
     const createNewSession = async () => {
         try {
-            const response = await fetch(`${API_BASE_URL}/api/sessions`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ title: 'New Conversation' })
-            });
-            const data = await response.json();
+            const data = await apiClient.post('/sessions', { title: 'New Conversation' });
             await fetchSessions();
             setActiveSessionId(data.conversation_id);
             updatePanel(PANEL_IDS.MAIN, { isOpen: true });
+            return data.conversation_id;
         } catch (err) {
             console.error('Create session error:', err);
+            return null;
         }
+    };
+
+    const startNewSession = async (initialData = {}) => {
+        // Create session first
+        const sessionId = await createNewSession();
+        if (sessionId) {
+            // Optionally update with initial data if backend supports it update
+            // For now, we just ensure it's active
+            setActiveSessionId(sessionId);
+            return sessionId;
+        }
+        return null;
     };
 
     const viewArtifact = (artifact) => {
@@ -218,6 +226,7 @@ export const PanelProvider = ({ children }) => {
             branchSession,
             mergeSession,
             createNewSession,
+            startNewSession,
             isHistoryModalOpen,
             setIsHistoryModalOpen,
             activeArtifact,
@@ -231,6 +240,8 @@ export const PanelProvider = ({ children }) => {
             fetchSessions,
             isSubmitting,
             setIsSubmitting,
+            isAgentProcessing,
+            setIsAgentProcessing,
             passiveThoughts,
             setPassiveThoughts,
             PANEL_IDS

@@ -32,23 +32,34 @@ def get_llm_provider(preferred: Optional[str] = None) -> LLMProvider:
     except ImportError:
         OllamaProvider = None
 
+    try:
+        from llm.kimi_provider import KimiProvider
+    except ImportError:
+        KimiProvider = None
+
     # 1. Preferred Check
     if preferred:
-        if preferred.lower() == "openai" and os.getenv("OPENAI_API_KEY") and OpenAIProvider:
+        lp = preferred.lower()
+        if lp == "openai" and os.getenv("OPENAI_API_KEY") and OpenAIProvider:
             return OpenAIProvider()
-        if preferred.lower() == "groq" and os.getenv("GROQ_API_KEY") and GroqProvider:
+        if lp == "groq" and os.getenv("GROQ_API_KEY") and GroqProvider:
             return GroqProvider()
-        if preferred.lower() == "gemini" and os.getenv("GEMINI_API_KEY") and GeminiProvider:
+        if lp == "gemini" and os.getenv("GEMINI_API_KEY") and GeminiProvider:
             return GeminiProvider()
-        if preferred.lower() == "ollama" and OllamaProvider:
+        if lp == "kimi" and (os.getenv("KIMI_API_KEY") or os.getenv("MOONSHOT_API_KEY")) and KimiProvider:
+            return KimiProvider()
+        if lp == "ollama" and OllamaProvider:
             return OllamaProvider()
             
     # 2. Hierarchy Check
-    if os.getenv("OPENAI_API_KEY") and OpenAIProvider:
-        return OpenAIProvider()
-    
     if os.getenv("GROQ_API_KEY") and GroqProvider:
         return GroqProvider()
+
+    if (os.getenv("KIMI_API_KEY") or os.getenv("MOONSHOT_API_KEY")) and KimiProvider:
+        return KimiProvider()
+
+    if os.getenv("OPENAI_API_KEY") and OpenAIProvider:
+        return OpenAIProvider()
         
     if os.getenv("GEMINI_API_KEY") and GeminiProvider:
         return GeminiProvider()

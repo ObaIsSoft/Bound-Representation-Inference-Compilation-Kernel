@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { User, Shield, CreditCard, LogOut, Mail, Award, Save, Edit2, Loader } from 'lucide-react';
 import PanelHeader from '../shared/PanelHeader';
 import { useTheme } from '../../contexts/ThemeContext';
+import apiClient from '../../utils/apiClient';
 
 const AccountPage = () => {
     const { theme } = useTheme();
@@ -23,14 +24,10 @@ const AccountPage = () => {
 
     const fetchProfile = async () => {
         try {
-            const res = await fetch('http://localhost:8000/api/user/profile');
-            if (res.ok) {
-                const data = await res.json();
-                setProfile(data);
-                setEditForm(data);
-            } else {
-                throw new Error('Failed to load profile');
-            }
+            const data = await apiClient.get('/user/profile');
+            setProfile(data);
+            setEditForm(data);
+
         } catch (err) {
             console.error(err);
             setError("Could not load user profile.");
@@ -42,22 +39,15 @@ const AccountPage = () => {
     const handleSave = async () => {
         setSaving(true);
         try {
-            const res = await fetch('http://localhost:8000/api/user/profile', {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    name: editForm.name,
-                    email: editForm.email
-                })
+            const updated = await apiClient.put('/user/profile', {
+                name: editForm.name,
+                email: editForm.email
             });
 
-            if (res.ok) {
-                const updated = await res.json();
-                setProfile(updated);
-                setIsEditing(false);
-            } else {
-                setError("Failed to save changes.");
-            }
+
+            setProfile(updated);
+            setIsEditing(false);
+
         } catch (err) {
             setError("Save failed. Check backend connection.");
         } finally {

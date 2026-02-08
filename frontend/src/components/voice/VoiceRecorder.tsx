@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Mic, Square, Play, Pause, RotateCcw, Check, Loader2 } from 'lucide-react';
 import { useTheme } from '../../contexts/ThemeContext';
+import apiClient from '../../utils/apiClient';
 
 interface VoiceRecorderProps {
     onTranscriptionComplete: (transcription: string) => void;
@@ -117,16 +118,16 @@ export default function VoiceRecorder({ onTranscriptionComplete, onCancel }: Voi
             formData.append('audio', audioBlob, 'recording.webm');
             formData.append('format', 'webm');
 
-            const response = await fetch('http://localhost:8000/api/stt/transcribe', {
-                method: 'POST',
-                body: formData,
+            const data = await apiClient.post('/stt/transcribe', formData, {
+                headers: {
+                    'Content-Type': 'multipart/form-data',
+                }
             });
 
-            if (!response.ok) {
-                throw new Error(`Transcription failed: ${response.statusText}`);
-            }
 
-            const data = await response.json();
+
+
+
             setTranscription(data.transcript);
             setStatus('playback'); // Return to playback to show transcription
         } catch (err) {

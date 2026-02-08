@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useTheme } from '../../contexts/ThemeContext';
+import apiClient from '../../utils/apiClient';
 import { Download, FileText, Loader2 } from 'lucide-react';
 
 const MarkdownViewer = ({ path, fileName }) => {
@@ -16,9 +17,11 @@ const MarkdownViewer = ({ path, fileName }) => {
             try {
                 // In a real tauri/web app, we might use tauri's fs or a backend endpoint
                 // For now, we assume a backend endpoint /api/files/read exists or we mock it
-                const response = await fetch(`http://localhost:8000/api/files/read?path=${encodeURIComponent(path)}`);
-                if (!response.ok) throw new Error('Could not read file');
-                const text = await response.text();
+                // For now, we assume a backend endpoint /api/files/read exists or we mock it
+                const text = await apiClient.get('/files/read', {
+                    params: { path },
+                    responseType: 'text'
+                });
                 setContent(text);
             } catch (err) {
                 console.error('Markdown load error:', err);

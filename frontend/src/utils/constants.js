@@ -36,6 +36,7 @@ export const DEFAULT_FILE_CONTENT = `// Enter your OpenSCAD code here...
 export const LLM_PROVIDERS = [
   // Cloud Providers
   { value: 'groq', label: 'Groq (Llama 3.3 70B)' },
+  { value: 'kimi', label: 'Kimi AI (Moonshot)' },
   { value: 'openai', label: 'OpenAI (GPT-4 Turbo)' },
   { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
   { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },

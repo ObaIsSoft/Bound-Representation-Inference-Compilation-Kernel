@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 # Load environment variables FIRST before any other imports
 from dotenv import load_dotenv
 import os
+import json
 
 # Get the directory where this file (main.py) is located
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -79,6 +80,17 @@ async def get_passive_thoughts():
     THOUGHT_STREAM.clear()
     return {"thoughts": thoughts}
 
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    logger.error(f"Validation Error: {exc.errors()}")
+    return JSONResponse(
+        status_code=422,
+        content={"detail": exc.errors(), "body": exc.body},
+    )
+
 # Helper to inject thoughts (to be called by orchestrator/agents)
 def inject_thought(agent_name: str, thought_text: str):
     timestamp = datetime.now().isoformat()
@@ -117,6 +129,10 @@ from agents.unified_design_agent import UnifiedDesignAgent
 
 # Global instance for stateful operations like exploration
 unified_design_agent = UnifiedDesignAgent()
+
+# Global Conversational Agent (Production-Ready State Persistence)
+from agents.conversational_agent import ConversationalAgent
+conversational_agent = ConversationalAgent()
 
 class DesignInterpretRequest(BaseModel):
     prompt: str
@@ -492,9 +508,8 @@ async def chat_endpoint(req: ChatRequest):
     # 2. Add user message with context
     session.add_message("user", req.message, metadata=req.context)
     
-    # 3. Instantiate Agent
-    from agents.conversational_agent import ConversationalAgent
-    agent = ConversationalAgent(model_name=req.ai_model)
+    # 3. Use Global Agent
+    # agent = ConversationalAgent(model_name=req.ai_model) -> Use global conversational_agent
     
     # 4. Run Agent
     # Prepare history for agent
@@ -502,10 +517,11 @@ async def chat_endpoint(req: ChatRequest):
     for m in session.messages:
         history.append({"role": m.role, "content": m.content})
         
-    result = agent.run({
+    result = await conversational_agent.run({
         "input_text": req.message,
-        "context": history[:-1] # History excluding the message we just added
-    })
+        "context": history[:-1], # History excluding the message we just added
+        "initial_intent": "" # No intent forcing for general chat
+    }, session_id=session_id)
     
     response_text = result.get("response", "I am standing by.")
     intent = result.get("intent", "chat")
@@ -530,13 +546,40 @@ class ChatRequirementsRequest(BaseModel):
     user_intent: str = ""
     mode: str = "requirements_gathering"
     ai_model: str = "groq"
+    conversation_history: List[str] = []
 
 @app.post("/api/chat/requirements")
-async def chat_requirements_endpoint(req: ChatRequirementsRequest):
+async def chat_requirements_endpoint(
+    message: str = Form(...),
+    session_id: Optional[str] = Form(None),
+    user_intent: str = Form(""),
+    mode: str = Form("requirements_gathering"),
+    ai_model: str = Form("groq"),
+    conversation_history: str = Form("[]"), # Received as JSON string
+    files: List[UploadFile] = File(default=[])
+):
     """
     Intelligent Chat Endpoint for Requirements Gathering.
+    Handles Multipart/Form-Data for file uploads.
     """
-    logger.info(f"Chat Requirements Request: {req.message[:50]}... Session: {req.session_id}")
+    # Deserialize conversation_history
+    try:
+        history_list = json.loads(conversation_history)
+    except json.JSONDecodeError:
+        logger.warning("Failed to parse conversation_history JSON, defaulting to empty list.")
+        history_list = []
+
+    # Construct the request object manually
+    req = ChatRequirementsRequest(
+        message=message,
+        session_id=session_id,
+        user_intent=user_intent,
+        mode=mode,
+        ai_model=ai_model,
+        conversation_history=history_list
+    )
+
+    logger.info(f"Chat Requirements Request: {req.message[:50]}... Session: {req.session_id} Files: {len(files)}")
     
     # 1. Get or Create Session
     session_id = req.session_id or f"session-{int(time.time())}"
@@ -545,25 +588,36 @@ async def chat_requirements_endpoint(req: ChatRequirementsRequest):
     # Add user message to session
     session.add_message("user", req.message)
     
-    # 2. Instantiate Agents
-    from agents.conversational_agent import ConversationalAgent
+    # 2. Instantiate Agents (Geometry, Cost, etc. are stateless enough to re-init, or move to global later)
+    # conv_agent = ConversationalAgent(model_name=req.ai_model) -> Use global conversational_agent
     from agents.geometry_estimator import GeometryEstimator
     from agents.cost_agent import CostAgent
     from agents.environment_agent import EnvironmentAgent
     
-    conv_agent = ConversationalAgent(model_name=req.ai_model)
     geom_estimator = GeometryEstimator()
     cost_agent = CostAgent()
     env_agent = EnvironmentAgent()
     
     # Get history for the agent
-    history_strings = [f"{m.role}: {m.content}" for m in session.messages]
+    # CRITICAL FIX: Use the conversation_history from REQUEST (frontend state) instead of loading from session
+    # This prevents old session data from contaminating new conversations
+    if req.conversation_history:
+        # Frontend sends pre-formatted strings like "You: message" or "Agent: message"
+        # We can use them directly
+        history_strings = req.conversation_history if isinstance(req.conversation_history[0], str) else \
+                         [f"{msg.get('role', 'user')}: {msg.get('text', msg.get('content', ''))}" 
+                          for msg in req.conversation_history]
+    else:
+        # Fallback: Load from session if no explicit history provided
+        history_strings = [f"{m.role}: {m.content}" for m in session.messages]
     
     # 3. Run Conversational Agent
-    response_text = conv_agent.chat(
+    # 3. Run Conversational Agent (Async)
+    response_text = await conversational_agent.chat(
         user_input=req.message,
-        history=history_strings[:-1], # Don't include the last message yet
-        current_intent=req.user_intent
+        history=history_strings[:-1] if len(history_strings) > 0 else [],  # Don't include the very last message
+        current_intent=req.user_intent,
+        session_id=session_id
     )
     
     # Add agent response to session
@@ -581,11 +635,13 @@ async def chat_requirements_endpoint(req: ChatRequirementsRequest):
     
     # 5. Check for Completeness
     all_history = [f"{m.role}: {m.content}" for m in session.messages]
-    requirements_complete = conv_agent.is_requirements_complete(all_history)
+    
+    # Use session_id for checking completeness in the persisted DiscoveryState
+    requirements_complete = await conversational_agent.is_requirements_complete(session_id)
     
     final_requirements = {}
     if requirements_complete:
-        final_requirements = conv_agent.extract_structured_requirements(all_history)
+        final_requirements = await conversational_agent.extract_structured_requirements(session_id)
         session.gathered_requirements = final_requirements
         session.ready_for_planning = True
     
@@ -842,8 +898,8 @@ async def run_orchestrator_endpoint(
         # checking "conversational" in registry
         conv_agent = AGENTS.get("conversational")
         if not conv_agent:
-            from agents.conversational_agent import ConversationalAgent
-            conv_agent = ConversationalAgent()
+            # Use global conversational_agent instead of re-instantiating
+            conv_agent = conversational_agent
             
         # Transcribe via helper or agent method
         # Assuming agent has access to STT or we use STT agent directly
@@ -918,7 +974,18 @@ class ConvertRequest(BaseModel):
 @app.get("/api/finance/currencies")
 async def list_currencies():
     """List supported currencies and their rates relative to USD."""
-    # Centralized rates source (Mocked for MVP)
+    from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    logger.error(f"Validation Error: {exc.errors()}")
+    return JSONResponse(
+        status_code=422,
+        content={"detail": exc.errors(), "body": exc.body},
+    )
+
+# Initialize Critics (Global Singleton-ish for now)
     rates = {
         "USD": 1.0,
         "EUR": 0.92,
@@ -2194,8 +2261,18 @@ async def chat_discovery(
     session.add_message("user", message, metadata={"source": source, "llm": llm_provider})
     
     # 4. Run Conversational Agent (Discovery Mode)
-    agent = ConversationalAgent(model_name=llm_provider)
-    result = agent.run({"input_text": message, "mode": "discovery"})
+    # Use global conversational_agent
+    
+    # Prepare history
+    history = []
+    for m in session.messages:
+        history.append({"role": m.role, "content": m.content})
+        
+    result = await conversational_agent.run({
+        "input_text": message, 
+        "context": history[:-1],
+        "initial_intent": "requirement_gathering" if not context else ""
+    }, session_id=session_id)
     
     response_text = result.get("response", "Analyzing requirements...")
     session.add_message("agent", response_text, metadata={"intent": result.get("intent")})

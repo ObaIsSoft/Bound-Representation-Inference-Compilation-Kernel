@@ -7,11 +7,15 @@ These functions determine routing decisions at critical points in the
 
 from typing import Literal, Dict, Any
 import logging
+from enums import (
+    FeasibilityStatus, ApprovalStatus, FluidNeeded, 
+    ManufacturingType, LatticeNeeded, ValidationStatus, OrchestratorMode
+)
 
 logger = logging.getLogger(__name__)
 
 
-def check_feasibility(state: Dict[str, Any]) -> Literal["feasible", "infeasible"]:
+def check_feasibility(state: Dict[str, Any]) -> Literal[FeasibilityStatus.FEASIBLE, FeasibilityStatus.INFEASIBLE]:
     """
     Gate 1: Feasibility Check
     
@@ -28,7 +32,7 @@ def check_feasibility(state: Dict[str, Any]) -> Literal["feasible", "infeasible"
     # Check if geometry is physically impossible
     if geom_est.get("impossible", False):
         logger.warning(f"❌ Feasibility FAILED: Geometry impossible - {geom_est.get('reason')}")
-        return "infeasible"
+        return FeasibilityStatus.INFEASIBLE
     
     # Check if cost is 10x over budget
     budget = state.get("design_parameters", {}).get("budget_usd", 1000000)
@@ -36,53 +40,49 @@ def check_feasibility(state: Dict[str, Any]) -> Literal["feasible", "infeasible"
     
     if estimated_cost > budget * 10:
         logger.warning(f"❌ Feasibility FAILED: Cost ${estimated_cost} exceeds 10x budget ${budget}")
-        return "infeasible"
+        return FeasibilityStatus.INFEASIBLE
     
     logger.info(f"✅ Feasibility PASSED: Geometry possible, cost ${estimated_cost} within range")
-    return "feasible"
+    return FeasibilityStatus.FEASIBLE
 
 
-def check_user_approval(state: Dict[str, Any]) -> Literal["plan_only", "approved", "rejected"]:
+def check_user_approval(state: Dict[str, Any]) -> Literal[ApprovalStatus.PLAN_ONLY, ApprovalStatus.APPROVED, ApprovalStatus.REJECTED]:
     """
     Gate 2: User Approval
     
     Checks if user has approved the plan before proceeding to execution.
     
     Returns:
-        "plan_only" - Stop after showing plan (wait for approval)
-        "approved" - User approved, continue to execution
-        "rejected" - User rejected, regenerate plan
+        ApprovalStatus.PLAN_ONLY - Stop after showing plan (wait for approval)
+        ApprovalStatus.APPROVED - User approved, continue to execution
+        ApprovalStatus.REJECTED - User rejected, regenerate plan
     """
-    mode = state.get("execution_mode", "plan")
+    mode = state.get("execution_mode", OrchestratorMode.PLAN)
     approval = state.get("user_approval", None)
     
     # If mode is "plan", stop after plan generation
-    if mode == "plan":
+    if mode == OrchestratorMode.PLAN:
         logger.info("⏸️  Plan-only mode: Stopping for user review")
-        return "plan_only"
+        return ApprovalStatus.PLAN_ONLY
     
     # Check approval status
-    if approval == "approved":
+    if approval == ApprovalStatus.APPROVED:
         logger.info("✅ User APPROVED plan: Proceeding to execution")
-        return "approved"
-    elif approval == "rejected":
+        return ApprovalStatus.APPROVED
+    elif approval == ApprovalStatus.REJECTED:
         logger.warning("❌ User REJECTED plan: Regenerating")
-        return "rejected"
+        return ApprovalStatus.REJECTED
     
     # Default: wait for approval
     logger.info("⏸️  Waiting for user approval")
-    return "plan_only"
+    return ApprovalStatus.PLAN_ONLY
 
 
-def check_fluid_needed(state: Dict[str, Any]) -> Literal["run_fluid", "skip_fluid"]:
+def check_fluid_needed(state: Dict[str, Any]) -> Literal[FluidNeeded.RUN, FluidNeeded.SKIP]:
     """
     Gate 3: Fluid Analysis Decision
     
     Determines if CFD analysis is needed based on environment type.
-    
-    Returns:
-        "run_fluid" - Run FluidAgent (CFD)
-        "skip_fluid" - Skip fluid analysis
     """
     env = state.get("environment", {})
     env_type = env.get("type", "GROUND")
@@ -90,22 +90,15 @@ def check_fluid_needed(state: Dict[str, Any]) -> Literal["run_fluid", "skip_flui
     # Run CFD for aero/marine/space designs
     if env_type in ["AERIAL", "MARINE", "SPACE"]:
         logger.info(f"🌊 Fluid analysis REQUIRED for {env_type} environment")
-        return "run_fluid"
+        return FluidNeeded.RUN
     
     logger.info(f"⏭️  Fluid analysis SKIPPED for {env_type} environment")
-    return "skip_fluid"
+    return FluidNeeded.SKIP
 
 
-def check_manufacturing_type(state: Dict[str, Any]) -> Literal["3d_print", "assembly", "standard"]:
+def check_manufacturing_type(state: Dict[str, Any]) -> Literal[ManufacturingType.PRINT_3D, ManufacturingType.ASSEMBLY, ManufacturingType.STANDARD]:
     """
     Gate 4: Manufacturing Type Decision
-    
-    Determines which manufacturing path to take based on process type.
-    
-    Returns:
-        "3d_print" - Route to SlicerAgent (G-code generation)
-        "assembly" - Route to ConstructionAgent (assembly sequencing)
-        "standard" - Skip to validation
     """
     mfg = state.get("manufacturing_plan", {})
     process = mfg.get("primary_process", "")
@@ -114,50 +107,41 @@ def check_manufacturing_type(state: Dict[str, Any]) -> Literal["3d_print", "asse
     # Check for 3D printing
     if "3D" in process or "ADDITIVE" in process or "PRINT" in process:
         logger.info("🖨️  3D printing detected: Routing to Slicer")
-        return "3d_print"
+        return ManufacturingType.PRINT_3D
     
     # Check for complex assembly
     if "ASSEMBLY" in process or num_components > 10:
         logger.info(f"🔧 Assembly required ({num_components} components): Routing to Construction")
-        return "assembly"
+        return ManufacturingType.ASSEMBLY
     
     logger.info("⏭️  Standard manufacturing: Skipping to validation")
-    return "standard"
+    return ManufacturingType.STANDARD
 
 
-def check_lattice_needed(state: Dict[str, Any]) -> Literal["lattice", "no_lattice"]:
+def check_lattice_needed(state: Dict[str, Any]) -> Literal[LatticeNeeded.YES, LatticeNeeded.NO]:
     """
     Gate 5: Lattice Synthesis Decision
-    
-    Determines if lattice structures should be generated for weight reduction.
-    
-    Returns:
-        "lattice" - Generate lattice structures
-        "no_lattice" - Skip lattice synthesis
     """
     exploration = state.get("design_exploration", {})
     
     # If optimization suggests lattice structures for weight reduction
     if exploration.get("recommend_lattice", False):
         logger.info("🕸️  Lattice synthesis RECOMMENDED: Generating structures")
-        return "lattice"
+        return LatticeNeeded.YES
     
     logger.info("⏭️  Lattice synthesis NOT needed")
-    return "no_lattice"
+    return LatticeNeeded.NO
 
 
-def check_validation(state: Dict[str, Any]) -> Literal["failed", "passed"]:
+def check_validation(state: Dict[str, Any]) -> Literal[ValidationStatus.VALID, ValidationStatus.NEEDS_OPTIMIZATION, ValidationStatus.FORENSIC]:
     """
     Gate 6: Validation Decision
     
     Determines if design passed all validation checks or needs optimization.
-    
-    Returns:
-        "failed" - Route to optimization loop
-        "passed" - Continue to sourcing/deployment
     """
     flags = state.get("validation_flags", {})
     surrogate = state.get("surrogate_validation", {})
+    count = state.get("iteration_count", 0)
     
     # Check all validation criteria
     physics_safe = flags.get("physics_safe", True)
@@ -179,8 +163,16 @@ def check_validation(state: Dict[str, Any]) -> Literal["failed", "passed"]:
             reasons.append("Model drift detected")
         
         logger.warning(f"❌ Validation FAILED: {', '.join(reasons)}")
-        logger.info("🔄 Routing to optimization loop")
-        return "failed"
-    
+        
+        # Retry Logic (Moved from Orchestrator)
+        if count < 3:
+             logger.info("🔄 Routing to Forensic Analysis -> Optimization")
+             return ValidationStatus.FORENSIC
+        else:
+             logger.info("🔄 Max retries reached. Routing to Optimization (Final Attempt) or Manual Review")
+             # Could be FORENSIC too, or just NEEDS_OPTIMIZATION.
+             # Orchestrator flows Forensic -> Optimization anyway.
+             return ValidationStatus.FORENSIC
+
     logger.info("✅ Validation PASSED: All checks successful")
-    return "passed"
+    return ValidationStatus.VALID

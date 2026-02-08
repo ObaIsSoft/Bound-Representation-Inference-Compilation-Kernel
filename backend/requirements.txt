@@ -1,5 +1,7 @@
 # Core Physics Libraries (ALL WORKING - NO FALLBACKS)
 fphysics==1.0
+pytest
+pytest-asyncio
 physipy==0.2.8
 sympy>=1.11
 scipy  # Let pip find a compatible pre-built version

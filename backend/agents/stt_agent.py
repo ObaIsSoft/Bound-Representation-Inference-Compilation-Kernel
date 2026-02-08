@@ -51,8 +51,12 @@ class STTAgent:
             logger.error(f"STTAgent: Transcription failed: {e}")
             return f"[Transcription Error: {str(e)}]"
 
-# Singleton instance
-_stt_agent = STTAgent()
+# Singleton instance (DEPRECATED: Use Registry)
+# _stt_agent = STTAgent()
 
 def get_stt_agent():
-    return _stt_agent
+    """
+    Get STTAgent via Global Registry to ensure Observability Wrapper is applied.
+    """
+    from agent_registry import registry
+    return registry.get_agent("STTAgent")

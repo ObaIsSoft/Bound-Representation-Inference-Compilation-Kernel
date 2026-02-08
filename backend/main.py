@@ -547,7 +547,7 @@ async def chat_requirements_endpoint(
     """
     logger.info(f"Chat Requirements Request: {req.message[:50]}... Session: {req.session_id}")
 
-    logger.info(f"Chat Requirements Request: {req.message[:50]}... Session: {req.session_id} Files: {len(files)}")
+
     
     # 1. Get or Create Session
     session_id = req.session_id or f"session-{int(time.time())}"

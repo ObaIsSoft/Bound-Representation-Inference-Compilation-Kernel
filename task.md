@@ -1,367 +1,709 @@
-# BRICK OS - Technical Debt & Implementation Tasks
+# BRICK OS - Backend Hardening: Supabase Integration & De-hardcoding
 
-> **Generated from Comprehensive Codebase Analysis**
-> **Status**: Tier 6 Backend / Tier 2 Frontend
-> **Last Updated**: 2026-02-08
+**Status:** ✅ Phase 2 - Service Layer Foundation Complete | Phase 3 - Database Migration In Progress  
+**Goal:** Eliminate all hardcoded values by integrating with Supabase and external APIs  
+**Priority:** Critical (Safety & Accuracy)
 
 ---
 
-## 🚨 CRITICAL - Fix Immediately (Production Blockers)
+## ✅ COMPLETED - Service Layer Foundation (2026-02-08)
 
-### C1. Silent Agent Loading Failures
-**File**: `backend/agent_registry.py` (line ~160)
-**Issue**: `_lazy_load()` returns `None` on import failure, causing downstream null pointer exceptions
-**Risk**: System appears to work but agents fail silently, leading to undefined behavior
-**Fix**:
+### Services Created (6 Services, ~1,500 lines)
+
+| Service | File | Purpose | APIs Integrated |
+|---------|------|---------|-----------------|
+| **SupabaseService** | `supabase_service.py` | Centralized DB client | Supabase PostgreSQL |
+| **PricingService** | `pricing_service.py` | Material & component pricing | LME, DigiKey, Mouser, Climatiq |
+| **StandardsService** | `standards_service.py` | Engineering standards | ISO 286, AWG/NEC, ASME |
+| **ComponentCatalogService** | `component_catalog_service.py` | Electronic components | Nexar, Mouser, Octopart |
+| **AssetSourcingService** | `asset_sourcing_service.py` | 3D model sourcing | NASA 3D, Sketchfab, CGTrader |
+| **CurrencyService** | `currency_service.py` | Exchange rates | OpenExchangeRates, CurrencyLayer |
+
+### Database Schema Created (4 SQL Files, ~2,100 lines)
+
+| Schema File | Tables | Records | Purpose |
+|-------------|--------|---------|---------|
+| `001_critic_thresholds.sql` | critic_thresholds | 7+ | Vehicle-specific critic configs |
+| `002_manufacturing_rates.sql` | manufacturing_rates | 10+ | Regional manufacturing costs |
+| `003_materials_extended.sql` | materials | 12+ | Materials with pricing/carbon |
+| `004_standards_reference.sql` | standards_reference | 20+ | ISO fits, AWG ampacity, safety factors |
+
+### Environment Variables Added to `.env`
+
+**Pricing APIs:** LME, Fastmarkets, OpenExchangeRates, CurrencyLayer, ExchangeRate-API  
+**Component APIs:** DigiKey, Mouser, Octopart  
+**Asset APIs:** NASA 3D, Sketchfab, CGTrader, Thingiverse, GrabCAD  
+**Sustainability:** Climatiq, Carbon Interface, OpenLCA  
+**Manufacturing:** Xometry, Protolabs, Hubs, Fictiv  
+
+### Next Steps
+
+1. **Apply SQL migrations** to Supabase
+2. **Run seed script** to populate initial data
+3. **Migrate ControlCritic** (SAFETY CRITICAL)
+4. **Migrate CostAgent, SafetyAgent**
+
+---
+
+---
+
+## 📋 Overview
+
+This task addresses the 90+ hardcoded values and stub implementations identified in the backend audit. All agents will be migrated to use **Supabase** as the primary data source, with **external APIs** for real-time data (pricing, components, assets).
+
+---
+
+## 🎯 Objectives
+
+1. **Database-First Architecture:** All configuration, standards, and reference data in Supabase
+2. **Real-Time APIs:** Live pricing, component catalogs, 3D assets
+3. **Fail-Fast Pattern:** No defaults - missing data = explicit error
+4. **Type Safety:** Pydantic models for all database interactions
+5. **Caching Layer:** Redis for external API responses
+
+---
+
+## 📊 Database Schema Requirements
+
+### 1. `materials` table (extends existing)
+```sql
+-- Add pricing and supplier columns
+ALTER TABLE materials ADD COLUMN cost_per_kg_usd DECIMAL(10,2);
+ALTER TABLE materials ADD COLUMN cost_per_kg_eur DECIMAL(10,2);
+ALTER TABLE materials ADD COLUMN supplier_name TEXT;
+ALTER TABLE materials ADD COLUMN supplier_part_number TEXT;
+ALTER TABLE materials ADD COLUMN lead_time_days INTEGER;
+ALTER TABLE materials ADD COLUMN carbon_footprint_kg_co2_per_kg DECIMAL(8,4);
+ALTER TABLE materials ADD COLUMN updated_at TIMESTAMP DEFAULT NOW();
+ALTER TABLE materials ADD COLUMN data_source TEXT; -- 'lme', 'manual', 'api'
+```
+
+### 2. `manufacturing_rates` table (new)
+```sql
+CREATE TABLE manufacturing_rates (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    process_type TEXT NOT NULL, -- 'cnc_milling', 'fdm_printing', 'sla_printing'
+    machine_hourly_rate_usd DECIMAL(8,2),
+    setup_cost_usd DECIMAL(8,2),
+    min_wall_thickness_mm DECIMAL(6,3),
+    max_aspect_ratio DECIMAL(5,2),
+    tolerance_mm DECIMAL(6,4),
+    material_compatibility TEXT[], -- ['aluminum', 'steel', 'pla']
+    region TEXT DEFAULT 'global',
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+```
+
+### 3. `critic_thresholds` table (new)
+```sql
+CREATE TABLE critic_thresholds (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    critic_name TEXT NOT NULL UNIQUE,
+    thresholds JSONB NOT NULL, -- all threshold values
+    vehicle_type TEXT DEFAULT 'default', -- 'drone_small', 'drone_large', etc.
+    version INTEGER DEFAULT 1,
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Example thresholds JSONB:
+-- {
+--   "max_thrust_n": 1000.0,
+--   "max_torque_nm": 100.0,
+--   "max_velocity_ms": 50.0,
+--   "control_effort_threshold": 100.0
+-- }
+```
+
+### 4. `component_catalog` table (new)
+```sql
+CREATE TABLE component_catalog (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    mpn TEXT UNIQUE, -- Manufacturer Part Number
+    manufacturer TEXT NOT NULL,
+    category TEXT NOT NULL, -- 'resistor', 'capacitor', 'motor', etc.
+    name TEXT NOT NULL,
+    description TEXT,
+    specs JSONB, -- all specifications
+    pricing JSONB, -- { "usd": 1.50, "eur": 1.40, "moq": 100 }
+    inventory JSONB, -- { "stock": 5000, "lead_time_days": 7 }
+    datasheet_url TEXT,
+    cad_model_url TEXT,
+    supplier_apis JSONB, -- { "digikey": "...", "mouser": "..." }
+    last_synced_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Index for fast lookup
+CREATE INDEX idx_component_category ON component_catalog(category);
+CREATE INDEX idx_component_manufacturer ON component_catalog(manufacturer);
+```
+
+### 5. `asset_catalog` table (new)
+```sql
+CREATE TABLE asset_catalog (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    source TEXT NOT NULL, -- 'nasa', 'sketchfab', 'mcmaster', etc.
+    external_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    category TEXT, -- 'mechanical', 'electrical', 'aerospace'
+    tags TEXT[],
+    mesh_url TEXT,
+    thumbnail_url TEXT,
+    metadata JSONB, -- source-specific metadata
+    license TEXT,
+    attribution TEXT,
+    created_at TIMESTAMP DEFAULT NOW(),
+    UNIQUE(source, external_id)
+);
+```
+
+### 6. `pricing_cache` table (new)
+```sql
+CREATE TABLE pricing_cache (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    category TEXT NOT NULL, -- 'metal', 'plastic', 'component'
+    item_key TEXT NOT NULL, -- material name or MPN
+    price_data JSONB NOT NULL,
+    currency TEXT DEFAULT 'USD',
+    source TEXT, -- 'lme', 'fastmarkets', 'digikey'
+    cached_at TIMESTAMP DEFAULT NOW(),
+    expires_at TIMESTAMP NOT NULL,
+    UNIQUE(category, item_key, currency)
+);
+
+CREATE INDEX idx_pricing_cache_expires ON pricing_cache(expires_at);
+```
+
+### 7. `standards_reference` table (extends existing)
+```sql
+CREATE TABLE standards_reference (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    standard_type TEXT NOT NULL, -- 'iso_fit', 'awg_ampacity', 'safety_factor'
+    standard_key TEXT NOT NULL,
+    standard_value JSONB NOT NULL,
+    standard_version TEXT,
+    region TEXT DEFAULT 'global',
+    created_at TIMESTAMP DEFAULT NOW(),
+    UNIQUE(standard_type, standard_key)
+);
+```
+
+---
+
+## 🔧 Service Layer Architecture
+
+Create `backend/services/` directory with:
+
+### 1. `supabase_service.py`
 ```python
-def _lazy_load(self, name: str) -> Optional[Any]:
-    try:
-        # ... import logic ...
-    except Exception as e:
-        logger.error(f"Failed to load agent {name}: {e}")
-        raise RuntimeError(f"Critical agent {name} failed to load: {e}") from e
+"""
+Centralized Supabase client with connection pooling,
+retry logic, and typed query builders.
+"""
 ```
-**Acceptance**: Registry raises explicit error on agent load failure
+**Responsibilities:**
+- Connection management
+- Query builders for complex joins
+- Caching integration
+- Error handling & retries
 
----
-
-### C2. Async Context Violation in GeometryAgent
-**File**: `backend/agents/geometry_agent.py` (line ~158)
-**Issue**: `asyncio.run()` called inside synchronous `run()` method - crashes when already in async context
-**Risk**: Runtime crash during geometry compilation
-**Fix**: Convert `GeometryAgent.run()` to async or use thread-safe async execution
+### 2. `pricing_service.py`
 ```python
-async def run(self, params, intent, ...):  # Make async
-    result = await self.engine.compile(geometry_tree, format="glb")
+"""
+Real-time pricing from external APIs with caching.
+Supports: LME, Fastmarkets, DigiKey, Mouser
+"""
 ```
-**Acceptance**: GeometryAgent runs without asyncio errors in orchestrator
+**Responsibilities:**
+- Fetch current metal/plastic prices
+- Currency conversion
+- Cache management
+- Fallback to last known price
 
----
-
-### C3. No Persistent Session Storage
-**File**: `backend/context_manager.py`, `backend/agents/conversational_agent.py`
-**Issue**: `InMemorySessionStore` used - all session data lost on server restart
-**Risk**: Production restart = lost user conversations and design state
-**Fix**: Implement Redis persistence
+### 3. `component_catalog_service.py`
 ```python
-class RedisSessionStore(SessionStore):
-    def __init__(self, redis_url: str = "redis://localhost:6379"):
-        self.redis = aioredis.from_url(redis_url)
+"""
+Component sourcing from DigiKey, Mouser, McMaster-Carr.
+"""
 ```
-**Acceptance**: Sessions survive server restart, TTL still enforced
+**Responsibilities:**
+- Search components by specs
+- Real-time inventory checks
+- Price comparison
+- Datasheet retrieval
 
----
-
-### C4. Circular Import Between Main and Orchestrator
-**Files**: `backend/main.py`, `backend/orchestrator.py`
-**Issue**: 
-- `orchestrator.py` imports `from main import inject_thought`
-- `main.py` imports `from orchestrator import run_orchestrator`
-**Risk**: Import-time crashes, unpredictable module loading
-**Fix**: Move `inject_thought` to separate module (e.g., `backend/xai_stream.py`)
-**Acceptance**: No cross-imports between main.py and orchestrator.py
-
----
-
-### C5. State Mutation Bug in Physics Node
-**File**: `backend/orchestrator.py` (physics_node, lines 640-700)
-**Issue**: Direct mutation of `flags` and `reasons` dicts while iterating
-**Risk**: Runtime errors, inconsistent state
-**Fix**: Create new dict objects instead of mutating in place
-**Acceptance**: Physics node completes without mutation errors
-
----
-
-## 🔴 HIGH - Major Functionality Broken/Missing
-
-### H1. Frontend Components Are Stubs
-**Files**: 
-- `frontend/src/components/panels/CompilePanel.jsx` (9 lines - empty div)
-- `frontend/src/pages/Workspace.jsx` (58 lines - placeholder text)
-- `frontend/src/components/panels/*.jsx` (many have empty handlers)
-
-**Issue**: Frontend is non-functional beyond requirements gathering
-**Fix Priority**:
-1. Implement actual 3D viewer in Workspace (Three.js already in deps)
-2. Connect CompilePanel to `/api/orchestrator/run` endpoint
-3. Add agent status dashboard (Phase 11.3 - SystemHealth)
-4. Implement design parameter adjustment UI
-**Acceptance**: User can view 3D models, trigger compilation, see agent progress
-
----
-
-### H2. Mixed Async/Sync Agent Interfaces
-**Files**: All files in `backend/agents/`
-**Issue**: Some agents have `def run()`, others `async def run()` - requires boilerplate checking
-**Risk**: Blocking in async context, complex error-prone calling code
-**Fix**: Standardize all agents to async interface
+### 4. `asset_sourcing_service.py`
 ```python
-class BaseAgent(ABC):
-    @abstractmethod
-    async def run(self, params: Dict) -> Dict:
-        pass
+"""
+3D model sourcing from NASA, Sketchfab, etc.
+"""
 ```
-**Acceptance**: Remove all `hasattr(agent, "run") and asyncio.iscoroutinefunction(agent.run)` checks
+**Responsibilities:**
+- Search 3D assets
+- Download & cache meshes
+- License compliance tracking
+- Format conversion
 
----
-
-### H3. No Docker/Containerization
-**Missing**: `Dockerfile`, `docker-compose.yml`
-**Issue**: Complex dependencies (FEniCS, CoolProp, physics libraries) hard to deploy
-**Fix**: Multi-stage Dockerfile
-```dockerfile
-FROM python:3.12-slim as base
-# Install system deps for physics libs
-RUN apt-get update && apt-get install -y libopenmpi-dev petsc-dev
-# ... pip install ...
-```
-**Acceptance**: `docker-compose up` starts full stack (backend + redis + frontend)
-
----
-
-### H4. Test Quality - Excessive Mocking
-**Files**: `tests/unit/test_physics.py`, `tests/unit/test_*.py`
-**Issue**: Tests mock 30+ modules - testing mock configuration, not actual physics
-**Risk**: False confidence, bugs in real physics code not caught
-**Fix**: Integration tests with real physics kernel, mocked only at LLM/API boundaries
-**Acceptance**: Tests verify actual physics calculations against known values
-
----
-
-### H5. Frontend-Backend Type Mismatch
-**Files**: `frontend/src/pages/RequirementsGatheringPage.jsx`, `backend/main.py`
-**Issue**: Frontend sends `FormData`, backend expects JSON/Pydantic - inconsistent handling
-**Fix**: Standardize all API endpoints to accept JSON, update frontend to send JSON
-**Acceptance**: All endpoints have consistent Pydantic models, no manual FormData parsing
-
----
-
-### H6. Missing CI/CD Pipeline
-**Missing**: `.github/workflows/`, `.gitlab-ci.yml`
-**Issue**: No automated testing, no deployment pipeline
-**Fix**: GitHub Actions workflow
-```yaml
-- Lint (ruff, mypy)
-- Unit tests (pytest)
-- Integration tests (docker-compose)
-- Frontend build (vite build)
-- Deploy to staging
-```
-**Acceptance**: PRs trigger automated checks, main branch auto-deploys
-
----
-
-## 🟡 MEDIUM - Code Quality & Technical Debt
-
-### M1. AgentState God Object
-**File**: `backend/schema.py` (AgentState TypedDict)
-**Issue**: 40+ fields - violates Single Responsibility Principle
-**Risk**: Hard to track changes, race conditions, merge conflicts
-**Fix**: Split into domain-specific sub-objects
+### 5. `standards_service.py`
 ```python
-class AgentState(TypedDict):
-    core: CoreState
-    design: DesignState
-    geometry: GeometryState
-    physics: PhysicsState
-    manufacturing: ManufacturingState
+"""
+ISO, ASME, ASTM standards lookup.
+"""
 ```
-**Acceptance**: No state object has more than 10 fields
+**Responsibilities:**
+- Tolerance class lookup
+- Safety factor retrieval
+- Wire gauge ampacity
+- Fit type recommendations
 
 ---
 
-### M2. Backup Files in Repository
-**File**: `backend/orchestrator.py.backup`
-**Issue**: Should not be in version control
-**Fix**: `git rm backend/orchestrator.py.backup`, add `*.backup` to `.gitignore`
-**Acceptance**: No backup files in repo
+## 📝 Agent Migration Tasks
 
----
+### Priority 1: Safety Critical (Week 1)
 
-### M3. Bare Except Pass (3 occurrences)
-**Files**: Found in 3 Python files
-**Issue**: `except Exception: pass` masks critical errors
-**Fix**: Explicit exception handling with logging
+#### 1.1 ControlCritic Migration
+**File:** `backend/agents/critics/ControlCritic.py`
+
+**Current:**
 ```python
-except SpecificException as e:
-    logger.error(f"Context: {e}")
-    raise  # or handle appropriately
+self.MAX_THRUST = 1000.0  # Hardcoded!
+self.MAX_TORQUE = 100.0   # Hardcoded!
 ```
-**Acceptance**: Zero `except: pass` patterns in codebase
 
----
-
-### M4. Debug Scripts Pollution
-**Files**: `backend/debug_*.py`, `backend/tests/legacy/cleanup/`
-**Issue**: Unclear which scripts are current vs legacy
-**Fix**: 
-1. Move debug scripts to `scripts/debug/`
-2. Add README explaining each script
-3. Archive or delete legacy cleanup scripts
-**Acceptance**: Only actively used scripts in main directories
-
----
-
-### M5. Hardcoded Values
-**Files**: Multiple agent files
-**Issue**: Magic numbers scattered throughout
+**Target:**
 ```python
-THERMAL_LOAD_W = POWER_REQ_W * 0.15  # Why 0.15?
-max_questions = 5  # In multiple places
+from services.supabase_service import supabase
+
+async def load_vehicle_limits(self, vehicle_type: str):
+    limits = await supabase.get_critic_thresholds(
+        critic_name="ControlCritic",
+        vehicle_type=vehicle_type
+    )
+    self.max_thrust = limits["max_thrust_n"]
+    self.max_torque = limits["max_torque_nm"]
+    # ... etc
 ```
-**Fix**: Centralize configuration
-```python
-from config import THERMAL_EFFICIENCY_DEFAULT, MAX_DISCOVERY_QUESTIONS
-```
-**Acceptance**: Configuration values in `backend/config/` directory
+
+**Supabase Data Needed:**
+- Insert into `critic_thresholds` for each vehicle type
 
 ---
 
-### M6. Missing Health Check Endpoint
-**File**: `backend/main.py` (has `/api/health` but basic)
-**Issue**: Health check doesn't verify LLM providers, agents, physics kernel
-**Fix**: Comprehensive health check
+#### 1.2 CostAgent Migration
+**File:** `backend/agents/cost_agent.py`
+
+**Current:**
 ```python
-@app.get("/api/health")
-async def health_check():
+material_costs = {
+    "Aluminum 6061": 20.0,  # Hardcoded!
+    "Steel": 15.0,          # Hardcoded!
+}
+```
+
+**Target:**
+```python
+from services.pricing_service import pricing_service
+
+async def get_material_cost(self, material: str, currency: str = "USD"):
+    # Try live pricing first
+    price = await pricing_service.get_material_price(
+        material=material,
+        currency=currency
+    )
+    if price:
+        return price
+    
+    # Fallback to cached price from Supabase
+    return await supabase.get_cached_price(
+        category="material",
+        item_key=material,
+        currency=currency
+    )
+```
+
+**Supabase Data Needed:**
+- Populate `materials` table with current LME pricing
+- Set up `pricing_cache` table
+
+---
+
+#### 1.3 SafetyAgent Migration
+**File:** `backend/agents/safety_agent.py`
+
+**Current:**
+```python
+if metrics.get("max_stress_mpa", 0) > 200:  # Hardcoded!
+    hazards.append("High Stress detected (>200 MPa)")
+```
+
+**Target:**
+```python
+from services.supabase_service import supabase
+
+async def check_stress(self, stress_mpa: float, material: str):
+    material_props = await supabase.get_material_properties(material)
+    yield_strength = material_props["yield_strength_mpa"]
+    safety_factor = 1.5  # Or from standards table
+    
+    if stress_mpa > (yield_strength / safety_factor):
+        hazards.append(f"High Stress: {stress_mpa} MPa exceeds safe limit")
+```
+
+**Supabase Data Needed:**
+- Ensure all materials have `yield_strength_mpa` populated
+
+---
+
+### Priority 2: Core Agents (Week 2)
+
+#### 2.1 ComponentAgent Migration
+**File:** `backend/agents/component_agent.py`
+
+**Current:**
+```python
+# Generates synthetic meshes if none found
+def _fetch_candidates(self, category):
+    if not self.db.enabled:
+        return []  # Empty!
+```
+
+**Target:**
+```python
+from services.component_catalog_service import component_catalog
+
+async def _fetch_candidates(self, category: str, specs: dict):
+    # Search Supabase first
+    local_components = await supabase.search_components(
+        category=category,
+        specs=specs
+    )
+    
+    # Augment with live API search
+    api_components = await component_catalog.search(
+        category=category,
+        specs=specs,
+        suppliers=["digikey", "mouser"]
+    )
+    
+    # Merge and cache
+    return self._merge_and_dedup(local_components, api_components)
+```
+
+**Supabase Data Needed:**
+- Populate `component_catalog` with common components
+
+---
+
+#### 2.2 ManufacturingAgent Migration
+**File:** `backend/agents/manufacturing_agent.py`
+
+**Current:**
+```python
+HOURLY_MACHINING_RATE_USD = 50.0  # Hardcoded!
+SETUP_COST_USD = 100.0           # Hardcoded!
+```
+
+**Target:**
+```python
+async def get_manufacturing_rates(self, process: str, region: str = "global"):
+    rates = await supabase.get_manufacturing_rates(
+        process_type=process,
+        region=region
+    )
     return {
-        "status": "healthy",
-        "llm_provider": check_llm(),  # Test actual call
-        "physics_kernel": check_physics(),  # Verify providers
-        "agents_loaded": len(registry._agents),
-        "materials_api": check_materials_api()
+        "hourly_rate": rates["machine_hourly_rate_usd"],
+        "setup_cost": rates["setup_cost_usd"],
+        "min_wall_thickness": rates["min_wall_thickness_mm"]
     }
 ```
-**Acceptance**: Health check fails if any critical dependency unavailable
+
+**Supabase Data Needed:**
+- Populate `manufacturing_rates` with regional pricing
 
 ---
 
-## 🟢 LOW - Nice to Have / Polish
+#### 2.3 SustainabilityAgent Migration
+**File:** `backend/agents/sustainability_agent.py`
 
-### L1. Frontend Three.js Integration
-**Missing**: 3D viewer component
-**Issue**: Three.js in package.json but unused
-**Fix**: Create `frontend/src/components/viewers/ModelViewer.jsx`
-- Load GLB from `/api/geometry/model/{model_id}`
-- Display physics telemetry overlay
-- Allow parameter adjustment
-**Acceptance**: User can view 3D models with physics data overlay
-
----
-
-### L2. WebSocket for Real-time Updates
-**Files**: `backend/main.py`, Frontend
-**Issue**: Frontend polls for agent thoughts (`/api/agents/thoughts`)
-**Fix**: WebSocket endpoint for real-time agent status
+**Current:**
 ```python
-@app.websocket("/ws/orchestrator/{project_id}")
-async def orchestrator_ws(websocket: WebSocket, project_id: str):
-    # Stream agent progress, thoughts, completions
+factors = {
+    "Aluminum 6061": 12.0,  # Hardcoded!
+    "Steel": 1.8,           # Hardcoded!
+}
 ```
-**Acceptance**: Real-time progress bar during orchestration
 
----
-
-### L3. Documentation Sync
-**Files**: `docs/MASTER_ARCHITECTURE.md`, `README.md`
-**Issue**: Documentation may drift from implementation
-**Fix**: Add docs-as-code checks in CI
-**Acceptance**: Architecture diagrams auto-generated from code
-
----
-
-### L4. Performance Monitoring
-**Files**: `backend/monitoring/latency.py`
-**Issue**: Basic latency tracking, no alerting
-**Fix**: Integrate with Prometheus/Grafana or Sentry Performance
-**Acceptance**: Dashboard showing agent execution times, bottleneck identification
-
----
-
-### L5. Environment Variable Validation
-**File**: `backend/main.py` (startup)
-**Issue**: No validation that required env vars are set
-**Fix**: Pydantic Settings validation on startup
+**Target:**
 ```python
-class Settings(BaseSettings):
-    groq_api_key: Optional[str] = None
-    openai_api_key: Optional[str] = None
-    # At least one must be set
+async def get_carbon_footprint(self, material: str):
+    # Get from materials table
+    material_data = await supabase.get_material(material)
+    return material_data.get(
+        "carbon_footprint_kg_co2_per_kg",
+        await self._fetch_from_climatiq(material)  # API fallback
+    )
+```
+
+**Supabase Data Needed:**
+- Add `carbon_footprint_kg_co2_per_kg` to `materials` table
+
+---
+
+### Priority 3: Oracle Adapters (Week 3)
+
+#### 3.1 PowerElectronicsAdapter
+**File:** `backend/agents/electronics_oracle/adapters/power_electronics_adapter.py`
+
+**Current:**
+```python
+efficiency = params.get("efficiency", 0.9)  # Dangerous default!
+```
+
+**Target:**
+```python
+# No default - must be provided or looked up
+if "efficiency" not in params:
+    # Lookup component efficiency from database
+    component = await supabase.get_component(params.get("component_mpn"))
+    efficiency = component["specs"]["efficiency_typical"]
+else:
+    efficiency = params["efficiency"]
+```
+
+---
+
+#### 3.2 MechanicalPropertiesAdapter
+**File:** `backend/agents/materials_oracle/adapters/mechanical_properties_adapter.py`
+
+**Current:**
+```python
+E = params.get("youngs_modulus_pa", 200e9)  # Assumes steel!
+```
+
+**Target:**
+```python
+if "youngs_modulus_pa" not in params:
+    if "material" not in params:
+        raise ValueError("Must provide youngs_modulus_pa or material")
     
-    @validator
-    def at_least_one_llm(cls, v, values):
-        if not any([values.get('groq_api_key'), values.get('openai_api_key')]):
-            raise ValueError("At least one LLM provider required")
+    material_props = await supabase.get_material_properties(params["material"])
+    E = material_props["elastic_modulus_pa"]
+else:
+    E = params["youngs_modulus_pa"]
 ```
-**Acceptance**: Clear error message on startup if config invalid
 
 ---
 
-## 📋 Implementation Priority Roadmap
+#### 3.3 ThermochemistryAdapter
+**File:** `backend/agents/chemistry_oracle/adapters/thermochemistry_adapter.py`
 
-### Week 1: Critical Fixes (Production Blockers)
-- [ ] C1: Fix silent agent loading failures
-- [ ] C2: Fix async context violation in GeometryAgent
-- [ ] C3: Implement Redis session persistence
-- [ ] C4: Fix circular import (main ↔ orchestrator)
-- [ ] C5: Fix state mutation bug in physics_node
-- [ ] M2: Remove backup files from repo
-- [ ] M3: Fix bare except pass patterns
+**Current:**
+```python
+delta_H_vap = params.get("enthalpy_vap_kj_mol", 40.7)  # Water only!
+```
 
-### Week 2: Frontend MVP
-- [ ] H1: Implement Workspace 3D viewer (Three.js)
-- [ ] H1: Connect CompilePanel to orchestrator API
-- [ ] H1: Add agent status/progress UI
-- [ ] H5: Standardize frontend to JSON API calls
-- [ ] L1: Add physics telemetry overlay to 3D viewer
-
-### Week 3: Backend Hardening
-- [ ] H2: Standardize all agents to async interface
-- [ ] H3: Create Docker containerization
-- [ ] M1: Refactor AgentState god object
-- [ ] M6: Implement comprehensive health checks
-- [ ] M4: Clean up debug scripts
-
-### Week 4: Testing & CI/CD
-- [ ] H4: Rewrite tests with real physics (not mocks)
-- [ ] H6: Set up GitHub Actions CI/CD
-- [ ] M5: Centralize configuration
-- [ ] L5: Add environment validation
-
-### Month 2: Advanced Features
-- [ ] L2: WebSocket real-time updates
-- [ ] L4: Performance monitoring dashboard
-- [ ] L3: Auto-generated architecture docs
-- [ ] Integration tests with full pipeline
+**Target:**
+```python
+if "enthalpy_vap_kj_mol" not in params:
+    chemical = await supabase.get_chemical_properties(params.get("chemical_name"))
+    delta_H_vap = chemical["enthalpy_of_vaporization_kj_mol"]
+else:
+    delta_H_vap = params["enthalpy_vap_kj_mol"]
+```
 
 ---
 
-## 🎯 Success Metrics
+### Priority 4: Asset Sourcing (Week 4)
 
-| Metric | Current | Target |
-|--------|---------|--------|
-| Silent failures | 3+ | 0 |
-| Frontend stub components | 15+ | 0 |
-| Test coverage (real code) | ~20% | 70% |
-| Async/sync boilerplate per agent | 6 lines | 0 lines |
-| Session persistence | None | Redis |
-| Docker deployment | None | Working |
-| CI/CD | None | Automated |
+#### 4.1 AssetSourcingAgent Migration
+**File:** `backend/agents/asset_sourcing_agent.py`
+
+**Current:**
+```python
+self.mock_assets = []  # Empty!
+```
+
+**Target:**
+```python
+from services.asset_sourcing_service import asset_service
+
+async def search_assets(self, query: str, source: str = None):
+    # Search local cache
+    local_assets = await supabase.search_assets(query, source)
+    
+    # Search external APIs
+    if not source or source == "nasa":
+        nasa_assets = await asset_service.search_nasa(query)
+        await supabase.cache_assets(nasa_assets)
+        local_assets.extend(nasa_assets)
+    
+    if not source or source == "sketchfab":
+        sketchfab_assets = await asset_service.search_sketchfab(query)
+        await supabase.cache_assets(sketchfab_assets)
+        local_assets.extend(sketchfab_assets)
+    
+    return local_assets
+```
+
+**Supabase Data Needed:**
+- Populate `asset_catalog` with NASA 3D resources
+
+---
+
+## 🔌 External API Integrations
+
+### 1. LME (London Metal Exchange)
+**Purpose:** Live metal pricing
+**Endpoint:** https://www.lme.com/api/
+**Rate Limit:** 100 req/min
+**Cache:** 1 hour
+
+### 2. DigiKey API
+**Purpose:** Component sourcing
+**Endpoint:** https://api.digikey.com/
+**Rate Limit:** 1000 req/day
+**Cache:** 24 hours
+
+### 3. Mouser API
+**Purpose:** Component sourcing
+**Endpoint:** https://api.mouser.com/
+**Rate Limit:** 500 req/day
+**Cache:** 24 hours
+
+### 4. Climatiq
+**Purpose:** Carbon footprint calculations
+**Endpoint:** https://api.climatiq.io/
+**Rate Limit:** 1000 req/month (free tier)
+**Cache:** 1 week
+
+### 5. NASA 3D Resources
+**Purpose:** 3D aerospace models
+**Endpoint:** https://nasa3d.arc.nasa.gov/api/
+**Rate Limit:** No limit
+**Cache:** Permanent
+
+### 6. Sketchfab
+**Purpose:** 3D model repository
+**Endpoint:** https://api.sketchfab.com/
+**Rate Limit:** 100 req/min
+**Cache:** 1 week
+
+---
+
+## 📦 Data Population Tasks
+
+### Seed Data Scripts
+
+#### 1. `scripts/seed_materials.py`
+Populate `materials` table with:
+- [ ] Common metals (Aluminum 6061, Steel, Titanium, etc.)
+- [ ] Plastics (PLA, ABS, PETG, Nylon, etc.)
+- [ ] Composites (Carbon fiber, Fiberglass)
+- [ ] Current LME pricing
+- [ ] Carbon footprint data
+
+#### 2. `scripts/seed_manufacturing_rates.py`
+Populate `manufacturing_rates` table with:
+- [ ] CNC Milling rates (by region)
+- [ ] 3D printing rates (FDM, SLA, SLS)
+- [ ] Sheet metal rates
+- [ ] Injection molding rates
+
+#### 3. `scripts/seed_standards.py`
+Populate `standards_reference` table with:
+- [ ] ISO 286 tolerance classes (H7/g6, etc.)
+- [ ] AWG ampacity tables
+- [ ] Safety factors by industry
+
+#### 4. `scripts/seed_critic_thresholds.py`
+Populate `critic_thresholds` table with:
+- [ ] ControlCritic limits (by vehicle type)
+- [ ] MaterialCritic thresholds
+- [ ] ElectronicsCritic limits
+
+#### 5. `scripts/seed_nasa_assets.py`
+Populate `asset_catalog` with:
+- [ ] NASA 3D Resources metadata
+- [ ] Thumbnail URLs
+- [ ] License information
+
+---
+
+## 🧪 Testing Strategy
+
+### 1. Unit Tests
+```python
+# Test pricing service
+async def test_pricing_service_fetches_live_data():
+    price = await pricing_service.get_material_price("Aluminum 6061")
+    assert price > 0
+    assert price != 20.0  # Old hardcoded value
+
+# Test no defaults
+async def test_oracle_adapter_rejects_missing_params():
+    with pytest.raises(ValueError):
+        await adapter.run_simulation({})  # Missing required params
+```
+
+### 2. Integration Tests
+```python
+# Test end-to-end cost calculation
+async def test_cost_agent_uses_database():
+    result = await cost_agent.run({
+        "mass_kg": 5.0,
+        "material_name": "Aluminum 6061"
+    })
+    assert result["breakdown"]["material"] != 100.0  # Not hardcoded
+```
+
+### 3. Data Validation Tests
+```python
+# Test all materials have required fields
+async def test_all_materials_have_yield_strength():
+    materials = await supabase.get_all_materials()
+    for m in materials:
+        assert m["yield_strength_mpa"] is not None
+```
+
+---
+
+## 📅 Implementation Timeline
+
+| Week | Focus | Deliverables |
+|------|-------|--------------|
+| **Week 1** | Safety Critical | ControlCritic, CostAgent, SafetyAgent migrated |
+| **Week 2** | Core Agents | ComponentAgent, ManufacturingAgent, SustainabilityAgent |
+| **Week 3** | Oracle Adapters | All physics/chemistry adapters migrated |
+| **Week 4** | Asset Sourcing | AssetSourcingAgent + external APIs |
+| **Week 5** | Testing & Polish | 100% test coverage, performance tuning |
+
+---
+
+## 🚨 Success Criteria
+
+- [ ] **Zero hardcoded values** in agent logic (config only)
+- [ ] **All tests pass** with real Supabase data
+- [ ] **<100ms latency** for cached data lookups
+- [ ] **<2s latency** for external API calls (with caching)
+- [ ] **100% type coverage** with Pydantic models
+- [ ] **Graceful degradation** when APIs are unavailable
 
 ---
 
 ## 📝 Notes
 
-### Patterns to Follow
-- **Lazy Loading**: Continue using `GlobalAgentRegistry` pattern
-- **De-Mocking**: Never add mocks back - always use real data/providers
-- **Physics-First**: Maintain validation before generation approach
-- **Critic Integration**: Keep observer pattern for self-evolution
+1. **No Mock Data in Production:** All mock/synthetic data generators must be removed
+2. **Explicit Failures:** Missing data should raise errors, not use defaults
+3. **Audit Trail:** All external API calls logged for debugging
+4. **Rate Limiting:** Respect API limits with exponential backoff
+5. **Data Freshness:** Show data age to users ("Prices from 2 hours ago")
 
-### Anti-Patterns to Avoid
-- Silent failures (return None on error)
-- Mixed async/sync interfaces
-- God objects (40+ field state)
-- Excessive mocking in tests
-- Bare except: pass
-- Hardcoded magic numbers
+---
+
+## 🔗 Related Files
+
+- `BACKEND_HARDCODED_AUDIT.md` - Main agents audit
+- `CRITICS_ORACLES_ADAPTERS_AUDIT.md` - Critics & adapters audit
+- `backend/services/` - New service layer (to create)
+- `scripts/seed_*.py` - Data population scripts (to create)

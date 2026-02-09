@@ -75,9 +75,13 @@ class ChemistryAgent:
         # Deduplicate
         materials = list(set(materials))
         
-        # Fallback
+        # Validate materials provided
         if not materials:
-             materials = ["Steel", "Aluminum"] # Default to common checks
+             return {
+                 "chemical_safe": False,
+                 "issues": ["No materials specified for chemistry analysis"],
+                 "report": ["Error: materials list is required"]
+             }
         
         # 1. Fetch Material Data
         for mat_name in materials:
@@ -355,7 +359,7 @@ class ChemistryAgent:
                 logger = logging.getLogger(__name__)
                 # logger.info(f"[DEBUG] Loading {mat_family}.{param_key} from {path} -> {val}")
                 return val
-        except: return default
+        except Exception: return default
 
     def update_learned_parameters(self, mat_family: str, updates: Dict[str, float]):
         """Called by ChemistryCritic."""
@@ -367,7 +371,7 @@ class ChemistryAgent:
             try: 
                 with open(path, 'r') as f: 
                     data = json.load(f)
-            except: 
+            except Exception: 
                 pass
             
         if mat_family not in data: data[mat_family] = {}

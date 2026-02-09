@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 def validate_geometry_physics(
     physics_kernel,
     geometry_tree: List[Dict[str, Any]], 
-    material: str = "Aluminum 6061-T6"
+    material: str
 ) -> Dict[str, Any]:
     """
     Validates geometry using real physics calculations.

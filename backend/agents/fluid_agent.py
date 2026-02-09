@@ -99,7 +99,7 @@ class FluidAgent:
                 temperature=temperature,
                 pressure=101325 * (1 - 0.0065 * altitude / 288.15) ** 5.255  # ISA
             )
-        except:
+        except Exception:
             density = context.get("density", 1.225)  # Fallback
         
         velocity = context.get("velocity", 10.0) # m/s

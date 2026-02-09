@@ -24,9 +24,18 @@ class DfmAgent:
         logger.info(f"{self.name} running manufacturability checks...")
         
         # Inputs
-        wall_mm = params.get("min_wall_thickness_mm", 2.0)
-        mat_name = params.get("material_name", "PLA")
-        method = params.get("method", "FDM")
+        wall_mm = params.get("min_wall_thickness_mm")
+        if wall_mm is None:
+            return {"error": "min_wall_thickness_mm is required", "status": "error"}
+        
+        mat_name = params.get("material_name")
+        if not mat_name:
+            return {"error": "material_name is required", "status": "error"}
+        
+        method = params.get("method")
+        if not method:
+            return {"error": "method is required", "status": "error"}
+        
         ar = params.get("aspect_ratio", 5.0)
         
         issues = []

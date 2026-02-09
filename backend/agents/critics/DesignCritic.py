@@ -103,6 +103,6 @@ class DesignCritic:
         try:
             r, g, b = tuple(int(hex_code[i:i+2], 16) for i in (0, 2, 4))
             return colorsys.rgb_to_hsv(r/255.0, g/255.0, b/255.0)
-        except:
+        except Exception:
             return (0,0,0)
 

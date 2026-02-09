@@ -112,7 +112,7 @@ class StructuralAgent:
             try:
                 self.model = tf.keras.models.load_model(self.model_path)
                 logger.info("Loaded Structural Hybrid Model.")
-            except:
+            except Exception:
                 logger.warning("Failed to load model, creating new.")
                 self._create_new_model()
         else:

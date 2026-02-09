@@ -76,8 +76,14 @@ class CostAgent:
         
         from backend.services import pricing_service, currency_service, supabase
         
-        mass_kg = params.get("mass_kg", 5.0)
-        material = params.get("material_name", "Aluminum 6061-T6")
+        mass_kg = params.get("mass_kg")
+        if mass_kg is None:
+            return {"error": "mass_kg is required", "feasible": False}
+        
+        material = params.get("material_name")
+        if not material:
+            return {"error": "material_name is required", "feasible": False}
+        
         complexity = params.get("complexity", "moderate")
         
         warnings = []
@@ -201,12 +207,23 @@ class CostAgent:
         
         from backend.services import pricing_service, supabase
         
-        # Inputs
-        mass_kg = params.get("mass_kg", 5.0)
-        mat_name = params.get("material_name", "Aluminum 6061-T6")
-        process = params.get("manufacturing_process", "cnc_milling")
+        # Inputs - all required
+        mass_kg = params.get("mass_kg")
+        if mass_kg is None:
+            return {"error": "mass_kg is required", "feasible": False}
+        
+        mat_name = params.get("material_name")
+        if not mat_name:
+            return {"error": "material_name is required", "feasible": False}
+        
+        process = params.get("manufacturing_process")
+        if not process:
+            return {"error": "manufacturing_process is required", "feasible": False}
+        
         region = params.get("region", "global")
-        machining_hours = params.get("processing_time_hr", 2.0)
+        machining_hours = params.get("processing_time_hr")
+        if machining_hours is None:
+            return {"error": "processing_time_hr is required", "feasible": False}
         
         warnings = []
         

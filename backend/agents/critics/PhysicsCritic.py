@@ -140,7 +140,7 @@ class PhysicsCritic:
                 ground_truth = np.array(self.ground_truth_history)
                 gates = np.array(self.gate_history)
                 inputs = np.array(self.input_history) # This handles arrays
-            except:
+            except Exception:
                 # Fallback if mixed types
                 return CriticReport(timestamp=self.total_evaluations, overall_performance=0.5, gate_alignment=0, error_distribution={}, recommendations=[], failure_modes=failure_modes, gate_statistics={}, confidence=0.0)
 

@@ -79,7 +79,7 @@ class VisualValidatorAgent:
                          penalty = self.scoring["degenerate_face_penalty"]
                          artifacts.append(f"Degenerate triangles detected (Area < {threshold}) - Penalty: {penalty}")
                          score -= penalty
-                except: pass
+                except Exception: pass
                 
                 logs.append(f"  - Verified {len(mesh.faces)} faces.")
                 

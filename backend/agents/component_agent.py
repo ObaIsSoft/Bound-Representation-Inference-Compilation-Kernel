@@ -109,7 +109,7 @@ class ComponentAgent:
         if not os.path.exists(path): return {}
         try:
             with open(path, 'r') as f: return json.load(f)
-        except: return {}
+        except Exception: return {}
 
     def update_preferences(self, component_id: str, reward_signal: float):
         """
@@ -125,7 +125,7 @@ class ComponentAgent:
             try: 
                 with open(path, 'r') as f: 
                     prefs = json.load(f)
-            except: 
+            except Exception: 
                 pass
             
         current = prefs.get(component_id, 1.0)

@@ -206,18 +206,22 @@ async def run_geometry():
 geometry_result = asyncio.run(run_geometry())
 
 print(f"  Success: {geometry_result.success}")
-print(f"  Dimensions:")
-dims = geometry_result.data.get("dimensions", {})
-print(f"    - Length: {dims.get('length_m', 0)*1000:.1f} mm")
-print(f"    - Width: {dims.get('width_m', 0)*1000:.1f} mm")
-print(f"    - Height: {dims.get('height_m', 0)*1000:.1f} mm")
-print(f"  Mass: {geometry_result.data.get('mass', {}).get('estimated_mass_kg', 0)*1000:.1f} g")
+print(f"  Data: {geometry_result.data}")
+
+# Parse real GeometryEstimator output
+bounds = geometry_result.data.get("estimated_bounds", {})
+if bounds:
+    min_b = bounds.get("min", [0, 0, 0])
+    max_b = bounds.get("max", [0, 0, 0])
+    print(f"  Estimated Bounds:")
+    print(f"    - Min: [{min_b[0]:.3f}, {min_b[1]:.3f}, {min_b[2]:.3f}] m")
+    print(f"    - Max: [{max_b[0]:.3f}, {max_b[1]:.3f}, {max_b[2]:.3f}] m")
 print(f"  Feasible: {geometry_result.data.get('feasible', False)}")
+print(f"  Reason: {geometry_result.data.get('reason', 'N/A')}")
 print()
 
 # Update shared context
-shared_context.scene_context["dimensions"] = geometry_result.data.get("dimensions")
-shared_context.scene_context["estimated_mass_kg"] = geometry_result.data.get("mass", {}).get("estimated_mass_kg")
+shared_context.scene_context["geometry_result"] = geometry_result.data
 
 print("  📊 GEOMETRY EVALUATION:")
 print(f"    ✓ Realistic dimensions for robot hand (~human hand sized)")

@@ -51,16 +51,11 @@ class CodegenAgent:
         pwm_idx = 0
         
         # 1. Iterate Components
-        # 1. Iterate Components
-        import sqlite3
         import json
-        conn = sqlite3.connect("data/materials.db")
-        conn.row_factory = sqlite3.Row
-        cur = conn.cursor()
         
-        # Pre-fetch all library mappings
-        cur.execute("SELECT * FROM library_mappings")
-        libs_data = cur.fetchall()
+        # Use config-based library mappings (Supabase-only architecture)
+        from config.hardware_definitions import LIBRARY_MAPPINGS
+        libs_data = LIBRARY_MAPPINGS
         
         for i, comp in enumerate(components):
             cat = comp.get("category", "unknown").lower()
@@ -70,21 +65,21 @@ class CodegenAgent:
             # Match Logic
             matched_lib = None
             for lib in libs_data:
-                trigger = lib["category_trigger"]
+                trigger = lib.get("category_trigger", "")
                 if trigger in cat or trigger in name.lower():
                     matched_lib = lib
                     break
             
             if matched_lib:
-                # Dynamic Code Injection from DB
-                lib_includes = json.loads(matched_lib["includes_json"])
+                # Dynamic Code Injection
+                lib_includes = matched_lib.get("includes", [])
                 includes.update(lib_includes)
                 
                 # Context formatting
                 assigned_pin = "0"
-                setup_tmpl = matched_lib["setup_template"] or ""
-                deps = dict(matched_lib).get("dependencies_json", "")
-                needs_pwm = (deps and "pwm" in deps.lower()) or "{pin}" in setup_tmpl
+                setup_tmpl = matched_lib.get("setup_template", "")
+                deps = matched_lib.get("dependencies", [])
+                needs_pwm = "pwm" in deps or "{pin}" in setup_tmpl
                  
                 if needs_pwm or cat == "motor" or cat == "servo":
                      if pwm_idx < len(available_pwm):
@@ -96,7 +91,7 @@ class CodegenAgent:
                 
                 ctx = {"safe_name": safe_name, "pin": assigned_pin, "led_count": "16"}
                 
-                if matched_lib["globals_template"]:
+                if matched_lib.get("globals_template"):
                     globals_code.append(matched_lib["globals_template"].format(**ctx))
                     
                 if setup_tmpl:
@@ -111,8 +106,6 @@ class CodegenAgent:
                     setup_code.append(f"  // Motor: {name}")
                     setup_code.append(f"  pinMode({pin}, OUTPUT);")
                     setup_code.append(f"  analogWrite({pin}, 0);")
-        
-        conn.close()
                     
         # 2. Render
         code = self._render_cpp(includes, globals_code, setup_code)

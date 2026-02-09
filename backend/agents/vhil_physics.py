@@ -17,7 +17,7 @@ def simulate_aerial_dynamics(
     geometry_data: Dict[str, Any],
     dt: float
 ) -> Dict[str, Any]:
-    \"""
+    """
     Simulate one timestep of aerial vehicle dynamics using real physics.
     
     Args:
@@ -29,7 +29,7 @@ def simulate_aerial_dynamics(
     
     Returns:
         Updated state with physics validation
-    \"""
+    """
     # Extract current state
     pos = state.get("position", {"x": 0, "y": 0, "z": 0})
     vel = state.get("velocity", {"x": 0, "y": 0, "z": 0})
@@ -121,7 +121,7 @@ def simulate_aerial_dynamics(
     validation = physics_kernel.validate_state({
         "velocity": {"x": new_v_x, "y": new_v_y, "z": new_v_z},
         "temperature": 288.15 - 0.0065 * new_pos_y,
-        "pressure\": 101325 * (1 - 0.0065 * new_pos_y / 288.15) ** 5.255
+        "pressure": 101325 * (1 - 0.0065 * new_pos_y / 288.15) ** 5.255
     })
     
     return {

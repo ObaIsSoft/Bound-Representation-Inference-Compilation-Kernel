@@ -17,7 +17,7 @@ Usage:
     fit = await standards_service.get_iso_fit("H7/g6")
 """
 
-from .supabase_service import SupabaseService, supabase
+from .supabase_service import SupabaseService, supabase_service, supabase
 from .pricing_service import (
     PricingService, pricing_service,
     HAS_YFINANCE, HAS_HTTPX
@@ -35,7 +35,7 @@ __all__ = [
     "ComponentCatalogService",
     "AssetSourcingService",
     "CurrencyService",
-    # Singleton instances
+    "supabase_service",
     "supabase",
     "pricing_service",
     "standards_service",

@@ -20,3 +20,35 @@ HARDWARE_DEFS = {
 }
 
 DEFAULT_TARGET = "STM32F405"
+
+# Library mappings for code generation (replaces database table)
+LIBRARY_MAPPINGS = [
+    {
+        "category_trigger": "servo",
+        "includes": ["<Servo.h>"],
+        "globals_template": "Servo {safe_name};",
+        "setup_template": "  {safe_name}.attach({pin});",
+        "dependencies": ["pwm"]
+    },
+    {
+        "category_trigger": "motor",
+        "includes": [],
+        "globals_template": "",
+        "setup_template": "  pinMode({pin}, OUTPUT);\n  analogWrite({pin}, 0);",
+        "dependencies": ["pwm"]
+    },
+    {
+        "category_trigger": "led",
+        "includes": [],
+        "globals_template": "",
+        "setup_template": "  pinMode({pin}, OUTPUT);",
+        "dependencies": []
+    },
+    {
+        "category_trigger": "sensor",
+        "includes": [],
+        "globals_template": "",
+        "setup_template": "  // Initialize sensor: {safe_name}",
+        "dependencies": []
+    },
+]

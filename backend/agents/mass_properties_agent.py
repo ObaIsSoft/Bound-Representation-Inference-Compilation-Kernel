@@ -34,22 +34,27 @@ class MassPropertiesAgent:
         """
         logger.info(f"{self.name} calculating mass stats for {material_name}...")
         
-        # 0. Material Density Lookup (Mock/Basic)
-        # In real system, this calls MaterialAgent or DB
-        densities = {
-            "Aluminum 6061": 2.7,
-            "Steel": 7.85,
-            "Titanium": 4.43,
-            "Plastic": 1.2,
-            "ABS": 1.04,
-            "PLA": 1.24
-        }
-        # Fuzzy match or default
-        density_g_cm3 = 2.7
-        for key, val in densities.items():
-            if key.lower() in material_name.lower():
-                density_g_cm3 = val
-                break
+        # 0. Material Density Lookup from Supabase
+        density_g_cm3 = None
+        try:
+            import asyncio
+            from backend.services import supabase
+            # Try to get material from Supabase
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            mat_data = loop.run_until_complete(supabase.get_material(material_name))
+            if mat_data and mat_data.get("density_kg_m3"):
+                # Convert kg/m3 to g/cm3 (divide by 1000)
+                density_g_cm3 = mat_data["density_kg_m3"] / 1000.0
+            loop.close()
+        except Exception as e:
+            logger.warning(f"Could not fetch density from Supabase: {e}")
+        
+        if density_g_cm3 is None:
+            return {
+                "error": f"Could not find density for material '{material_name}'",
+                "solution": "Add material to Supabase database with density_kg_m3 property"
+            }
         
         # 1. Volume Estimation from Geometry Tree
         # If geometry is empty or invalid, default to 1000.0
@@ -62,7 +67,7 @@ class MassPropertiesAgent:
                 # Basic heuristic: sum volumes of primitives?
                 # For now: Just use defaults with "Estimated" log
                 pass 
-            except:
+            except Exception:
                 pass
                 
         # Inputs used for calculation

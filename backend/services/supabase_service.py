@@ -3,6 +3,8 @@ Supabase Service - Centralized Database Access
 
 Provides typed, cached, and retry-enabled access to Supabase.
 All agents MUST use this service instead of direct Supabase calls.
+
+PRODUCTION: Supabase ONLY - no local fallbacks
 """
 
 import os
@@ -46,6 +48,8 @@ class SupabaseService:
     - Automatic retries
     - Redis caching
     - Typed query builders
+    
+    PRODUCTION: Requires Supabase credentials. No fallbacks.
     """
     
     def __init__(self):
@@ -76,11 +80,16 @@ class SupabaseService:
                 self.client = create_client(url, key)
                 logger.info("Supabase client initialized")
             else:
-                logger.warning("Supabase credentials not found - using fallback mode")
+                logger.error("Supabase credentials not found in environment")
+                raise RuntimeError(
+                    "SUPABASE_URL and SUPABASE_SERVICE_KEY must be set"
+                )
         else:
-            logger.warning("Supabase package not installed - using fallback mode")
+            raise RuntimeError(
+                "Supabase package not installed. Run: pip install supabase"
+            )
         
-        # Initialize Redis
+        # Initialize Redis (optional)
         if HAS_REDIS:
             redis_url = os.getenv("REDIS_URL")
             if redis_url:
@@ -92,6 +101,13 @@ class SupabaseService:
                     logger.warning(f"Redis connection failed: {e}")
         
         self._initialized = True
+    
+    def _ensure_initialized(self):
+        """Ensure service is initialized"""
+        if not self._initialized:
+            raise RuntimeError("SupabaseService not initialized. Call initialize() first.")
+        if not self.client:
+            raise RuntimeError("Supabase client not available")
     
     async def _get_cached(self, key: str) -> Optional[Any]:
         """Get value from Redis cache"""
@@ -149,8 +165,10 @@ class SupabaseService:
             
         Raises:
             ValueError: If thresholds not found in database
+            RuntimeError: If Supabase not initialized
         """
         await self.initialize()
+        self._ensure_initialized()
         
         cache_key = self._make_cache_key(
             "critic_thresholds",
@@ -163,28 +181,22 @@ class SupabaseService:
             return cached
         
         # Query database
-        if self.client:
-            try:
-                result = self.client.table("critic_thresholds")\
-                    .select("thresholds")\
-                    .eq("critic_name", critic_name)\
-                    .eq("vehicle_type", vehicle_type)\
-                    .single()\
-                    .execute()
-                
-                if result.data:
-                    thresholds = result.data.get("thresholds", {})
-                    await self._set_cached(
-                        cache_key,
-                        thresholds,
-                        self.cache_ttls["thresholds"]
-                    )
-                    return thresholds
-                    
-            except Exception as e:
-                logger.error(f"Database query failed: {e}")
+        result = self.client.table("critic_thresholds")\
+            .select("thresholds")\
+            .eq("critic_name", critic_name)\
+            .eq("vehicle_type", vehicle_type)\
+            .single()\
+            .execute()
         
-        # Fallback - raise error (no hardcoded defaults!)
+        if result.data:
+            thresholds = result.data.get("thresholds", {})
+            await self._set_cached(
+                cache_key,
+                thresholds,
+                self.cache_ttls["thresholds"]
+            )
+            return thresholds
+        
         raise ValueError(
             f"No thresholds found for {critic_name}/{vehicle_type}. "
             f"Please populate critic_thresholds table."
@@ -196,7 +208,7 @@ class SupabaseService:
     
     async def get_material(self, material_name: str) -> Dict[str, Any]:
         """
-        Get material properties from database.
+        Get material properties from Supabase.
         
         Args:
             material_name: Material name (e.g., "Aluminum 6061")
@@ -206,8 +218,10 @@ class SupabaseService:
             
         Raises:
             ValueError: If material not found
+            RuntimeError: If Supabase not initialized
         """
         await self.initialize()
+        self._ensure_initialized()
         
         cache_key = self._make_cache_key("materials", {"name": material_name})
         
@@ -216,26 +230,21 @@ class SupabaseService:
         if cached:
             return cached
         
-        # Query database
-        if self.client:
-            try:
-                result = self.client.table("materials")\
-                    .select("*")\
-                    .ilike("name", material_name)\
-                    .limit(1)\
-                    .execute()
-                
-                if result.data and len(result.data) > 0:
-                    material = result.data[0]
-                    await self._set_cached(
-                        cache_key,
-                        material,
-                        self.cache_ttls["materials"]
-                    )
-                    return material
-                    
-            except Exception as e:
-                logger.error(f"Database query failed: {e}")
+        # Query Supabase
+        result = self.client.table("materials")\
+            .select("*")\
+            .ilike("name", material_name)\
+            .limit(1)\
+            .execute()
+        
+        if result.data and len(result.data) > 0:
+            material = result.data[0]
+            await self._set_cached(
+                cache_key,
+                material,
+                self.cache_ttls["materials"]
+            )
+            return material
         
         raise ValueError(f"Material '{material_name}' not found in database")
     
@@ -249,7 +258,7 @@ class SupabaseService:
         currency: str = "USD"
     ) -> Optional[float]:
         """
-        Get cached material price.
+        Get material price from Supabase.
         
         Args:
             material_name: Material name
@@ -258,8 +267,6 @@ class SupabaseService:
         Returns:
             Price per kg or None if not available
         """
-        await self.initialize()
-        
         material = await self.get_material(material_name)
         price_column = f"cost_per_kg_{currency.lower()}"
         
@@ -267,7 +274,7 @@ class SupabaseService:
         if price is not None:
             return float(price)
         
-        # Try USD as fallback
+        # Try USD as fallback currency
         if currency != "USD":
             price = material.get("cost_per_kg_usd")
             if price is not None:
@@ -283,7 +290,7 @@ class SupabaseService:
         source: str = "manual"
     ) -> bool:
         """
-        Update or insert material price.
+        Update or insert material price in Supabase.
         
         Args:
             material_name: Material name
@@ -295,48 +302,41 @@ class SupabaseService:
             True if successful
         """
         await self.initialize()
+        self._ensure_initialized()
         
-        if not self.client:
-            raise RuntimeError("Supabase not initialized")
+        # Check if material exists
+        existing = self.client.table("materials")\
+            .select("id")\
+            .ilike("name", material_name)\
+            .execute()
         
-        try:
-            # Check if material exists
-            existing = self.client.table("materials")\
-                .select("id")\
-                .ilike("name", material_name)\
+        price_column = f"cost_per_kg_{currency.lower()}"
+        
+        if existing.data:
+            # Update existing
+            material_id = existing.data[0]["id"]
+            self.client.table("materials")\
+                .update({
+                    price_column: price,
+                    "property_data_source": source
+                })\
+                .eq("id", material_id)\
                 .execute()
-            
-            price_column = f"cost_per_kg_{currency.lower()}"
-            
-            if existing.data:
-                # Update existing
-                material_id = existing.data[0]["id"]
-                self.client.table("materials")\
-                    .update({
-                        price_column: price,
-                        "property_data_source": source
-                    })\
-                    .eq("id", material_id)\
-                    .execute()
-            else:
-                # Insert new
-                self.client.table("materials")\
-                    .insert({
-                        "name": material_name,
-                        price_column: price,
-                        "property_data_source": source
-                    })\
-                    .execute()
-            
-            # Invalidate cache
-            cache_key = self._make_cache_key("materials", {"name": material_name})
-            await self._invalidate_cache(cache_key)
-            
-            return True
-            
-        except Exception as e:
-            logger.error(f"Failed to update material price: {e}")
-            raise
+        else:
+            # Insert new
+            self.client.table("materials")\
+                .insert({
+                    "name": material_name,
+                    price_column: price,
+                    "property_data_source": source
+                })\
+                .execute()
+        
+        # Invalidate cache
+        cache_key = self._make_cache_key("materials", {"name": material_name})
+        await self._invalidate_cache(cache_key)
+        
+        return True
     
     # ========================================================================
     # MANUFACTURING RATES
@@ -348,7 +348,7 @@ class SupabaseService:
         region: str = "global"
     ) -> Dict[str, Any]:
         """
-        Get manufacturing rates for a process.
+        Get manufacturing rates from Supabase.
         
         Args:
             process_type: Process type (e.g., "cnc_milling")
@@ -358,6 +358,7 @@ class SupabaseService:
             Manufacturing rates dictionary
         """
         await self.initialize()
+        self._ensure_initialized()
         
         cache_key = self._make_cache_key(
             "manufacturing_rates",
@@ -369,170 +370,117 @@ class SupabaseService:
         if cached:
             return cached
         
-        # Query database
-        if self.client:
-            try:
-                result = self.client.table("manufacturing_rates")\
-                    .select("*")\
-                    .eq("process_type", process_type)\
-                    .eq("region", region)\
-                    .limit(1)\
-                    .execute()
-                
-                if result.data and len(result.data) > 0:
-                    rates = result.data[0]
-                    await self._set_cached(
-                        cache_key,
-                        rates,
-                        self.cache_ttls["standards"]
-                    )
-                    return rates
-                    
-            except Exception as e:
-                logger.error(f"Database query failed: {e}")
+        # Query Supabase
+        result = self.client.table("manufacturing_rates")\
+            .select("*")\
+            .eq("process", process_type)\
+            .eq("region", region)\
+            .single()\
+            .execute()
+        
+        if result.data:
+            await self._set_cached(
+                cache_key,
+                result.data,
+                self.cache_ttls["pricing"]
+            )
+            return result.data
         
         raise ValueError(
             f"No manufacturing rates found for {process_type}/{region}"
         )
     
     # ========================================================================
-    # STANDARDS
-    # ========================================================================
-    
-    async def get_standard(
-        self,
-        standard_type: str,
-        standard_key: str
-    ) -> Dict[str, Any]:
-        """
-        Get standard reference value.
-        
-        Args:
-            standard_type: Type (e.g., "iso_fit", "awg_ampacity")
-            standard_key: Key (e.g., "H7/g6", "12")
-            
-        Returns:
-            Standard value dictionary
-        """
-        await self.initialize()
-        
-        cache_key = self._make_cache_key(
-            "standards",
-            {"type": standard_type, "key": standard_key}
-        )
-        
-        # Check cache
-        cached = await self._get_cached(cache_key)
-        if cached:
-            return cached
-        
-        # Query database
-        if self.client:
-            try:
-                result = self.client.table("standards_reference")\
-                    .select("standard_value")\
-                    .eq("standard_type", standard_type)\
-                    .eq("standard_key", standard_key)\
-                    .limit(1)\
-                    .execute()
-                
-                if result.data and len(result.data) > 0:
-                    value = result.data[0].get("standard_value", {})
-                    await self._set_cached(
-                        cache_key,
-                        value,
-                        self.cache_ttls["standards"]
-                    )
-                    return value
-                    
-            except Exception as e:
-                logger.error(f"Database query failed: {e}")
-        
-        raise ValueError(
-            f"Standard not found: {standard_type}/{standard_key}"
-        )
-    
-    # ========================================================================
     # COMPONENTS
     # ========================================================================
     
-    async def get_component(self, mpn: str) -> Dict[str, Any]:
+    async def get_component(
+        self,
+        component_name: str
+    ) -> Dict[str, Any]:
         """
-        Get component by manufacturer part number.
+        Get component specifications from Supabase.
         
         Args:
-            mpn: Manufacturer part number
+            component_name: Component name or ID
             
         Returns:
-            Component data dictionary
+            Component specifications
         """
         await self.initialize()
+        self._ensure_initialized()
         
-        cache_key = self._make_cache_key("components", {"mpn": mpn})
+        cache_key = self._make_cache_key("components", {"name": component_name})
         
         # Check cache
         cached = await self._get_cached(cache_key)
         if cached:
             return cached
         
-        # Query database
-        if self.client:
-            try:
-                result = self.client.table("component_catalog")\
-                    .select("*")\
-                    .eq("mpn", mpn)\
-                    .limit(1)\
-                    .execute()
-                
-                if result.data and len(result.data) > 0:
-                    component = result.data[0]
-                    await self._set_cached(
-                        cache_key,
-                        component,
-                        self.cache_ttls["components"]
-                    )
-                    return component
-                    
-            except Exception as e:
-                logger.error(f"Database query failed: {e}")
+        # Query Supabase
+        result = self.client.table("components")\
+            .select("*")\
+            .or_(f"name.ilike.%{component_name}%,id.ilike.%{component_name}%")\
+            .limit(1)\
+            .execute()
         
-        raise ValueError(f"Component '{mpn}' not found")
+        if result.data and len(result.data) > 0:
+            await self._set_cached(
+                cache_key,
+                result.data[0],
+                self.cache_ttls["components"]
+            )
+            return result.data[0]
+        
+        raise ValueError(f"Component '{component_name}' not found")
     
-    async def search_components(
+    async def get_components_by_category(
         self,
-        category: str,
-        specs: Dict[str, Any],
-        limit: int = 10
+        category: str
     ) -> List[Dict[str, Any]]:
         """
-        Search components by category and specs.
+        Get all components in a category.
         
         Args:
-            category: Component category (e.g., "resistor")
-            specs: Specification filters
-            limit: Max results
+            category: Component category
             
         Returns:
-            List of matching components
+            List of component specifications
         """
         await self.initialize()
+        self._ensure_initialized()
         
-        if not self.client:
-            return []
+        result = self.client.table("components")\
+            .select("*")\
+            .eq("category", category)\
+            .execute()
         
-        try:
-            query = self.client.table("component_catalog")\
-                .select("*")\
-                .eq("category", category)\
-                .limit(limit)
-            
-            result = query.execute()
-            return result.data or []
-            
-        except Exception as e:
-            logger.error(f"Component search failed: {e}")
-            return []
+        return result.data or []
 
 
-# Global instance
-supabase = SupabaseService()
+# Global service instance
+supabase_service = SupabaseService()
+
+# Backward compatibility alias
+supabase = supabase_service
+
+
+# Convenience functions for synchronous usage
+def get_supabase_client() -> Optional[Client]:
+    """Get the Supabase client (if initialized)"""
+    return supabase_service.client
+
+
+async def get_material(material_name: str) -> Dict[str, Any]:
+    """Convenience function to get material"""
+    return await supabase_service.get_material(material_name)
+
+
+async def get_critic_thresholds(critic_name: str, vehicle_type: str = "default") -> Dict[str, Any]:
+    """Convenience function to get critic thresholds"""
+    return await supabase_service.get_critic_thresholds(critic_name, vehicle_type)
+
+
+async def get_manufacturing_rates(process_type: str, region: str = "global") -> Dict[str, Any]:
+    """Convenience function to get manufacturing rates"""
+    return await supabase_service.get_manufacturing_rates(process_type, region)

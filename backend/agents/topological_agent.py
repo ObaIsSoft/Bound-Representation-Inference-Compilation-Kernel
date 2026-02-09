@@ -193,7 +193,7 @@ class TopologicalAgent:
         if not os.path.exists(path): return {"slope_penalty": 0.6, "roughness_penalty": 0.4}
         try:
             with open(path, 'r') as f: return json.load(f)
-        except: return {"slope_penalty": 0.6, "roughness_penalty": 0.4}
+        except Exception: return {"slope_penalty": 0.6, "roughness_penalty": 0.4}
 
     def update_weights(self, action: str):
         """Evolve weights based on critic feedback."""

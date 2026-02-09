@@ -179,7 +179,9 @@ class GeometryAgent:
         
         # 6. Physics Validation (Real Physics!)
         from agents.geometry_physics_validator import validate_geometry_physics
-        material = params.get("material", "Aluminum 6061-T6")
+        material = params.get("material")
+        if not material:
+            return {"error": "material is required", "status": "error"}
         physics_validation = validate_geometry_physics(self.physics, geometry_tree, material)
         
         if not physics_validation["is_valid"]:
@@ -429,7 +431,7 @@ class GeometryAgent:
         if not os.path.exists(path): return {"sdf_resolution": 64}
         try:
             with open(path, 'r') as f: return json.load(f)
-        except: return {"sdf_resolution": 64}
+        except Exception: return {"sdf_resolution": 64}
 
     def update_kernel_settings(self, action: str):
         """Evolve kernel settings based on critic feedback."""
@@ -561,21 +563,11 @@ class GeometryAgent:
 
     def _append_component_placeholders(self, kcl_code: str, components: List[Dict[str, Any]]) -> str:
         """
-        Appends High-Fidelity Procedural KCL from DB.
+        Appends High-Fidelity Procedural KCL.
         """
-        import sqlite3
-        conn = sqlite3.connect("data/materials.db")
-        cur = conn.cursor()
-        
-        cur.execute("SELECT kcl_source FROM kcl_templates")
-        rows = cur.fetchall()
-        
-        procedural_lib = "\n// PROCEDURAL LIBRARY (DB)\n"
-        for row in rows:
-            procedural_lib += row[0] + "\n"
-            
+        # Procedural library - could be extended to load from Supabase if needed
+        procedural_lib = "\n// PROCEDURAL LIBRARY\n"
         kcl_code += "\n" + procedural_lib
-        conn.close()
         return kcl_code
 
     def _run_zoo(self, kcl_code: str) -> Dict[str, Any]:

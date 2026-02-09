@@ -106,7 +106,7 @@ class PolymersAdapter:
         # Projectile Data
         try:
             threats = self.db.get_ballistic_threats()
-        except:
+        except Exception:
             threats = {}
         
         threat = threats.get(projectile)

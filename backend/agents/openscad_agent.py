@@ -488,11 +488,11 @@ class OpenSCADAgent:
         if 'scale_factor' in parser.variables:
             try:
                 scale_factor = float(parser.variables['scale_factor'])
-            except: pass
+            except Exception: pass
         elif 'scale' in parser.variables:
              try:
                 scale_factor = float(parser.variables['scale'])
-             except: pass
+             except Exception: pass
              
         # Heuristic: If scale is suspiciously small (like 1/6), assume it's a model
         # and we might want to report "Real World" dims.

@@ -198,7 +198,7 @@ class ThermalAgent:
         if os.path.exists(self.model_path):
             try:
                 self.model = tf.keras.models.load_model(self.model_path)
-            except:
+            except Exception:
                 self._create_new_model()
         else:
             self._create_new_model()

@@ -175,7 +175,7 @@ class ElectronicsAgent:
         if not os.path.exists(path): return default
         try:
             with open(path, 'r') as f: return json.load(f).get(param_key, default)
-        except: return default
+        except Exception: return default
 
     def update_learned_parameters(self, updates: Dict[str, float]):
         """Called by ElectronicsCritic."""
@@ -187,7 +187,7 @@ class ElectronicsAgent:
             try: 
                 with open(path, 'r') as f: 
                     data = json.load(f)
-            except: 
+            except Exception: 
                 pass
         data.update(updates)
         with open(path, 'w') as f: json.dump(data, f, indent=2)
@@ -237,37 +237,19 @@ class ElectronicsAgent:
         """
         issues = []
         
-        # DB Lookup for Conductive Materials
-        import sqlite3
-        import json
-        conn = sqlite3.connect(self.db_path)
-        cur = conn.cursor()
+        # 1. Check if chassis is conductive
+        # Use config-based list (no hardcoded fallbacks)
+        conductive_materials = self.config.get("conductive_materials", [])
         
-        conductive_materials = []
-        try:
-            cur.execute("SELECT value_json FROM standards WHERE category='electronics' AND key='conductive_materials'")
-            row = cur.fetchone()
-            
-            if row and row[0]:
-                conductive_materials = json.loads(row[0])
-        except Exception:
-            # Table might not exist in test env
-            pass
-            
-        # Default fallback
         if not conductive_materials:
-            # Load from config first, then DB override, then fallback
-            conductive_materials = self.config.get("conductive_materials", [])
-
-        if not conductive_materials:
-            conductive_materials = ["Aluminum", "Steel", "Copper"]
-            
+            logger.warning("No conductive_materials configured in electronics config")
+            return []
+        
         is_conductive = any(m.lower() in chassis_material.lower() for m in conductive_materials)
         
         if not is_conductive:
-            conn.close()
             return []
-            
+        
         # 2. Check Components
         for comp in components:
             name = comp.get("name", "Unknown")
@@ -277,8 +259,6 @@ class ElectronicsAgent:
             if mount == "chassis":
                 if not is_insulated:
                     issues.append(f"SHORT_CIRCUIT_RISK: '{name}' mounted on conductive '{chassis_material}' without declared insulation.")
-        
-        conn.close()
         return issues
         
     # [EMI Check is logic-heavy, keeping logic but could store scalar constants in DB later]
@@ -299,31 +279,17 @@ class ElectronicsAgent:
 
     def _validate_wiring(self, components: List[Dict], system_peak_current_a: float) -> List[str]:
         """
-        Deep Electronics Check: Validate Wiring Gauge and Connectivity using DB Standards.
+        Deep Electronics Check: Validate Wiring Gauge and Connectivity using Config Standards.
         """
         issues = []
-        import sqlite3
-        import json
-        conn = sqlite3.connect(self.db_path)
-        cur = conn.cursor()
         
-        # 1. AWG Table
-        cur.execute("SELECT value_json FROM standards WHERE category='wiring' AND key='awg_ampacity_copper'")
-        row = cur.fetchone()
+        # 1. AWG Table from config (no hardcoded fallbacks)
+        config_awg = self.config.get("awg_ampacity", {})
+        AWG_AMPACITY = {int(k): v for k,v in config_awg.items()}
         
-        AWG_AMPACITY = {}
-        if row:
-            AWG_AMPACITY = {int(k): v for k,v in json.loads(row[0]).items()}
-        else:
-             # Load from config
-             config_awg = self.config.get("awg_ampacity", {})
-             # Convert keys to int strings if needed
-             AWG_AMPACITY = {int(k): v for k,v in config_awg.items()}
-             
-             if not AWG_AMPACITY:
-                 AWG_AMPACITY = {10: 55.0, 12: 41.0, 20: 11.0}
-        
-        conn.close()
+        if not AWG_AMPACITY:
+            logger.warning("No AWG ampacity data configured in electronics config")
+            return issues
         
         # 2. Check Power Distribution (System Level)
         main_awg = 12 

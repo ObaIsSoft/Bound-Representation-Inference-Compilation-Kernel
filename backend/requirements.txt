@@ -36,7 +36,7 @@ fenics>=2019.1  # Advanced FEA (Python wrapper only, C++ backend needs Docker/co
 fastapi
 uvicorn
 pydantic
-numpy==1.24.3
+numpy==2.2.6
 groq
 openai
 python-multipart
@@ -55,3 +55,17 @@ yfinance>=0.2.0
 # Web scraping (optional fallback)
 beautifulsoup4>=4.12.0
 lxml>=4.9.0
+
+# File Extraction Dependencies (Phase 6 - Landing & Requirements)
+pdfplumber>=0.10.0
+PyPDF2>=3.0.0
+python-docx>=0.8.11
+openpyxl>=3.1.0
+pandas>=2.0.0
+pillow>=10.0.0
+pytesseract>=0.3.10
+
+# Note: pytesseract requires system package:
+#   macOS: brew install tesseract
+#   Ubuntu: apt-get install tesseract-ocr
+#   Windows: https://github.com/UB-Mannheim/tesseract/wiki

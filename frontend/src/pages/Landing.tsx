@@ -4,7 +4,6 @@ import { useTheme } from '../contexts/ThemeContext';
 import WaveformVisualizer from '../components/voice/WaveformVisualizer';
 import VoiceRecorder from '../components/voice/VoiceRecorder';
 import TextInput from '../components/voice/TextInput';
-import FileUploadZone from '../components/file/FileUploadZone';
 import LockedSidebar from '../components/layout/LockedSidebar';
 import SearchPanel from '../components/panels/SearchPanel';
 import ExportPanel from '../components/panels/ExportPanel';
@@ -19,7 +18,7 @@ type Mode = 'idle' | 'text' | 'voice';
 
 interface InputOptions {
   llmProvider: string;
-  attachedImages: File[];
+  attachedImages: File[]; // Holds all files from TextInput
   drawings: Blob[];
 }
 
@@ -32,9 +31,8 @@ export default function Landing() {
   const [activePanel, setActivePanel] = useState<string | null>(null);
   const [fadeOut, setFadeOut] = useState(false);
   const [leftWidth] = useState(DEFAULT_PANEL_SIZES.left);
-  const [uploadedFiles, setUploadedFiles] = useState<File[]>([]);
   const [isUploading, setIsUploading] = useState(false);
-  const { startNewSession, addMessageToSession } = usePanel();
+  const { addMessageToSession } = usePanel(); // Removed unused startNewSession
 
   const currentHour = new Date().getHours();
   const greeting = currentHour < 12 ? 'Good morning' : currentHour < 18 ? 'Good afternoon' : 'Good evening';
@@ -84,7 +82,7 @@ export default function Landing() {
 
   const uploadFiles = async (files: File[]): Promise<string[]> => {
     if (files.length === 0) return [];
-    
+
     setIsUploading(true);
     try {
       const formData = new FormData();
@@ -110,9 +108,9 @@ export default function Landing() {
 
   const handleVoiceTranscription = async (transcription: string) => {
     setUserIntent(transcription);
-    
-    // Upload files if any
-    const fileIds = uploadedFiles.length > 0 ? await uploadFiles(uploadedFiles) : [];
+
+    // No files from voice for now
+    const fileIds: string[] = [];
 
     // Fade out before navigation
     setFadeOut(true);
@@ -122,7 +120,7 @@ export default function Landing() {
           userIntent: transcription,
           llmProvider: 'groq',
           uploadedFiles: fileIds,
-          fileNames: uploadedFiles.map(f => f.name)
+          fileNames: []
         }
       });
     }, 300);
@@ -133,8 +131,10 @@ export default function Landing() {
   const handleTextSubmit = async (message: string, options: InputOptions) => {
     setUserIntent(message);
 
-    // Upload files if any
-    const fileIds = uploadedFiles.length > 0 ? await uploadFiles(uploadedFiles) : [];
+    // Upload files passed from TextInput
+    // Note: TextInput passes 'attachedImages' which now contains all files
+    const filesToUpload = options.attachedImages;
+    const fileIds = filesToUpload.length > 0 ? await uploadFiles(filesToUpload) : [];
 
     // Fade out before navigation
     setFadeOut(true);
@@ -144,48 +144,10 @@ export default function Landing() {
           userIntent: message,
           llmProvider: options.llmProvider,
           uploadedFiles: fileIds,
-          fileNames: uploadedFiles.map(f => f.name)
+          fileNames: filesToUpload.map(f => f.name)
         }
       });
     }, 300);
-  };
-
-  const submitToChat = async (message: string, source: 'text' | 'voice', options: InputOptions) => {
-    const { llmProvider, attachedImages } = options;
-
-    try {
-      // 1. Start a new session via Context
-      const sessionId = await startNewSession();
-      if (!sessionId) throw new Error('Failed to start session');
-
-      // 2. Optimistically add user message to the new session
-      // (This will appear in history immediately)
-      addMessageToSession(sessionId, 'user', message);
-
-      // 3. Send initial message to Discovery/Requirements endpoint
-      // Using JSON payload instead of FormData
-      const payload = {
-        message: message,
-        user_intent: message,
-        ai_model: llmProvider,
-        mode: 'requirements_gathering',
-        session_id: sessionId,
-        conversation_history: []
-        // Note: File uploads (attachedImages) need separate handling
-      };
-
-      // We fire and forget the actual API call here so navigation is instant,
-      // OR we await it if we want the agent's first response to be ready.
-      // For better UX, let's await it so the next page has data.
-      const data = await apiClient.post('/chat/requirements', payload);
-
-      // 4. Update session with agent response
-      addMessageToSession(sessionId, 'agent', data.response);
-
-    } catch (error) {
-      console.error('Failed to submit chat:', error);
-      alert('Failed to submit your request. Please check the console for details.');
-    }
   };
 
   const resetToIdle = () => {
@@ -301,17 +263,8 @@ export default function Landing() {
                     onSubmit={handleTextSubmit}
                     onFocus={handleTextFocus}
                   />
-                </div>
-
-                {/* File Upload Zone */}
-                <div className="w-full max-w-3xl">
-                  <FileUploadZone
-                    files={uploadedFiles}
-                    onFilesChange={setUploadedFiles}
-                    maxFiles={6}
-                  />
                   {isUploading && (
-                    <div 
+                    <div
                       className="mt-2 text-center text-sm"
                       style={{ color: theme.colors.accent.primary }}
                     >

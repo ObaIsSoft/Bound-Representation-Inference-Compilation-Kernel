@@ -119,9 +119,18 @@ from agents.unified_design_agent import UnifiedDesignAgent
 # Global instance for stateful operations like exploration
 unified_design_agent = UnifiedDesignAgent()
 
-# Global Conversational Agent (Production-Ready State Persistence)
-from agents.conversational_agent import ConversationalAgent
-conversational_agent = ConversationalAgent()
+# Global Conversational Agent with RLM (Recursive Language Model)
+# RLMEnhancedAgent is a drop-in replacement that adds recursive reasoning
+from rlm.integration import RLMEnhancedAgent
+conversational_agent = RLMEnhancedAgent(
+    enable_rlm=True,
+    rlm_config={
+        "max_depth": 3,
+        "cost_budget": 4000,
+        "max_parallel_tasks": 5,
+        "enable_caching": True
+    }
+)
 
 class DesignInterpretRequest(BaseModel):
     prompt: str
@@ -2383,9 +2392,9 @@ async def chat_discovery(
     """
     Landing Page Entry Point for Requirements Gathering.
     Handles multi-modal input (Voice/Text) and initializes the discovery flow.
+    
+    NOTE: Now uses RLM (Recursive Language Model) for complex query decomposition.
     """
-    import json
-    from agents.conversational_agent import ConversationalAgent
     from conversation_state import conversation_manager
     
     # 1. Process Voice if present
@@ -2402,10 +2411,8 @@ async def chat_discovery(
     # 3. Add Message
     session.add_message("user", message, metadata={"source": source, "llm": llm_provider})
     
-    # 4. Run Conversational Agent (Discovery Mode)
-    # Use global conversational_agent
-    
-    # Prepare history
+    # 4. Run RLM-Enhanced Conversational Agent
+    # Uses recursive decomposition for complex queries, falls back to simple for greetings
     history = []
     for m in session.messages:
         history.append({"role": m.role, "content": m.content})
@@ -2424,7 +2431,8 @@ async def chat_discovery(
     return {
         "response": response_text,
         "session_id": session_id,
-        "intent": result.get("intent")
+        "intent": result.get("intent"),
+        "rlm_used": result.get("rlm_metadata") is not None
     }
 
 # --- Plan Review Endpoints ---

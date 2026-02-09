@@ -28,19 +28,19 @@ FILE_SIZE_LIMITS = {
 
 # File type categories
 FILE_CATEGORIES = {
-    '3d': ['.stl', '.step', '.stp', '.obj', '.fbx', '.gltf', '.glb', '.3mf', '.ply'],
-    'pdf': ['.pdf'],
-    'image': ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp', '.svg'],
-    'document': ['.docx', '.xlsx', '.xls', '.csv', '.pptx'],
-    'text': ['.txt', '.md', '.json', '.yaml', '.yml', '.xml',
-             '.py', '.js', '.ts', '.jsx', '.tsx', '.c', '.cpp',
-             '.h', '.hpp', '.java', '.go', '.rs', '.swift', '.kt', '.cs']
+    '3d': ['stl', 'step', 'stp', 'obj', 'fbx', 'gltf', 'glb', '3mf', 'ply'],
+    'pdf': ['pdf'],
+    'image': ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'tiff', 'webp', 'svg'],
+    'document': ['docx', 'xlsx', 'xls', 'csv', 'pptx'],
+    'text': ['txt', 'md', 'json', 'yaml', 'yml', 'xml',
+             'py', 'js', 'ts', 'jsx', 'tsx', 'c', 'cpp',
+             'h', 'hpp', 'java', 'go', 'rs', 'swift', 'kt', 'cs']
 }
 
 
 def get_file_category(ext: str) -> str:
-    """Get category for file extension."""
-    ext = ext.lower()
+    """Get category for file extension (with or without dot)."""
+    ext = ext.lower().strip('.')
     for category, extensions in FILE_CATEGORIES.items():
         if ext in extensions:
             return category

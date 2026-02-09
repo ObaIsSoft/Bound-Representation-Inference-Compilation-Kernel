@@ -11,6 +11,8 @@ export default function RequirementsGatheringPage() {
     const navigate = useNavigate();
     const userIntent = location.state?.userIntent || '';
     const llmProvider = location.state?.llmProvider || 'groq';
+    const uploadedFileIds = location.state?.uploadedFiles || [];
+    const uploadedFileNames = location.state?.fileNames || [];
     const { theme } = useTheme();
 
     // Phase management
@@ -59,7 +61,8 @@ export default function RequirementsGatheringPage() {
                         user_intent: userIntent,
                         mode: 'requirements_gathering',
                         ai_model: llmProvider,
-                        session_id: localSessionId
+                        session_id: localSessionId,
+                        file_ids: uploadedFileIds  // Send uploaded files with initial message
                     };
 
                     const data = await apiClient.post('/chat/requirements', payload);
@@ -67,11 +70,14 @@ export default function RequirementsGatheringPage() {
                     // Add response
                     setAgentMessages(prev => [...prev, `Agent: ${data.response}`]);
 
+                    // Update all requirements including NEW fields
                     if (data.feasibility) {
                         setRequirements(prev => ({
                             ...prev,
                             environment: data.feasibility.environment,
-                            feasibility: data.feasibility
+                            feasibility: data.feasibility,
+                            extracted_params: data.extracted_params,
+                            file_context: data.file_context
                         }));
                     }
                 } catch (error) {
@@ -80,8 +86,6 @@ export default function RequirementsGatheringPage() {
                 } finally {
                     setLoading(false);
                     setIsTyping(false);
-                    // Keep processing true if we want to prompt immediately? 
-                    // No, let user reply.
                     setIsAgentProcessing(false);
                 }
             }
@@ -104,17 +108,19 @@ export default function RequirementsGatheringPage() {
 
         try {
             // Call backend API for conversational agent with JSON payload
+            // Include uploaded file IDs if this is the first message
+            const isFirstMessage = agentMessages.length === 0;
             const payload = {
                 message: userInput,
                 conversation_history: agentMessages,
                 user_intent: userIntent,
                 mode: 'requirements_gathering',
                 ai_model: llmProvider,
-                session_id: localSessionId
+                session_id: localSessionId,
+                file_ids: isFirstMessage ? uploadedFileIds : []  // Only send files on first message
             };
 
             const data = await apiClient.post('/chat/requirements', payload);
-
 
             // Simulate typing delay for better UX
             await new Promise(resolve => setTimeout(resolve, 800));
@@ -126,12 +132,14 @@ export default function RequirementsGatheringPage() {
                 setIsAgentProcessing(false); // Disable polling if done for now
             }
 
-            // Update Feasibility State (Live Agent Feedback)
+            // Update Feasibility State (Live Agent Feedback) - NOW WITH SAFETY
             if (data.feasibility) {
                 setRequirements(prev => ({
                     ...prev,
                     environment: data.feasibility.environment,
-                    feasibility: data.feasibility
+                    feasibility: data.feasibility,
+                    extracted_params: data.extracted_params,
+                    file_context: data.file_context
                 }));
             }
 
@@ -245,10 +253,10 @@ export default function RequirementsGatheringPage() {
                 {phase === 'gathering' && (
                     <div className="max-w-3xl mx-auto">
 
-                        {/* Agents Status Panel (Live Feasibility) - Glassmorphism & Compact */}
-                        <div className="grid grid-cols-3 gap-3 mb-4 backdrop-blur-md bg-opacity-20 rounded-lg p-2"
+                        {/* Agents Status Panel (Live Feasibility) - Glassmorphism & Compact - NOW 4 COLUMNS */}
+                        <div className="grid grid-cols-4 gap-2 mb-4 backdrop-blur-md bg-opacity-20 rounded-lg p-2"
                             style={{
-                                backgroundColor: theme.colors.bg.secondary + '40', // Low opacity
+                                backgroundColor: theme.colors.bg.secondary + '40',
                                 border: `1px solid ${theme.colors.border.primary}40`
                             }}>
 
@@ -256,7 +264,7 @@ export default function RequirementsGatheringPage() {
                             <div className="p-2 rounded border flex flex-col items-center justify-center text-center"
                                 style={{ borderColor: theme.colors.border.primary + '40', backgroundColor: 'transparent' }}>
                                 <span className="text-xs font-bold uppercase tracking-wider mb-1" style={{ color: theme.colors.text.secondary }}>Environment</span>
-                                <span className="text-sm font-bold" style={{ color: theme.colors.accent.primary }}>
+                                <span className="text-xs font-bold" style={{ color: theme.colors.accent.primary }}>
                                     {requirements.environment?.type || "DETECTING..."}
                                 </span>
                             </div>
@@ -265,9 +273,9 @@ export default function RequirementsGatheringPage() {
                             <div className="p-2 rounded border flex flex-col items-center justify-center text-center"
                                 style={{ borderColor: theme.colors.border.primary + '40', backgroundColor: 'transparent' }}>
                                 <span className="text-xs font-bold uppercase tracking-wider mb-1" style={{ color: theme.colors.text.secondary }}>Feasibility</span>
-                                <div className="flex items-center gap-1.5">
+                                <div className="flex items-center gap-1">
                                     <div className={`w-2 h-2 rounded-full ${(!requirements.feasibility?.geometry || requirements.feasibility.geometry.feasible) ? 'bg-green-500' : 'bg-red-500'}`}></div>
-                                    <span className="text-sm font-bold" style={{ color: theme.colors.text.primary }}>
+                                    <span className="text-xs font-bold" style={{ color: theme.colors.text.primary }}>
                                         {(!requirements.feasibility?.geometry || requirements.feasibility.geometry.feasible) ? "Possible" : "Impossible"}
                                     </span>
                                 </div>
@@ -277,11 +285,88 @@ export default function RequirementsGatheringPage() {
                             <div className="p-2 rounded border flex flex-col items-center justify-center text-center"
                                 style={{ borderColor: theme.colors.border.primary + '40', backgroundColor: 'transparent' }}>
                                 <span className="text-xs font-bold uppercase tracking-wider mb-1" style={{ color: theme.colors.text.secondary }}>Est. Cost</span>
-                                <span className="text-sm font-bold" style={{ color: theme.colors.text.primary }}>
-                                    ${requirements.feasibility?.cost?.estimated_cost_usd || "0"}
+                                <span className="text-xs font-bold" style={{ color: theme.colors.text.primary }}>
+                                    ${requirements.feasibility?.cost?.estimated_cost_usd || requirements.feasibility?.cost?.estimated_cost || "0"}
                                 </span>
                             </div>
+
+                            {/* Safety Agent - NEW */}
+                            <div className="p-2 rounded border flex flex-col items-center justify-center text-center"
+                                style={{ borderColor: theme.colors.border.primary + '40', backgroundColor: 'transparent' }}>
+                                <span className="text-xs font-bold uppercase tracking-wider mb-1" style={{ color: theme.colors.text.secondary }}>Safety</span>
+                                <div className="flex items-center gap-1">
+                                    <div className={`w-2 h-2 rounded-full ${
+                                        requirements.feasibility?.safety?.status === 'safe' ? 'bg-green-500' :
+                                        requirements.feasibility?.safety?.status === 'hazards_detected' ? 'bg-yellow-500' :
+                                        'bg-gray-500'
+                                    }`}></div>
+                                    <span className="text-xs font-bold" style={{ color: theme.colors.text.primary }}>
+                                        {requirements.feasibility?.safety?.status === 'safe' ? 'Safe' :
+                                         requirements.feasibility?.safety?.status === 'hazards_detected' ? 'Check' :
+                                         'Checking...'}
+                                    </span>
+                                </div>
+                            </div>
                         </div>
+
+                        {/* Extracted Parameters Badge Display - NEW */}
+                        {requirements.extracted_params && Object.keys(requirements.extracted_params).some(k => requirements.extracted_params[k]) && (
+                            <div className="mb-4 p-3 rounded-lg"
+                                style={{
+                                    backgroundColor: theme.colors.bg.secondary + '60',
+                                    border: `1px solid ${theme.colors.border.primary}60`
+                                }}>
+                                <p className="text-xs font-medium mb-2" style={{ color: theme.colors.text.secondary }}>
+                                    Detected from your input:
+                                </p>
+                                <div className="flex flex-wrap gap-2">
+                                    {requirements.extracted_params.mass_kg && (
+                                        <span className="px-2 py-1 rounded text-xs font-medium"
+                                            style={{ backgroundColor: theme.colors.accent.primary + '30', color: theme.colors.accent.primary }}>
+                                            Mass: {requirements.extracted_params.mass_kg}kg
+                                        </span>
+                                    )}
+                                    {requirements.extracted_params.material && (
+                                        <span className="px-2 py-1 rounded text-xs font-medium"
+                                            style={{ backgroundColor: theme.colors.accent.primary + '30', color: theme.colors.accent.primary }}>
+                                            Material: {requirements.extracted_params.material}
+                                        </span>
+                                    )}
+                                    {requirements.extracted_params.complexity && (
+                                        <span className="px-2 py-1 rounded text-xs font-medium"
+                                            style={{ backgroundColor: theme.colors.accent.primary + '30', color: theme.colors.accent.primary }}>
+                                            Complexity: {requirements.extracted_params.complexity}
+                                        </span>
+                                    )}
+                                    {requirements.extracted_params.max_dim_m && (
+                                        <span className="px-2 py-1 rounded text-xs font-medium"
+                                            style={{ backgroundColor: theme.colors.accent.primary + '30', color: theme.colors.accent.primary }}>
+                                            Size: {(requirements.extracted_params.max_dim_m * 1000).toFixed(0)}mm
+                                        </span>
+                                    )}
+                                    {requirements.extracted_params.application && (
+                                        <span className="px-2 py-1 rounded text-xs font-medium"
+                                            style={{ backgroundColor: theme.colors.accent.primary + '30', color: theme.colors.accent.primary }}>
+                                            App: {requirements.extracted_params.application}
+                                        </span>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* File Context Indicator - NEW */}
+                        {requirements.file_context && requirements.file_context.files_processed > 0 && (
+                            <div className="mb-4 flex items-center gap-2 text-xs px-3 py-2 rounded-lg"
+                                style={{ backgroundColor: theme.colors.accent.secondary + '15', color: theme.colors.accent.secondary }}>
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                </svg>
+                                <span>
+                                    {requirements.file_context.files_processed} file(s) analyzed 
+                                    ({(requirements.file_context.total_chars / 1000).toFixed(1)}k characters)
+                                </span>
+                            </div>
+                        )}
 
 
                         {/* XAI: Live Thought Stream */}

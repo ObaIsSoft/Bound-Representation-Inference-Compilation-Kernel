@@ -419,3 +419,133 @@ SustainabilityAgent   → /workspace (manufacturing panel)
 OpenSCADAgent         → /workspace (compile, export)
 ```
 
+
+---
+
+## Landing & Requirements Page Implementation Plan (Phase 6)
+
+### Goal
+Enable multi-file upload (up to 6 files) on Landing page with content extraction, integrated into Requirements Gathering context.
+
+### File Upload Flow
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                         LANDING PAGE                                │
+│                                                                     │
+│  User drops files → FileUploadZone validates (6 max, 10MB each)   │
+│       ↓                                                             │
+│  Files stored in state → Show thumbnails/previews                   │
+│       ↓                                                             │
+│  User clicks "Start" → Upload files to /api/files/upload            │
+│       ↓                                                             │
+│  Server extracts content (PDF, OCR, text, etc.)                     │
+│       ↓                                                             │
+│  Navigate to /requirements with file_ids                            │
+└─────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                    REQUIREMENTS GATHERING                           │
+│                                                                     │
+│  Receive: message + file_ids + conversation_history                 │
+│       ↓                                                             │
+│  Load file contents from temp storage                               │
+│       ↓                                                             │
+│  Augment message with file context:                                 │
+│    "Design a bracket [Attached Files]: --- specs.pdf --- content"   │
+│       ↓                                                             │
+│  Run all agents in parallel:                                        │
+│    ├─ ConversationalAgent (with file context)                       │
+│    ├─ EnvironmentAgent                                              │
+│    ├─ GeometryEstimator (with EXTRACTED params, not hardcoded)     │
+│    ├─ CostAgent (with EXTRACTED params)                             │
+│    └─ SafetyAgent (NEW - initial safety screening)                  │
+│       ↓                                                             │
+│  Return: chat response + feasibility + safety + extracted_params   │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Agents on Requirements Page (Updated)
+
+| Agent | Role | Parameters Source |
+|-------|------|-------------------|
+| **ConversationalAgent** | Chat interface + file context | User message + extracted file content |
+| **EnvironmentAgent** | Detect design environment | User intent |
+| **GeometryEstimator** | Feasibility check | **Extracted** mass, dimensions |
+| **CostAgent** | Quick cost estimate | **Extracted** mass, material, complexity |
+| **SafetyAgent** | Initial safety screening | Extracted material + environment |
+
+### Supported File Types
+
+| Type | Extensions | Extraction Method |
+|------|------------|-------------------|
+| PDF | .pdf | pdfplumber/PyPDF2 |
+| Images | .jpg, .png, .gif, etc. | OCR (pytesseract) |
+| Word | .docx | python-docx |
+| Excel/CSV | .xlsx, .xls, .csv | pandas (to markdown) |
+| Text | .txt, .md, .json, code | Direct read |
+
+### Key Changes
+
+1. **Landing Page**: Add FileUploadZone component (drag-drop, 6 files max)
+2. **Backend**: New `/api/files/upload` endpoint with extraction
+3. **Requirements API**: Accept `file_ids`, load content, augment context
+4. **Parameter Extraction**: Use LLM to parse mass/material/complexity from message + files
+5. **Safety Check**: Add SafetyAgent call to requirements flow
+6. **UI**: Show 4-box status panel (add Safety), extracted params badges
+
+### DocumentAgent Clarification
+
+**DocumentAgent stays on Planning page** - it's for GENERATING documents (plans, reports), not parsing uploaded files. File parsing is handled by the new `file_extractor.py` service.
+
+
+---
+
+## Plan Updates (V2) - File Size & Voice Input
+
+### File Upload Limits (Updated)
+
+| File Type | Max Size | Reason |
+|-----------|----------|--------|
+| **3D CAD** (STL, STEP, OBJ, FBX, GLTF) | **100MB** | 3D files can be huge |
+| PDF | 50MB | Large docs with images |
+| Images | 20MB | High-res photos |
+| Documents | 20MB | Word/Excel files |
+| Text/Code | 10MB | Source files |
+
+### Voice Input - Fully Documented
+
+**Current Status**: ✅ Fully implemented
+
+**Flow**:
+```
+Landing.tsx → VoiceRecorder.tsx → MediaRecorder (webm)
+     ↓
+POST /api/stt/transcribe (FormData: audio Blob)
+     ↓
+STTAgent → OpenAI Whisper API
+     ↓
+Response: { text: string, success: boolean }
+     ↓
+User confirms → navigate('/requirements', { state: { userIntent: text }})
+```
+
+**JSON Schemas**:
+- Request: `multipart/form-data` with `audio: Blob` (webm format)
+- Response: `{ text: string, success: boolean }`
+- Navigation State: `{ userIntent: string, llmProvider: string }`
+
+**Key Files**:
+- `frontend/src/components/voice/VoiceRecorder.tsx` - Records audio
+- `frontend/src/components/voice/TextInput.tsx` - Text + image attachment
+- `backend/agents/stt_agent.py` - Calls Whisper API
+- `backend/main.py` - `/api/stt/transcribe` endpoint
+
+### Next Steps
+
+1. **Create FileUploadZone component** - Drag-drop, 6 files max, category-based limits
+2. **Add 3D metadata extraction** - Parse STL/STEP for dimensions, volume
+3. **Integrate with Requirements page** - Pass file_ids via navigation state
+4. **Update Requirements API** - Load file contents, extract params
+

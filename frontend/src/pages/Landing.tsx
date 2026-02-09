@@ -4,6 +4,7 @@ import { useTheme } from '../contexts/ThemeContext';
 import WaveformVisualizer from '../components/voice/WaveformVisualizer';
 import VoiceRecorder from '../components/voice/VoiceRecorder';
 import TextInput from '../components/voice/TextInput';
+import FileUploadZone from '../components/file/FileUploadZone';
 import LockedSidebar from '../components/layout/LockedSidebar';
 import SearchPanel from '../components/panels/SearchPanel';
 import ExportPanel from '../components/panels/ExportPanel';
@@ -31,6 +32,8 @@ export default function Landing() {
   const [activePanel, setActivePanel] = useState<string | null>(null);
   const [fadeOut, setFadeOut] = useState(false);
   const [leftWidth] = useState(DEFAULT_PANEL_SIZES.left);
+  const [uploadedFiles, setUploadedFiles] = useState<File[]>([]);
+  const [isUploading, setIsUploading] = useState(false);
   const { startNewSession, addMessageToSession } = usePanel();
 
   const currentHour = new Date().getHours();
@@ -79,9 +82,37 @@ export default function Landing() {
     }
   };
 
-  const handleVoiceTranscription = (transcription: string) => {
+  const uploadFiles = async (files: File[]): Promise<string[]> => {
+    if (files.length === 0) return [];
+    
+    setIsUploading(true);
+    try {
+      const formData = new FormData();
+      files.forEach((file) => {
+        formData.append('files', file);
+      });
+
+      const data = await apiClient.post('/files/upload', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+
+      return data.file_ids || [];
+    } catch (error) {
+      console.error('Failed to upload files:', error);
+      alert('Failed to upload some files. Continuing without file context.');
+      return [];
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const handleVoiceTranscription = async (transcription: string) => {
     setUserIntent(transcription);
-    submitToChat(transcription, 'voice', { llmProvider: 'groq', attachedImages: [], drawings: [] });
+    
+    // Upload files if any
+    const fileIds = uploadedFiles.length > 0 ? await uploadFiles(uploadedFiles) : [];
 
     // Fade out before navigation
     setFadeOut(true);
@@ -89,7 +120,9 @@ export default function Landing() {
       navigate('/requirements', {
         state: {
           userIntent: transcription,
-          llmProvider: 'groq'
+          llmProvider: 'groq',
+          uploadedFiles: fileIds,
+          fileNames: uploadedFiles.map(f => f.name)
         }
       });
     }, 300);
@@ -97,10 +130,11 @@ export default function Landing() {
     resetToIdle();
   };
 
-  const handleTextSubmit = (message: string, options: InputOptions) => {
+  const handleTextSubmit = async (message: string, options: InputOptions) => {
     setUserIntent(message);
-    setUserIntent(message);
-    // submitToChat(message, 'text', options); // Moved to RequirementsGatheringPage for better UX/State sync
+
+    // Upload files if any
+    const fileIds = uploadedFiles.length > 0 ? await uploadFiles(uploadedFiles) : [];
 
     // Fade out before navigation
     setFadeOut(true);
@@ -108,7 +142,9 @@ export default function Landing() {
       navigate('/requirements', {
         state: {
           userIntent: message,
-          llmProvider: options.llmProvider
+          llmProvider: options.llmProvider,
+          uploadedFiles: fileIds,
+          fileNames: uploadedFiles.map(f => f.name)
         }
       });
     }, 300);
@@ -265,6 +301,23 @@ export default function Landing() {
                     onSubmit={handleTextSubmit}
                     onFocus={handleTextFocus}
                   />
+                </div>
+
+                {/* File Upload Zone */}
+                <div className="w-full max-w-3xl">
+                  <FileUploadZone
+                    files={uploadedFiles}
+                    onFilesChange={setUploadedFiles}
+                    maxFiles={6}
+                  />
+                  {isUploading && (
+                    <div 
+                      className="mt-2 text-center text-sm"
+                      style={{ color: theme.colors.accent.primary }}
+                    >
+                      Uploading files...
+                    </div>
+                  )}
                 </div>
               </div>
 

@@ -944,3 +944,37 @@ Created comprehensive mapping of which backend agents integrate with which front
 2. Wire up `/api/cost/estimate` with real UI
 3. Add carbon footprint calculator
 4. Create manufacturing rate selector (region-based)
+
+---
+
+## Phase 6: Landing & Requirements Page - File Upload & Agent Integration
+
+**Created**: LANDING_REQUIREMENTS_PLAN.md (comprehensive implementation plan)
+
+### Scope
+- Multi-file upload on Landing page (up to 6 files, 10MB each)
+- File content extraction (PDF, images/OCR, DOCX, spreadsheets, text)
+- Content added to Requirements Gathering conversation context
+- Full agent integration with parameter extraction
+
+### Key Agents on Requirements Page
+
+| Agent | Current State | After Implementation |
+|-------|--------------|---------------------|
+| **ConversationalAgent** | ✅ Active | Enhanced with file context |
+| **EnvironmentAgent** | ✅ Active | Unchanged |
+| **GeometryEstimator** | ⚠️ Hardcoded params | Uses **extracted** params |
+| **CostAgent** | ⚠️ Hardcoded params | Uses **extracted** params |
+| **SafetyAgent** | ❌ Not called | ✅ Added for safety screening |
+
+### DocumentAgent Clarification
+**DocumentAgent is correctly NOT on requirements page** - it's for Phase 2 (Planning) document generation. File parsing is handled by a new `file_extractor.py` service.
+
+### Implementation Timeline
+- **Phase 1** (Days 1-2): File upload UI + backend endpoint
+- **Phase 2** (Days 3-4): Requirements integration + SafetyAgent
+- **Phase 3** (Day 5): OCR + DOCX + spreadsheet support
+- **Phase 4** (Day 6): UI polish + badges + error handling
+
+**Total: 6-7 days | MVP: 3 days**
+

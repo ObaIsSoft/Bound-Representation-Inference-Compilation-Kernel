@@ -536,6 +536,91 @@ class ChatRequirementsRequest(BaseModel):
     mode: str = "requirements_gathering"
     ai_model: str = "groq"
     conversation_history: List[str] = []
+    file_ids: List[str] = []
+
+
+# =============================================================================
+# Parameter Extraction Helper
+# =============================================================================
+
+async def extract_design_params_from_context(
+    message: str,
+    file_contents: List[str],
+    conversation_history: List[str]
+) -> Dict[str, Any]:
+    """
+    Use LLM to extract design parameters from all context sources.
+    """
+    context = f"""Extract design parameters from the following context.
+
+User message: {message}
+
+File contents:
+{chr(10).join([f"--- File {i+1} ---{chr(10)}{content[:2000]}" for i, content in enumerate(file_contents)])}
+
+Conversation history (last 5 messages):
+{chr(10).join(conversation_history[-5:])}
+
+Extract these parameters (return as JSON):
+{{
+    "mass_kg": float or null,  // Weight in kg (convert from lbs/g if needed)
+    "material": string or null,  // Material name (e.g., "aluminum 6061", "titanium Ti-6Al-4V", "steel 4140")
+    "complexity": "simple" | "moderate" | "complex" | null,
+    "max_dim_m": float or null,  // Maximum dimension in meters
+    "application": "aerospace" | "automotive" | "medical" | "industrial" | "consumer" | null,
+    "quantity": int or null,  // Number of units
+    "environment": "space" | "underwater" | "high_temp" | "cryo" | "standard" | null
+}}
+
+Return ONLY valid JSON. Use null for unknown values."""
+    
+    try:
+        from llm.factory import get_llm_provider
+        llm = get_llm_provider("groq")
+        
+        response = llm.generate(
+            prompt=context,
+            system_prompt="You extract design parameters from engineering requirements. Return valid JSON only."
+        )
+        
+        import json
+        import re
+        
+        # Extract JSON from response
+        json_match = re.search(r'\{.*\}', response, re.DOTALL)
+        if json_match:
+            params = json.loads(json_match.group())
+            logger.info(f"Extracted parameters: {params}")
+            return params
+        
+        return {}
+        
+    except Exception as e:
+        logger.warning(f"Parameter extraction failed: {e}")
+        return {}
+
+
+async def load_file_contents_for_requirements(file_ids: List[str]) -> List[Dict[str, Any]]:
+    """Load contents for previously uploaded files."""
+    import glob
+    
+    contents = []
+    for file_id in file_ids:
+        pattern = f"/tmp/brick_uploads/{file_id}*"
+        matches = glob.glob(pattern)
+        
+        if matches:
+            file_path = matches[0]
+            extraction = await extract_file_content(file_path)
+            contents.append({
+                "file_id": file_id,
+                "filename": os.path.basename(file_path),
+                "content": extraction.get("content", ""),
+                "metadata": extraction.get("metadata", {})
+            })
+    
+    return contents
+
 
 @app.post("/api/chat/requirements")
 async def chat_requirements_endpoint(
@@ -543,47 +628,52 @@ async def chat_requirements_endpoint(
 ):
     """
     Intelligent Chat Endpoint for Requirements Gathering.
-    Accepts JSON body for structured data.
+    Now with file context integration and SafetyAgent.
     """
-    logger.info(f"Chat Requirements Request: {req.message[:50]}... Session: {req.session_id}")
-
-
+    logger.info(f"Chat Requirements Request: {req.message[:50]}... Session: {req.session_id}, Files: {len(req.file_ids)}")
     
     # 1. Get or Create Session
     session_id = req.session_id or f"session-{int(time.time())}"
     session = conversation_manager.get_or_create(session_id)
     
-    # Add user message to session
+    # 2. Load file contents if any
+    file_contexts = await load_file_contents_for_requirements(req.file_ids) if req.file_ids else []
+    
+    # 3. Build augmented message with file context
+    augmented_message = req.message
+    if file_contexts:
+        file_summary = "\n\n[Attached Files Context]:\n"
+        for fc in file_contexts:
+            file_summary += f"\n--- {fc['filename']} ---\n{fc['content'][:1500]}...\n"
+        augmented_message += file_summary
+        logger.info(f"Added context from {len(file_contexts)} files")
+    
+    # Add user message to session (original message, not augmented)
     session.add_message("user", req.message)
     
-    # 2. Instantiate Agents (Geometry, Cost, etc. are stateless enough to re-init, or move to global later)
-    # conv_agent = ConversationalAgent(model_name=req.ai_model) -> Use global conversational_agent
+    # 4. Instantiate Agents
     from agents.geometry_estimator import GeometryEstimator
     from agents.cost_agent import CostAgent
     from agents.environment_agent import EnvironmentAgent
+    from agents.safety_agent import SafetyAgent
     
     geom_estimator = GeometryEstimator()
     cost_agent = CostAgent()
     env_agent = EnvironmentAgent()
+    safety_agent = SafetyAgent()
     
-    # Get history for the agent
-    # CRITICAL FIX: Use the conversation_history from REQUEST (frontend state) instead of loading from session
-    # This prevents old session data from contaminating new conversations
+    # 5. Get history for the agent
     if req.conversation_history:
-        # Frontend sends pre-formatted strings like "You: message" or "Agent: message"
-        # We can use them directly
         history_strings = req.conversation_history if isinstance(req.conversation_history[0], str) else \
                          [f"{msg.get('role', 'user')}: {msg.get('text', msg.get('content', ''))}" 
                           for msg in req.conversation_history]
     else:
-        # Fallback: Load from session if no explicit history provided
         history_strings = [f"{m.role}: {m.content}" for m in session.messages]
     
-    # 3. Run Conversational Agent
-    # 3. Run Conversational Agent (Async)
+    # 6. Run Conversational Agent with augmented context
     response_text = await conversational_agent.chat(
-        user_input=req.message,
-        history=history_strings[:-1] if len(history_strings) > 0 else [],  # Don't include the very last message
+        user_input=augmented_message,
+        history=history_strings[:-1] if len(history_strings) > 0 else [],
         current_intent=req.user_intent,
         session_id=session_id
     )
@@ -591,20 +681,61 @@ async def chat_requirements_endpoint(
     # Add agent response to session
     session.add_message("agent", response_text)
     
-    # 4. Background Agent Processing
+    # 7. Extract parameters from context (message + files + history)
+    file_contents = [fc["content"] for fc in file_contexts]
+    extracted_params = await extract_design_params_from_context(
+        message=req.message,
+        file_contents=file_contents,
+        conversation_history=history_strings
+    )
+    
+    # 8. Run all agents with EXTRACTED parameters (not hardcoded!)
     updated_intent = f"{req.user_intent} {req.message}"
     env_result = env_agent.detect_environment(updated_intent)
     
-    design_params = {"max_dim": 1.0}
+    # Use extracted params or defaults
+    mass_kg = extracted_params.get("mass_kg") or 5.0
+    material = extracted_params.get("material") or "aluminum"
+    complexity = extracted_params.get("complexity") or "moderate"
+    max_dim_m = extracted_params.get("max_dim_m") or 1.0
+    application = extracted_params.get("application") or env_result.get("type", "industrial")
+    
+    # Check for 3D dimensions from uploaded files
+    for fc in file_contexts:
+        dims = fc.get("metadata", {}).get("dimensions")
+        if dims and isinstance(dims, dict):
+            # Use 3D file dimensions if available
+            max_dim_mm = max(dims.get("x_mm", 0), dims.get("y_mm", 0), dims.get("z_mm", 0))
+            if max_dim_mm > 0:
+                max_dim_m = max_dim_mm / 1000  # Convert mm to m
+                logger.info(f"Using 3D file dimensions: {dims}")
+                break
+    
+    # Geometry estimation with extracted params
+    design_params = {"max_dim": max_dim_m, "mass_kg": mass_kg}
     geom_result = geom_estimator.estimate(updated_intent, design_params)
     
-    cost_params = {"mass_kg": 5.0, "complexity": "moderate", "material_name": "aluminum"}
-    cost_result = cost_agent.quick_estimate(cost_params)
+    # Cost estimation with extracted params
+    cost_params = {
+        "mass_kg": mass_kg,
+        "complexity": complexity,
+        "material_name": material
+    }
+    cost_result = await cost_agent.quick_estimate(cost_params)
     
-    # 5. Check for Completeness
-    all_history = [f"{m.role}: {m.content}" for m in session.messages]
+    # NEW: Safety check
+    try:
+        safety_result = await safety_agent.run({
+            "materials": [material],
+            "application_type": application,
+            "physics_results": {},
+            "mass_kg": mass_kg
+        })
+    except Exception as e:
+        logger.warning(f"SafetyAgent failed: {e}")
+        safety_result = {"status": "unknown", "error": str(e)}
     
-    # Use session_id for checking completeness in the persisted DiscoveryState
+    # 9. Check for Completeness
     requirements_complete = await conversational_agent.is_requirements_complete(session_id)
     
     final_requirements = {}
@@ -621,7 +752,13 @@ async def chat_requirements_endpoint(
         "feasibility": {
             "geometry": geom_result,
             "cost": cost_result,
-            "environment": env_result
+            "environment": env_result,
+            "safety": safety_result
+        },
+        "extracted_params": extracted_params,
+        "file_context": {
+            "files_processed": len(file_contexts),
+            "total_chars": sum(len(fc["content"]) for fc in file_contexts)
         },
         "session_id": session_id,
         "requirements_complete": requirements_complete,
@@ -3144,6 +3281,140 @@ async def check_pricing_status():
             ]
         }
     }
+
+# =============================================================================
+# FILE UPLOAD API (Phase 6 - Landing & Requirements Enhancement)
+# =============================================================================
+
+import uuid
+from services.file_extractor import (
+    extract_file_content, get_file_category, get_size_limit
+)
+
+@app.post("/api/files/upload")
+async def upload_files(
+    files: List[UploadFile] = File(...),
+    session_id: Optional[str] = None
+):
+    """
+    Upload files for requirements processing.
+    
+    Supports up to 6 files with category-based size limits:
+    - 3D files (STL, STEP, OBJ, FBX, GLTF, GLB, PLY, 3MF): 100MB
+    - PDFs: 50MB
+    - Images (JPG, PNG, GIF, etc.): 20MB
+    - Documents (DOCX, XLSX, CSV): 20MB
+    - Text/Code: 10MB
+    
+    Returns:
+        file_ids: List of unique file IDs for retrieval
+        files: Metadata including extracted content preview
+    """
+    if len(files) > 6:
+        raise HTTPException(400, "Maximum 6 files allowed")
+    
+    results = []
+    upload_dir = "/tmp/brick_uploads"
+    os.makedirs(upload_dir, exist_ok=True)
+    
+    for file in files:
+        # Get file extension and category
+        ext = os.path.splitext(file.filename)[1].lower()
+        category = get_file_category(ext)
+        size_limit = get_size_limit(ext)
+        
+        # Read content
+        content = await file.read()
+        
+        # Validate size
+        if len(content) > size_limit:
+            limit_mb = size_limit / (1024 * 1024)
+            actual_mb = len(content) / (1024 * 1024)
+            raise HTTPException(
+                400,
+                f"{file.filename} ({actual_mb:.1f}MB) exceeds {category} file limit ({limit_mb:.0f}MB)"
+            )
+        
+        # Generate file ID and save
+        file_id = f"file_{session_id or 'temp'}_{uuid.uuid4().hex[:8]}"
+        temp_path = f"{upload_dir}/{file_id}{ext}"
+        
+        with open(temp_path, "wb") as f:
+            f.write(content)
+        
+        # Extract content and metadata
+        extraction = await extract_file_content(temp_path, file.content_type)
+        
+        # Format size for display
+        size_bytes = len(content)
+        if size_bytes > 1024 * 1024:
+            size_formatted = f"{size_bytes / (1024 * 1024):.2f}MB"
+        else:
+            size_formatted = f"{size_bytes / 1024:.1f}KB"
+        
+        results.append({
+            "file_id": file_id,
+            "filename": file.filename,
+            "content_type": file.content_type,
+            "category": category,
+            "size": size_bytes,
+            "size_formatted": size_formatted,
+            "metadata": extraction.get("metadata", {}),
+            "extracted_preview": extraction.get("content", "")[:1500],
+            "extraction_success": extraction.get("success", False)
+        })
+    
+    total_size = sum(r["size"] for r in results)
+    total_formatted = f"{total_size / (1024 * 1024):.2f}MB" if total_size > 1024 * 1024 else f"{total_size / 1024:.1f}KB"
+    
+    return {
+        "file_ids": [r["file_id"] for r in results],
+        "files": results,
+        "total_size": total_size,
+        "total_size_formatted": total_formatted,
+        "count": len(results)
+    }
+
+
+@app.get("/api/files/{file_id}/content")
+async def get_file_content(file_id: str):
+    """Get extracted content for a previously uploaded file."""
+    import glob
+    
+    # Find file by pattern
+    pattern = f"/tmp/brick_uploads/{file_id}*"
+    matches = glob.glob(pattern)
+    
+    if not matches:
+        raise HTTPException(404, "File not found or expired")
+    
+    file_path = matches[0]
+    extraction = await extract_file_content(file_path)
+    
+    return {
+        "file_id": file_id,
+        "content": extraction.get("content", ""),
+        "metadata": extraction.get("metadata", {}),
+        "success": extraction.get("success", False)
+    }
+
+
+@app.delete("/api/files/{file_id}")
+async def delete_file(file_id: str):
+    """Delete an uploaded file."""
+    import glob
+    
+    pattern = f"/tmp/brick_uploads/{file_id}*"
+    matches = glob.glob(pattern)
+    
+    for file_path in matches:
+        try:
+            os.remove(file_path)
+        except Exception as e:
+            logger.warning(f"Failed to delete {file_path}: {e}")
+    
+    return {"deleted": len(matches), "file_id": file_id}
+
 
 # =============================================================================
 # STANDARDS INTEGRATION API (Week 3 - Standards Layer)

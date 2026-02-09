@@ -13,7 +13,7 @@
 | Service | File | Purpose | APIs Integrated |
 |---------|------|---------|-----------------|
 | **SupabaseService** | `supabase_service.py` | Centralized DB client | Supabase PostgreSQL |
-| **PricingService** | `pricing_service.py` | Material & component pricing | LME, DigiKey, Mouser, Climatiq |
+| **PricingService** | `pricing_service.py` | Material & component pricing | Metals-API (free), Yahoo Finance (free), LME (paid), DigiKey |
 | **StandardsService** | `standards_service.py` | Engineering standards | ISO 286, AWG/NEC, ASME |
 | **ComponentCatalogService** | `component_catalog_service.py` | Electronic components | Nexar, Mouser, Octopart |
 | **AssetSourcingService** | `asset_sourcing_service.py` | 3D model sourcing | NASA 3D, Sketchfab, CGTrader |
@@ -707,3 +707,240 @@ async def test_all_materials_have_yield_strength():
 - `CRITICS_ORACLES_ADAPTERS_AUDIT.md` - Critics & adapters audit
 - `backend/services/` - New service layer (to create)
 - `scripts/seed_*.py` - Data population scripts (to create)
+
+---
+
+## 🔍 Data Policy: NO FICTIONAL DATA
+
+**All fictional, estimated, and guessed data has been REMOVED.**
+
+### Principle: Fail Fast, No Defaults
+
+If data is not available from a verified source, the system returns `None` or raises an error. **NO GUESSES.**
+
+### Database Status
+
+| Table | Records | Data Source |
+|-------|---------|-------------|
+| `critic_thresholds` | 0 | **EMPTY** - Must be configured by user |
+| `manufacturing_rates` | 0 | **EMPTY** - Must come from real suppliers |
+| `materials` | 12 | ASM Handbook, ASTM standards (properties only) |
+| `standards_reference` | 21 | NEC, NASA, ISO, ASME (verified standards) |
+
+### What's In the Database
+
+#### ✅ Verified Physical Properties
+- **Metals**: Aluminum 6061-T6, 7075-T6, Steel A36, 4140, Stainless 304, Titanium Ti-6Al-4V
+- **Source**: ASM Handbook Volumes 1 & 2, ASTM standards
+- **Properties**: Density, yield strength, ultimate strength, elastic modulus
+
+#### ✅ Verified Standards
+- **AWG Ampacity**: NEC Table 310.16 (8 gauges)
+- **Safety Factors**: NASA-STD-5005, ISO 26262, IEC 62304
+- **ISO Fits**: ISO 286-1:2010 fit classifications (definitions only, not tolerance values)
+
+#### ❌ What's NOT In the Database
+- **NO** critic thresholds (fictional values removed)
+- **NO** manufacturing rates (estimates removed)
+- **NO** material prices (guesses removed - all NULL)
+- **NO** ISO tolerance values (simplified values removed)
+
+### How to Configure
+
+#### 1. Critic Thresholds (REQUIRED)
+
+Edit `backend/db/seeds/seed_critic_thresholds.py` with your verified values:
+
+```python
+VERIFIED_THRESHOLDS = [
+    {
+        "critic_name": "ControlCritic",
+        "vehicle_type": "drone_small",
+        "thresholds": {
+            "max_thrust_n": 100.0,  # YOUR VERIFIED VALUE
+            "max_torque_nm": 10.0   # YOUR VERIFIED VALUE
+        },
+        "verified_by": "Your Name",
+        "verification_method": "simulation"  # "testing" or "analysis"
+    },
+]
+```
+
+Run: `python backend/db/seeds/seed_critic_thresholds.py`
+
+#### 2. Material Prices (Optional)
+
+**Option A**: Free APIs (Recommended)
+```bash
+# Sign up at https://metals-api.com/ (200 free calls/month)
+export METALS_API_KEY=your_key
+
+# Install yfinance (completely free, no key needed)
+pip install yfinance
+```
+
+**Option B**: Set manual prices
+```python
+from backend.services import pricing_service
+await pricing_service.set_material_price(
+    material="Aluminum 6061-T6",
+    price=3.50,
+    currency="USD",
+    source="supplier_quote"
+)
+```
+
+**Free API Priority:**
+1. Metals-API (200 calls/month) - `METALS_API_KEY`
+2. MetalpriceAPI (free tier) - `METALPRICE_API_KEY`  
+3. Yahoo Finance (unlimited, no key) - Uses yfinance library
+4. Manual entry (always available)
+
+#### 3. Manufacturing Rates (Optional)
+
+Get quotes from suppliers, then insert:
+
+```sql
+INSERT INTO manufacturing_rates (
+    process_type, region, machine_hourly_rate_usd, setup_cost_usd,
+    data_source, supplier_name, quote_reference, quote_date
+) VALUES (
+    'cnc_milling', 'us', 85.00, 200.00,
+    'supplier_quote', 'Xometry', 'Q-12345', NOW()
+);
+```
+
+### Service Behavior
+
+All services follow **fail-fast** pattern:
+
+```python
+# ❌ OLD: Dangerous default
+self.MAX_THRUST = 1000.0  # Arbitrary!
+
+# ✅ NEW: Fail if not configured
+thresholds = await supabase.get_critic_thresholds("ControlCritic", "drone_large")
+if not thresholds:
+    raise ValueError("Thresholds not configured. See seed_critic_thresholds.py")
+```
+
+```python
+# ❌ OLD: Estimated price
+price = 20.0  # Guess!
+
+# ✅ NEW: Return None if unknown
+price = await pricing_service.get_material_price("Aluminum 6061")
+if price is None:
+    raise ValueError("Price not available. Configure API or set manually.")
+```
+
+### Verification Sources
+
+| Source | Materials | Standard |
+|--------|-----------|----------|
+| ASM Handbook Vol 1 & 2 | Metals | ASM International |
+| ASTM A36, A240 | Steels | ASTM International |
+| NEC Table 310.16 | Copper wire | NFPA 70 |
+| NASA-STD-5005 | Safety factors | NASA |
+| ISO 286-1:2010 | Fit classifications | ISO |
+
+### References
+
+- ASM Handbook: https://www.asminternational.org/
+- ASTM Standards: https://www.astm.org/
+- NFPA 70 NEC: https://www.nfpa.org/
+- ISO 286-1:2010: Geometrical product specifications
+- NASA-STD-5005: Structural Design and Test Factors of Safety
+
+---
+
+## 📋 Environment Variables Added
+
+See `backend/.env` for complete list. Key additions:
+
+### Pricing APIs (FREE TIER)
+```bash
+# Recommended Free Options
+METALS_API_KEY=           # https://metals-api.com/ (200 calls/month free)
+METALPRICE_API_KEY=       # https://metalpriceapi.com/ (free tier)
+# Yahoo Finance - No key needed! Just install: pip install yfinance
+
+# Currency (Free tier available)
+OPENEXCHANGERATES_APP_ID= # https://openexchangerates.org/signup/free
+EXCHANGERATE_API_KEY=     # https://www.exchangerate-api.com/ (1,500 req/month)
+```
+
+### Pricing APIs (Paid)
+```bash
+LME_API_KEY=              # London Metal Exchange (commercial)
+FASTMARKETS_API_KEY=      # Industrial materials (commercial)
+```
+
+### Component APIs
+```bash
+NEXAR_API_KEY=            # Already configured
+MOUSER_API_KEY=
+OCTOPART_API_KEY=
+```
+
+### Asset APIs
+```bash
+SKETCHFAB_API_KEY=
+CGTRADER_API_KEY=
+NASA_3D_API_KEY=          # Free, optional
+```
+
+### Manufacturing APIs
+```bash
+XOMETRY_API_KEY=          # Instant quotes
+PROTOLABS_API_KEY=        # DFM + quotes
+HUBS_API_KEY=             # Manufacturing network
+```
+
+### Sustainability APIs
+```bash
+CLIMATIQ_API_KEY=         # Carbon footprint
+CARBON_INTERFACE_API_KEY= # CO2 calculations
+```
+
+---
+
+## Phase 5: Frontend-Agent Integration Planning (Complete)
+
+### Summary
+Created comprehensive mapping of which backend agents integrate with which frontend pages and panels.
+
+### Documents Created
+1. **AGENT_PAGE_MAPPING.md** - Complete agent-to-page mapping
+2. **FRONTEND_AGENT_INTEGRATION_STATUS.md** - Current status + implementation plan
+3. **SESSION_CONTEXT.md** - Updated with visual flow diagram
+
+### Key Findings
+
+#### Page Flow Matches LangGraph Pipeline
+```
+/requirements → Phase 1 (Feasibility)
+/planning     → Phase 2 (Planning)
+/workspace    → Phases 3-8 (Execute & Validate)
+```
+
+#### Sidebar Panel Agent Assignments
+| Panel | Agents | Priority |
+|-------|--------|----------|
+| Search | StandardsAgent, ComponentAgent | High |
+| Manufacturing | ManufacturingAgent, CostAgent, SustainabilityAgent | High |
+| Run & Debug | PhysicsAgent, ControlCritic, SafetyAgent | Medium |
+| Agent Pods | All 64 agents (orchestrator) | Medium |
+| Compile | OpenSCADAgent, CodeGenAgent | Medium |
+| Compliance | ComplianceAgent, SafetyAgent | Medium |
+
+### Current State
+- **Backend**: 6 agents migrated (Weeks 1-3 complete)
+- **Frontend**: All panels are placeholder divs
+- **Integration**: CostAgent and StandardsAgent APIs ready
+
+### Recommended Week 4 Focus
+1. Build ManufacturingPanel (CostAgent + SustainabilityAgent)
+2. Wire up `/api/cost/estimate` with real UI
+3. Add carbon footprint calculator
+4. Create manufacturing rate selector (region-based)

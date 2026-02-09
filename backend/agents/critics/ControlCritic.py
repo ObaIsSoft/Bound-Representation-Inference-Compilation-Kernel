@@ -1,6 +1,9 @@
 """
 ControlCritic: Validates control actions for stability and safety.
 
+Uses database-driven thresholds for vehicle-specific limits.
+No hardcoded values - all limits come from critic_thresholds table.
+
 Checks:
 1. Lyapunov Stability (energy decreasing)
 2. Actuator Saturation (within limits)
@@ -8,20 +11,98 @@ Checks:
 4. State Constraints (position/velocity bounds)
 """
 
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import numpy as np
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 class ControlCritic:
-    def __init__(self):
+    """
+    Control Critic with database-driven thresholds.
+    
+    Thresholds are loaded from Supabase based on vehicle_type.
+    No hardcoded limits - fails if thresholds not configured.
+    """
+    
+    def __init__(self, vehicle_type: str = "default"):
         self.name = "ControlCritic"
+        self.vehicle_type = vehicle_type
         
-        # Physical limits
-        self.MAX_THRUST = 1000.0  # N
-        self.MAX_TORQUE = 100.0   # Nm
-        self.MAX_VELOCITY = 50.0  # m/s
-        self.MAX_POSITION = 1000.0  # m
+        # Thresholds loaded from database
+        self._thresholds: Optional[Dict[str, float]] = None
         
-    def critique(self, prediction: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+    async def initialize(self):
+        """
+        Load thresholds from database.
+        
+        Raises:
+            ValueError: If thresholds not found in database
+        """
+        from backend.services import supabase
+        
+        try:
+            self._thresholds = await supabase.get_critic_thresholds(
+                critic_name="ControlCritic",
+                vehicle_type=self.vehicle_type
+            )
+            
+            logger.info(
+                f"ControlCritic initialized for {self.vehicle_type} "
+                f"with thresholds: {list(self._thresholds.keys())}"
+            )
+            
+        except Exception as e:
+            raise ValueError(
+                f"ControlCritic thresholds not found for vehicle_type='{self.vehicle_type}'. "
+                f"Configure in critic_thresholds table or run seed_critic_thresholds.py. "
+                f"Error: {e}"
+            )
+    
+    @property
+    def max_thrust(self) -> float:
+        """Max thrust in Newtons from database"""
+        if self._thresholds is None:
+            raise RuntimeError("ControlCritic not initialized. Call initialize() first.")
+        return self._thresholds.get("max_thrust_n", float('inf'))
+    
+    @property
+    def max_torque(self) -> float:
+        """Max torque in Nm from database"""
+        if self._thresholds is None:
+            raise RuntimeError("ControlCritic not initialized. Call initialize() first.")
+        return self._thresholds.get("max_torque_nm", float('inf'))
+    
+    @property
+    def max_velocity(self) -> float:
+        """Max velocity in m/s from database"""
+        if self._thresholds is None:
+            raise RuntimeError("ControlCritic not initialized. Call initialize() first.")
+        return self._thresholds.get("max_velocity_ms", float('inf'))
+    
+    @property
+    def max_position(self) -> float:
+        """Max position in meters from database"""
+        if self._thresholds is None:
+            raise RuntimeError("ControlCritic not initialized. Call initialize() first.")
+        return self._thresholds.get("max_position_m", float('inf'))
+    
+    @property
+    def energy_increase_limit(self) -> float:
+        """Energy increase limit (e.g., 1.1 = 10% increase allowed)"""
+        if self._thresholds is None:
+            raise RuntimeError("ControlCritic not initialized. Call initialize() first.")
+        return self._thresholds.get("energy_increase_limit", 1.1)
+    
+    @property
+    def control_effort_threshold(self) -> float:
+        """Control effort threshold from database"""
+        if self._thresholds is None:
+            raise RuntimeError("ControlCritic not initialized. Call initialize() first.")
+        return self._thresholds.get("control_effort_threshold", float('inf'))
+    
+    async def critique(self, prediction: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
         """
         Validate control action.
         
@@ -32,6 +113,10 @@ class ControlCritic:
         Returns:
             {valid: bool, violations: List[str], confidence: float}
         """
+        # Ensure initialized
+        if self._thresholds is None:
+            await self.initialize()
+        
         violations = []
         
         action = prediction.get("action", np.zeros(3))
@@ -44,14 +129,21 @@ class ControlCritic:
         torque_x = action[1] if len(action) > 1 else 0
         torque_y = action[2] if len(action) > 2 else 0
         
-        if abs(thrust) > self.MAX_THRUST:
-            violations.append(f"Thrust {thrust:.1f}N exceeds limit {self.MAX_THRUST}N")
+        if abs(thrust) > self.max_thrust:
+            violations.append(
+                f"Thrust {thrust:.1f}N exceeds limit {self.max_thrust}N "
+                f"(vehicle_type={self.vehicle_type})"
+            )
         
-        if abs(torque_x) > self.MAX_TORQUE:
-            violations.append(f"Torque X {torque_x:.1f}Nm exceeds limit {self.MAX_TORQUE}Nm")
+        if abs(torque_x) > self.max_torque:
+            violations.append(
+                f"Torque X {torque_x:.1f}Nm exceeds limit {self.max_torque}Nm"
+            )
         
-        if abs(torque_y) > self.MAX_TORQUE:
-            violations.append(f"Torque Y {torque_y:.1f}Nm exceeds limit {self.MAX_TORQUE}Nm")
+        if abs(torque_y) > self.max_torque:
+            violations.append(
+                f"Torque Y {torque_y:.1f}Nm exceeds limit {self.max_torque}Nm"
+            )
         
         # 2. State Constraints Check
         if len(state_next) >= 6:
@@ -59,12 +151,16 @@ class ControlCritic:
             vel_x, vel_y, vel_z = state_next[3:6]
             
             velocity_mag = np.sqrt(vel_x**2 + vel_y**2 + vel_z**2)
-            if velocity_mag > self.MAX_VELOCITY:
-                violations.append(f"Velocity {velocity_mag:.1f}m/s exceeds limit {self.MAX_VELOCITY}m/s")
+            if velocity_mag > self.max_velocity:
+                violations.append(
+                    f"Velocity {velocity_mag:.1f}m/s exceeds limit {self.max_velocity}m/s"
+                )
             
             position_mag = np.sqrt(pos_x**2 + pos_y**2 + pos_z**2)
-            if position_mag > self.MAX_POSITION:
-                violations.append(f"Position {position_mag:.1f}m exceeds limit {self.MAX_POSITION}m")
+            if position_mag > self.max_position:
+                violations.append(
+                    f"Position {position_mag:.1f}m exceeds limit {self.max_position}m"
+                )
         
         # 3. Lyapunov Stability Check (simplified)
         # Energy should decrease: E_next < E_current
@@ -73,13 +169,19 @@ class ControlCritic:
             E_next = self._compute_energy(state_next)
             
             # Allow small energy increase (for control effort)
-            if E_next > E_current * 1.1:
-                violations.append(f"Energy increasing: {E_current:.2f} → {E_next:.2f} (unstable)")
+            if E_next > E_current * self.energy_increase_limit:
+                violations.append(
+                    f"Energy increasing: {E_current:.2f} → {E_next:.2f} "
+                    f"(limit: {self.energy_increase_limit:.2f}x)"
+                )
         
         # 4. Energy Efficiency Check
         control_effort = np.sum(action ** 2)
-        if control_effort > 100.0:  # Arbitrary threshold
-            violations.append(f"High control effort: {control_effort:.2f}")
+        if control_effort > self.control_effort_threshold:
+            violations.append(
+                f"High control effort: {control_effort:.2f} "
+                f"(threshold: {self.control_effort_threshold:.2f})"
+            )
         
         # Calculate confidence
         confidence = 1.0 - (len(violations) * 0.25)
@@ -89,7 +191,8 @@ class ControlCritic:
             "valid": len(violations) == 0,
             "violations": violations,
             "confidence": confidence,
-            "critic": self.name
+            "critic": self.name,
+            "vehicle_type": self.vehicle_type
         }
     
     def _compute_energy(self, state: np.ndarray) -> float:

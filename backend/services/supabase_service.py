@@ -114,6 +114,15 @@ class SupabaseService:
         except Exception as e:
             logger.debug(f"Cache set failed: {e}")
     
+    async def _invalidate_cache(self, key: str):
+        """Invalidate a cached value"""
+        if not self.redis:
+            return
+        try:
+            await self.redis.delete(key)
+        except Exception as e:
+            logger.debug(f"Cache invalidate failed: {e}")
+    
     def _make_cache_key(self, table: str, query_params: Dict) -> str:
         """Create cache key from query params"""
         param_str = json.dumps(query_params, sort_keys=True, default=str)
@@ -265,6 +274,69 @@ class SupabaseService:
                 return float(price)
         
         return None
+    
+    async def update_material_price(
+        self,
+        material_name: str,
+        price: float,
+        currency: str = "USD",
+        source: str = "manual"
+    ) -> bool:
+        """
+        Update or insert material price.
+        
+        Args:
+            material_name: Material name
+            price: Price per kg
+            currency: Currency code
+            source: Price source
+            
+        Returns:
+            True if successful
+        """
+        await self.initialize()
+        
+        if not self.client:
+            raise RuntimeError("Supabase not initialized")
+        
+        try:
+            # Check if material exists
+            existing = self.client.table("materials")\
+                .select("id")\
+                .ilike("name", material_name)\
+                .execute()
+            
+            price_column = f"cost_per_kg_{currency.lower()}"
+            
+            if existing.data:
+                # Update existing
+                material_id = existing.data[0]["id"]
+                self.client.table("materials")\
+                    .update({
+                        price_column: price,
+                        "property_data_source": source
+                    })\
+                    .eq("id", material_id)\
+                    .execute()
+            else:
+                # Insert new
+                self.client.table("materials")\
+                    .insert({
+                        "name": material_name,
+                        price_column: price,
+                        "property_data_source": source
+                    })\
+                    .execute()
+            
+            # Invalidate cache
+            cache_key = self._make_cache_key("materials", {"name": material_name})
+            await self._invalidate_cache(cache_key)
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to update material price: {e}")
+            raise
     
     # ========================================================================
     # MANUFACTURING RATES

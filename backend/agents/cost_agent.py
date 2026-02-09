@@ -1,16 +1,30 @@
-from typing import Dict, Any, List
+"""
+CostAgent: Cost Estimation Agent.
+
+Uses database-driven pricing and external APIs.
+No hardcoded costs - all prices come from services.
+"""
+
+from typing import Dict, Any, List, Optional
 import logging
 
 logger = logging.getLogger(__name__)
 
+
 class CostAgent:
     """
-    Cost Estimation Agent.
-    Calculates BoM and manufacturing costs.
+    Cost Estimation Agent with database-driven pricing.
+    
+    Material prices: From pricing_service (Metals-API, Yahoo Finance, or manual entry)
+    Manufacturing rates: From Supabase (supplier quotes)
+    Currency conversion: From currency_service (real-time APIs)
+    
+    No hardcoded costs - fails if pricing not available.
     """
+    
     def __init__(self):
         self.name = "CostAgent"
-        self.db_path = "data/materials.db"
+        self._initialized = False
         
         try:
             from models.cost_surrogate import CostSurrogate
@@ -19,11 +33,24 @@ class CostAgent:
         except ImportError:
             self.surrogate = None
             self.use_surrogate = False
-
-    def quick_estimate(self, params: Dict[str, Any], currency: str = "USD") -> Dict[str, Any]:
+    
+    async def initialize(self):
+        """Initialize services"""
+        if self._initialized:
+            return
+            
+        from backend.services import pricing_service
+        await pricing_service.initialize()
+        
+        self._initialized = True
+    
+    async def quick_estimate(
+        self, 
+        params: Dict[str, Any], 
+        currency: str = "USD"
+    ) -> Dict[str, Any]:
         """
-        Quick cost estimate for Phase 1 feasibility check.
-        Uses simplified calculations without database lookups.
+        Quick cost estimate using database-driven pricing.
         
         Args:
             params: {
@@ -38,115 +65,198 @@ class CostAgent:
                 "estimated_cost": float,
                 "currency": str,
                 "confidence": float (0-1),
-                "feasible": bool
+                "feasible": bool,
+                "warnings": List[str],
+                "data_sources": {...}
             }
         """
         logger.info(f"{self.name} performing quick cost estimate...")
         
+        await self.initialize()
+        
+        from backend.services import pricing_service, currency_service, supabase
+        
         mass_kg = params.get("mass_kg", 5.0)
-        material = params.get("material_name", "Aluminum 6061")
+        material = params.get("material_name", "Aluminum 6061-T6")
         complexity = params.get("complexity", "moderate")
         
-        # Simplified material cost lookup (no DB)
-        material_costs = {
-            "Aluminum 6061": 20.0,
-            "Steel": 15.0,
-            "Titanium": 150.0,
-            "Carbon Fiber": 200.0,
-            "PLA": 25.0,
-            "ABS": 30.0
-        }
+        warnings = []
+        data_sources = {}
         
-        material_cost_per_kg = material_costs.get(material, 50.0)  # Default fallback
+        # 1. Get material cost from pricing service (APIs + database)
+        material_price = None
+        try:
+            material_price = await pricing_service.get_material_price(material, currency)
+            if material_price:
+                material_cost_per_kg = material_price.price
+                data_sources["material_price"] = material_price.source
+                logger.info(f"Got price for {material}: ${material_cost_per_kg} {currency}/kg from {material_price.source}")
+        except Exception as e:
+            logger.warning(f"Pricing service error for {material}: {e}")
         
-        # Complexity multiplier for processing
+        # Fallback: Try to get from Supabase materials table
+        if material_price is None:
+            try:
+                mat_data = await supabase.get_material(material)
+                price_column = f"cost_per_kg_{currency.lower()}"
+                if mat_data and mat_data.get(price_column):
+                    material_cost_per_kg = float(mat_data[price_column])
+                    material_price_source = mat_data.get("pricing_data_source", "database")
+                    data_sources["material_price"] = f"database:{material_price_source}"
+                    warnings.append(
+                        f"Using cached price for {material}: {material_cost_per_kg} {currency}/kg"
+                    )
+                else:
+                    # Return error - no price available
+                    return {
+                        "error": f"No price available for {material}",
+                        "solution": "Options: 1) Set METALS_API_KEY (free tier at metals-api.com), 2) Install yfinance (pip install yfinance), or 3) Set price manually via /api/pricing/set-price",
+                        "estimated_cost": None,
+                        "confidence": 0.0,
+                        "feasible": False,
+                        "data_sources": {}
+                    }
+            except Exception as e:
+                return {
+                    "error": f"Material '{material}' not found in database",
+                    "solution": f"Add material to database or check material name. Error: {e}",
+                    "estimated_cost": None,
+                    "confidence": 0.0,
+                    "feasible": False
+                }
+        
+        # 2. Get currency conversion rate if needed
+        if currency.upper() != "USD":
+            try:
+                exchange_rate = await currency_service.get_rate("USD", currency)
+                if exchange_rate:
+                    data_sources["currency"] = "api"
+                else:
+                    warnings.append(
+                        f"Currency conversion rate USD->{currency} not available. Using 1.0"
+                    )
+                    exchange_rate = 1.0
+            except Exception as e:
+                warnings.append(f"Currency service error: {e}")
+                exchange_rate = 1.0
+        else:
+            exchange_rate = 1.0
+        
+        # 3. Complexity multiplier (these are relative, not absolute costs)
         complexity_multipliers = {
             "simple": 1.0,
             "moderate": 1.5,
             "complex": 2.5
         }
-        
         complexity_mult = complexity_multipliers.get(complexity, 1.5)
         
-        # Quick estimate (USD Base)
-        raw_material_cost_usd = mass_kg * material_cost_per_kg
-        processing_cost_usd = raw_material_cost_usd * complexity_mult
-        total_cost_usd = raw_material_cost_usd + processing_cost_usd
+        # 4. Calculate costs
+        raw_material_cost = mass_kg * material_cost_per_kg * exchange_rate
+        processing_cost = raw_material_cost * complexity_mult
+        total_cost = raw_material_cost + processing_cost
         
-        # Currency Conversion Rates (Approximated)
-        rates = {
-            "USD": 1.0,
-            "EUR": 0.92,
-            "GBP": 0.79,
-            "JPY": 150.0,
-            "CAD": 1.35
-        }
-        rate = rates.get(currency.upper(), 1.0)
+        # 5. Feasibility check
+        budget_threshold = params.get("budget_threshold")
+        if budget_threshold is None:
+            budget_threshold = float('inf')
+        feasible = total_cost < budget_threshold
         
-        total_cost = total_cost_usd * rate
-        raw_material_cost = raw_material_cost_usd * rate
-        processing_cost = processing_cost_usd * rate
-        
-        # Feasibility check (budget threshold $100k USD)
-        budget_threshold_usd = 100000.0
-        feasible = total_cost_usd < budget_threshold_usd
-        
-        # Confidence based on whether we found the material
-        confidence = 0.9 if material in material_costs else 0.6
+        # 6. Confidence based on data source
+        source = data_sources.get("material_price", "unknown")
+        if "yahoo_finance" in source or "metals-api" in source or "metalpriceapi" in source:
+            confidence = 0.9
+        elif "database" in source or "cache" in source:
+            confidence = 0.7
+        else:
+            confidence = 0.5
         
         return {
             "estimated_cost": round(total_cost, 2),
             "currency": currency.upper(),
             "confidence": confidence,
             "feasible": feasible,
+            "warnings": warnings,
             "breakdown": {
                 "material": round(raw_material_cost, 2),
-                "processing": round(processing_cost, 2)
+                "processing": round(processing_cost, 2),
+                "complexity_multiplier": complexity_mult
             },
+            "data_sources": data_sources,
             "logs": [
                 f"Quick estimate: {currency.upper()} {total_cost:,.2f} ({material}, {mass_kg}kg)",
-                f"Feasibility: {'PASS' if feasible else 'FAIL'} (threshold: $100k USD)"
+                f"Material cost: {material_cost_per_kg} {currency}/kg (source: {source})",
+                f"Feasibility: {'PASS' if feasible else 'FAIL'} (threshold: {budget_threshold} {currency})"
             ]
         }
-
-    def run(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        logger.info(f"{self.name} calculating cost estimate...")
-        import sqlite3
+    
+    async def run(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Detailed cost estimate with manufacturing rates.
         
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
+        Uses Supabase for manufacturing rates (must be configured).
+        """
+        logger.info(f"{self.name} calculating detailed cost estimate...")
+        
+        await self.initialize()
+        
+        from backend.services import pricing_service, supabase
         
         # Inputs
         mass_kg = params.get("mass_kg", 5.0)
-        mat_name = params.get("material_name", "Aluminum 6061") # Input param
-        process = params.get("manufacturing_process", "cnc_milling") # Input param
+        mat_name = params.get("material_name", "Aluminum 6061-T6")
+        process = params.get("manufacturing_process", "cnc_milling")
+        region = params.get("region", "global")
         machining_hours = params.get("processing_time_hr", 2.0)
         
-        # 1. Get Material Cost
-        cursor.execute("SELECT cost_per_kg FROM alloys WHERE name = ?", (mat_name,))
-        row = cursor.fetchone()
-        material_cost_per_kg = 20.0 # Default fallback
-        if row:
-             if row["cost_per_kg"]:
-                 material_cost_per_kg = row["cost_per_kg"]
-        else:
-             logger.warning(f"Material '{mat_name}' not found. Using default ${material_cost_per_kg}/kg")
-             
-        # 2. Get Machine Rate
-        cursor.execute("SELECT rate_per_hr, setup_cost FROM manufacturing_rates WHERE process = ?", (process,))
-        row = cursor.fetchone()
-        machine_rate_hr = 120.0
-        setup_cost = 0.0
-        if row:
-            machine_rate_hr = row["rate_per_hr"]
-            setup_cost = row["setup_cost"]
-        else:
-            logger.warning(f"Process '{process}' not found. Using default ${machine_rate_hr}/hr")
-            
-        conn.close()
+        warnings = []
         
-        # Tier 5: Market Dynamic Adjustment
+        # 1. Get Material Cost from pricing service
+        try:
+            material_price = await pricing_service.get_material_price(mat_name, "USD")
+            if material_price:
+                material_cost_per_kg = material_price.price
+                material_source = material_price.source
+            else:
+                raise ValueError("Price not available from APIs")
+        except Exception as e:
+            # Fallback to Supabase
+            try:
+                mat_data = await supabase.get_material(mat_name)
+                if mat_data and mat_data.get("cost_per_kg_usd"):
+                    material_cost_per_kg = float(mat_data["cost_per_kg_usd"])
+                    material_source = mat_data.get("pricing_data_source", "database")
+                else:
+                    return {
+                        "error": f"No price for {mat_name}",
+                        "solution": "Set price via pricing_service.set_material_price() or configure METALS_API_KEY"
+                    }
+            except Exception:
+                return {
+                    "error": f"Material '{mat_name}' not found",
+                    "solution": "Check material name or add to database"
+                }
+        
+        # 2. Get Manufacturing Rates from Supabase
+        try:
+            rates = await supabase.get_manufacturing_rates(process, region)
+            machine_rate_hr = rates["machine_hourly_rate_usd"]
+            setup_cost = rates["setup_cost_usd"]
+            rate_source = rates.get("data_source", "database")
+            
+            if rate_source == "estimate":
+                warnings.append(
+                    f"Manufacturing rate for {process} is an estimate. "
+                    f"Get real quote from supplier for accuracy."
+                )
+                
+        except Exception as e:
+            return {
+                "error": f"Manufacturing rates not found for {process} in {region}",
+                "solution": "Add rates to manufacturing_rates table with supplier quote",
+                "details": str(e)
+            }
+        
+        # 3. Market Dynamic Adjustment (if surrogate available)
         market_multiplier = 1.0
         if self.use_surrogate and self.surrogate:
             try:
@@ -156,8 +266,9 @@ class CostAgent:
                 logger.info(f"Market Adjustment: {market_multiplier:.2f}x (Predicted by CostSurrogate)")
             except Exception as e:
                 logger.warning(f"CostSurrogate failed: {e}")
+                warnings.append("Market adjustment unavailable")
         
-        # Calculation
+        # 4. Calculate Costs
         raw_mat_cost = mass_kg * material_cost_per_kg * market_multiplier
         process_cost = (machining_hours * machine_rate_hr) + setup_cost
         total_cost = raw_mat_cost + process_cost
@@ -165,11 +276,16 @@ class CostAgent:
         return {
             "status": "success",
             "total_cost_usd": round(total_cost, 2),
+            "warnings": warnings,
             "breakdown": {
                 "material": round(raw_mat_cost, 2),
                 "processing": round(process_cost, 2),
                 "setup": round(setup_cost, 2),
                 "market_multiplier": round(market_multiplier, 3)
+            },
+            "data_sources": {
+                "material_price": material_source,
+                "manufacturing_rate": rate_source
             },
             "logs": [
                 f"Material: ${raw_mat_cost:.2f} ({mat_name}, {mass_kg}kg @ ${material_cost_per_kg}/kg)",
@@ -177,17 +293,10 @@ class CostAgent:
                 f"Total Unit Cost: ${total_cost:.2f}"
             ]
         }
-
+    
     def generate_cost_artifact(self, state: Dict[str, Any], project_id: str) -> Dict[str, Any]:
-        """
-        Generate a structured Cost Breakdown Artifact.
-        """
-        # Run calculation if not present
-        if "cost_estimate" not in state:
-             est = self.run(state.get("cost_params", {}))
-        else:
-             est = state["cost_estimate"]
-             
+        """Generate a structured Cost Breakdown Artifact."""
+        est = state.get("cost_estimate", {})
         breakdown = est.get("breakdown", {})
         total = est.get("total_cost_usd", 0)
         
@@ -200,11 +309,13 @@ class CostAgent:
 | Components | ${breakdown.get('components', 0):,.2f} |
 | Labor | ${breakdown.get('setup', 0):,.2f} |
 | **Total** | **${total:,.2f}** |
+
+**Data Sources:** {est.get('data_sources', {})}
 """
         return {
             "id": f"cost-{project_id}",
             "type": "cost_breakdown",
             "title": "Project Cost Estimate",
             "content": md_table,
-            "comments": [] # Interactive support
+            "comments": []
         }

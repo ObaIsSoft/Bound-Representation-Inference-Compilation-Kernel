@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import apiClient from '../utils/apiClient';
+import { useThoughtStream } from '../hooks/useThoughtStream';
 
 const PanelContext = createContext();
 
@@ -23,9 +24,13 @@ export const PanelProvider = ({ children }) => {
     ]);
     const [activeTab, setActiveTab] = useState('chat');
     const [isSubmitting, setIsSubmitting] = useState(false);
-    const [passiveThoughts, setPassiveThoughts] = useState([]);
+    const [leftPanelRequest, setLeftPanelRequest] = useState(null);
 
     const [isAgentProcessing, setIsAgentProcessing] = useState(false);
+
+    // XAI: Thought Streaming Hook
+    // Only poll when agent is processing
+    const { thoughts, isStreaming, clearThoughts } = useThoughtStream(isAgentProcessing, 1000);
 
     const activeSession = sessions.find(s => s.id === activeSessionId) || sessions[0];
 
@@ -64,28 +69,7 @@ export const PanelProvider = ({ children }) => {
         fetchSessions();
     }, []);
 
-    const fetchPassiveThoughts = useCallback(async () => {
-        try {
-            const data = await apiClient.get('/agents/thoughts');
-            if (data.thoughts && data.thoughts.length > 0) {
-                setPassiveThoughts(prev => {
-                    // Keep last 5 thoughts to prevent clutter
-                    const combined = [...prev, ...data.thoughts];
-                    return combined.slice(-5);
-                });
-            }
-        } catch (err) {
-            // Silently fail for polling
-        }
-    }, []);
 
-    useEffect(() => {
-        if (!isAgentProcessing) return;
-
-        fetchPassiveThoughts(); // Initial fetch on activation
-        const interval = setInterval(fetchPassiveThoughts, 3000); // Relax to 3s
-        return () => clearInterval(interval);
-    }, [fetchPassiveThoughts, isAgentProcessing]);
 
     const updatePanel = (id, updates) => {
         setPanels(prev => ({
@@ -242,8 +226,9 @@ export const PanelProvider = ({ children }) => {
             setIsSubmitting,
             isAgentProcessing,
             setIsAgentProcessing,
-            passiveThoughts,
-            setPassiveThoughts,
+            thoughts,
+            isStreaming,
+            clearThoughts,
             PANEL_IDS
         }}>
             {children}

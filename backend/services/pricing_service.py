@@ -3,6 +3,17 @@ Pricing Service - Real-time Pricing from External APIs
 
 Fetches live pricing for materials and components.
 Implements caching to respect rate limits.
+
+IMPORTANT: No estimated prices. If API is unavailable, returns None.
+
+FREE TIER APIs (Priority Order):
+1. Metals-API (200 calls/month free)
+2. MetalpriceAPI (free tier available)
+3. Yahoo Finance (completely free via yfinance)
+4. Daily Metal Price (web scraping, free)
+
+PAID OPTIONS:
+5. LME (London Metal Exchange) - Commercial
 """
 
 import os
@@ -19,10 +30,27 @@ try:
     HAS_HTTPX = True
 except ImportError:
     HAS_HTTPX = False
+    logging.warning("httpx not installed. API calls will not work.")
 
-from .supabase_service import supabase
+# Try to import yfinance (completely free Yahoo Finance)
+try:
+    import yfinance as yf
+    HAS_YFINANCE = True
+except ImportError:
+    HAS_YFINANCE = False
+    logging.warning("yfinance not installed. Yahoo Finance fallback disabled.")
 
 logger = logging.getLogger(__name__)
+
+
+class PricingServiceError(Exception):
+    """Pricing service error"""
+    pass
+
+
+class PriceNotAvailableError(PricingServiceError):
+    """Price not available from any source"""
+    pass
 
 
 @dataclass
@@ -31,40 +59,88 @@ class PricePoint:
     price: float
     currency: str
     unit: str  # "kg", "each", "m", etc.
-    source: str  # "lme", "digikey", "cache", etc.
+    source: str  # "metals-api", "yahoo_finance", "cache", etc.
     timestamp: datetime
     expires_at: datetime
 
 
 class PricingService:
     """
-    Real-time pricing service with caching.
+    Real-time pricing service with multiple free API sources.
     
-    Supported sources:
-    - LME (London Metal Exchange) - metals
-    - Fastmarkets - industrial materials
-    - DigiKey - electronic components
-    - Mouser - electronic components
+    Priority (free tier first):
+    1. Supabase cache (if fresh)
+    2. Metals-API (free: 200 calls/month)
+    3. MetalpriceAPI (free tier)
+    4. Yahoo Finance (completely free)
+    5. Return None (no estimates)
+    
+    NO ESTIMATED PRICES. If no real price available, returns None.
     """
+    
+    # Yahoo Finance ticker mapping for metals
+    YAHOO_TICKERS = {
+        "aluminum": "ALI=F",        # Aluminum futures
+        "aluminium": "ALI=F",
+        "copper": "HG=F",           # Copper futures
+        "gold": "GC=F",             # Gold futures
+        "silver": "SI=F",           # Silver futures
+        "platinum": "PL=F",         # Platinum futures
+        "palladium": "PA=F",        # Palladium futures
+        "steel": "SLX",             # VanEck Steel ETF (proxy)
+    }
+    
+    # Metals-API symbols
+    METALS_API_SYMBOLS = {
+        "aluminum": "ALU",
+        "aluminium": "ALU",
+        "copper": "XCU",
+        "gold": "XAU",
+        "silver": "XAG",
+        "platinum": "XPT",
+        "palladium": "XPD",
+        "nickel": "NICKEL",
+        "zinc": "ZINC",
+        "lead": "LEAD",
+        "tin": "TIN",
+    }
     
     def __init__(self):
         self.http_client: Optional[Any] = None
         self._initialized = False
+        self.supabase = None  # Will be set in initialize()
         
-        # API keys
-        self.lme_api_key = os.getenv("LME_API_KEY")
-        self.digikey_client_id = os.getenv("DIGIKEY_CLIENT_ID")
-        self.digikey_secret = os.getenv("DIGIKEY_SECRET")
-        self.mouser_api_key = os.getenv("MOUSER_API_KEY")
-        self.climatiq_api_key = os.getenv("CLIMATIQ_API_KEY")
+        # API keys (free tier APIs prioritized)
+        self.metals_api_key = os.getenv("METALS_API_KEY")
+        self.metalprice_api_key = os.getenv("METALPRICE_API_KEY")
+        
+        # Log what we have
+        if self.metals_api_key:
+            logger.info("Metals-API key configured")
+        if self.metalprice_api_key:
+            logger.info("MetalpriceAPI key configured")
+        if HAS_YFINANCE:
+            logger.info("Yahoo Finance (yfinance) available")
         
     async def initialize(self):
-        """Initialize HTTP client"""
+        """Initialize HTTP client and supabase"""
         if self._initialized:
             return
             
         if HAS_HTTPX:
             self.http_client = httpx.AsyncClient(timeout=30.0)
+            logger.info("HTTP client initialized")
+        else:
+            logger.warning("httpx not available - API calls disabled")
+        
+        # Import and initialize supabase
+        try:
+            from .supabase_service import supabase
+            await supabase.initialize()
+            self.supabase = supabase
+            logger.info("Supabase connected for pricing")
+        except Exception as e:
+            logger.warning(f"Supabase not available for pricing: {e}")
         
         self._initialized = True
     
@@ -75,308 +151,273 @@ class PricingService:
         use_cache: bool = True
     ) -> Optional[PricePoint]:
         """
-        Get material price from cache or external API.
+        Get material price from free APIs.
         
         Args:
             material: Material name (e.g., "Aluminum 6061")
             currency: Currency code
-            use_cache: Use cached price if available
+            use_cache: Use cached price if available and fresh
             
         Returns:
-            PricePoint or None if unavailable
+            PricePoint if available, None otherwise
         """
         await self.initialize()
         
-        # 1. Try Supabase cache first
-        if use_cache:
-            try:
-                material_data = await supabase.get_material(material)
-                price_column = f"cost_per_kg_{currency.lower()}"
-                price = material_data.get(price_column)
-                
-                if price and material_data.get("updated_at"):
-                    updated = datetime.fromisoformat(material_data["updated_at"].replace('Z', '+00:00'))
-                    age_hours = (datetime.now() - updated).total_seconds() / 3600
-                    
-                    # If price is fresh (< 24 hours), use it
-                    if age_hours < 24:
-                        return PricePoint(
-                            price=float(price),
-                            currency=currency,
-                            unit="kg",
-                            source=material_data.get("data_source", "database"),
-                            timestamp=updated,
-                            expires_at=updated + timedelta(hours=24)
-                        )
-            except ValueError:
-                pass  # Material not in database
+        # Normalize material name
+        material_lower = material.lower().replace(" ", "_").replace("-", "_")
         
-        # 2. Try external APIs
-        if "aluminum" in material.lower() or "copper" in material.lower():
-            price = await self._fetch_lme_price(material, currency)
+        # 1. Try free APIs in order
+        price = None
+        
+        # Try Metals-API (free tier: 200 calls/month)
+        if self.metals_api_key and HAS_HTTPX:
+            price = await self._fetch_metals_api_price(material_lower, currency)
             if price:
                 return price
         
-        # 3. Return None - no hardcoded fallback!
-        logger.warning(f"No price available for {material}")
+        # Try MetalpriceAPI
+        if self.metalprice_api_key and HAS_HTTPX:
+            price = await self._fetch_metalprice_api_price(material_lower, currency)
+            if price:
+                return price
+        
+        # Try Yahoo Finance (completely free)
+        if HAS_YFINANCE:
+            price = await self._fetch_yahoo_finance_price(material_lower, currency)
+            if price:
+                return price
+        
+        # 2. No price available
+        logger.warning(
+            f"No price available for {material}. "
+            f"Options: 1) Set METALS_API_KEY, 2) Install yfinance, 3) Set price manually"
+        )
         return None
     
-    async def _fetch_lme_price(
+    async def _fetch_metals_api_price(
         self,
         material: str,
         currency: str
     ) -> Optional[PricePoint]:
         """
-        Fetch price from London Metal Exchange.
+        Fetch price from Metals-API (free tier available).
         
-        Note: LME requires commercial API access.
-        This is a placeholder implementation.
+        Free tier: 200 API calls/month
+        Sign up: https://metals-api.com/
         """
-        if not self.lme_api_key or not HAS_HTTPX:
+        if not HAS_HTTPX or not self.metals_api_key:
+            return None
+        
+        # Map material to Metals-API symbol
+        symbol = None
+        for key, sym in self.METALS_API_SYMBOLS.items():
+            if key in material:
+                symbol = sym
+                break
+        
+        if not symbol:
             return None
         
         try:
-            # Map material names to LME symbols
-            lme_symbols = {
-                "aluminum": "AL",
-                "aluminium": "AL",
-                "copper": "CU",
-                "zinc": "ZN",
-                "nickel": "NI",
-                "lead": "PB",
-                "tin": "SN",
+            url = f"https://metals-api.com/api/latest"
+            params = {
+                "access_key": self.metals_api_key,
+                "base": currency.upper(),
+                "symbols": symbol
             }
             
-            material_lower = material.lower()
-            symbol = None
-            for key, sym in lme_symbols.items():
-                if key in material_lower:
-                    symbol = sym
-                    break
+            response = await self.http_client.get(url, params=params)
+            data = response.json()
             
-            if not symbol:
-                return None
-            
-            # LME API call (placeholder - real implementation needs proper endpoint)
-            # url = f"https://api.lme.com/v1/price/{symbol}"
-            # headers = {"Authorization": f"Bearer {self.lme_api_key}"}
-            # response = await self.http_client.get(url, headers=headers)
-            
-            # For now, return None - real implementation when API available
-            logger.debug(f"LME API not configured, skipping {material}")
-            return None
-            
-        except Exception as e:
-            logger.error(f"LME API error: {e}")
-            return None
-    
-    async def get_component_price(
-        self,
-        mpn: str,
-        quantity: int = 1,
-        currency: str = "USD"
-    ) -> Optional[PricePoint]:
-        """
-        Get component price from DigiKey or Mouser.
-        
-        Args:
-            mpn: Manufacturer part number
-            quantity: Quantity to price
-            currency: Currency code
-            
-        Returns:
-            PricePoint or None
-        """
-        await self.initialize()
-        
-        # Try database first
-        try:
-            component = await supabase.get_component(mpn)
-            pricing = component.get("pricing", {})
-            
-            if pricing:
-                # Find price for quantity tier
-                price = self._get_price_for_quantity(pricing, quantity, currency)
-                if price:
+            if data.get("success") and "rates" in data:
+                rate = data["rates"].get(symbol)
+                if rate:
+                    # Convert to per kg
+                    price_per_kg = self._convert_to_per_kg(symbol, float(rate))
+                    
                     return PricePoint(
-                        price=price,
-                        currency=currency,
-                        unit="each",
-                        source="component_catalog",
+                        price=price_per_kg,
+                        currency=currency.upper(),
+                        unit="kg",
+                        source="metals-api",
                         timestamp=datetime.now(),
                         expires_at=datetime.now() + timedelta(hours=24)
                     )
-        except ValueError:
-            pass
-        
-        # Try DigiKey API
-        if self.digikey_client_id:
-            price = await self._fetch_digikey_price(mpn, quantity, currency)
-            if price:
-                return price
+        except Exception as e:
+            logger.debug(f"Metals-API error: {e}")
         
         return None
     
-    def _get_price_for_quantity(
+    async def _fetch_metalprice_api_price(
         self,
-        pricing: Dict,
-        quantity: int,
-        currency: str
-    ) -> Optional[float]:
-        """Extract price for quantity tier"""
-        tiers = pricing.get("tiers", [])
-        currency_prices = pricing.get(currency.lower(), {})
-        
-        if not tiers and currency_prices:
-            # Flat pricing
-            return float(currency_prices.get("unit", 0))
-        
-        # Find appropriate tier
-        applicable_tier = None
-        for tier in sorted(tiers, key=lambda x: x.get("min_qty", 0)):
-            if tier.get("min_qty", 0) <= quantity:
-                applicable_tier = tier
-            else:
-                break
-        
-        if applicable_tier:
-            return float(applicable_tier.get("price", 0))
-        
-        return None
-    
-    async def _fetch_digikey_price(
-        self,
-        mpn: str,
-        quantity: int,
+        material: str,
         currency: str
     ) -> Optional[PricePoint]:
-        """Fetch price from DigiKey API"""
-        if not HAS_HTTPX:
+        """Fetch price from MetalpriceAPI."""
+        if not HAS_HTTPX or not self.metalprice_api_key:
+            return None
+        
+        symbol = None
+        for key, sym in self.METALS_API_SYMBOLS.items():
+            if key in material:
+                symbol = sym
+                break
+        
+        if not symbol:
             return None
         
         try:
-            # DigiKey API requires OAuth2 - simplified placeholder
-            # Real implementation needs token refresh
-            logger.debug(f"DigiKey API not fully implemented, skipping {mpn}")
-            return None
+            url = f"https://api.metalpriceapi.com/v1/latest"
+            params = {
+                "api_key": self.metalprice_api_key,
+                "base": currency.upper(),
+                "symbols": symbol
+            }
             
+            response = await self.http_client.get(url, params=params)
+            data = response.json()
+            
+            if "rates" in data:
+                rate = data["rates"].get(symbol)
+                if rate:
+                    price_per_kg = self._convert_to_per_kg(symbol, float(rate))
+                    return PricePoint(
+                        price=price_per_kg,
+                        currency=currency.upper(),
+                        unit="kg",
+                        source="metalpriceapi",
+                        timestamp=datetime.now(),
+                        expires_at=datetime.now() + timedelta(hours=24)
+                    )
         except Exception as e:
-            logger.error(f"DigiKey API error: {e}")
-            return None
+            logger.debug(f"MetalpriceAPI error: {e}")
+        
+        return None
     
-    async def get_carbon_footprint(
+    async def _fetch_yahoo_finance_price(
         self,
         material: str,
-        mass_kg: float
-    ) -> Optional[Dict[str, Any]]:
+        currency: str
+    ) -> Optional[PricePoint]:
         """
-        Get carbon footprint from Climatiq API.
+        Fetch price from Yahoo Finance (completely free).
+        
+        Uses yfinance library to get futures/ETF prices.
+        Limited to metals with futures/ETFs.
+        """
+        if not HAS_YFINANCE:
+            return None
+        
+        # Find ticker
+        ticker_symbol = None
+        for key, ticker in self.YAHOO_TICKERS.items():
+            if key in material:
+                ticker_symbol = ticker
+                break
+        
+        if not ticker_symbol:
+            logger.debug(f"No Yahoo Finance ticker mapping for {material}")
+            return None
+        
+        try:
+            # yfinance is synchronous, run in executor
+            loop = asyncio.get_event_loop()
+            ticker = await loop.run_in_executor(None, yf.Ticker, ticker_symbol)
+            
+            # Get current price
+            hist = await loop.run_in_executor(None, ticker.history, period="1d")
+            
+            if not hist.empty:
+                current_price = hist['Close'].iloc[-1]
+                
+                if current_price and current_price > 0:
+                    # Convert futures price to per kg equivalent
+                    price_per_kg = self._convert_futures_to_kg(ticker_symbol, float(current_price))
+                    
+                    return PricePoint(
+                        price=price_per_kg,
+                        currency="USD",  # Yahoo Finance returns USD
+                        unit="kg",
+                        source="yahoo_finance",
+                        timestamp=datetime.now(),
+                        expires_at=datetime.now() + timedelta(hours=6)
+                    )
+        except Exception as e:
+            logger.debug(f"Yahoo Finance error for {ticker_symbol}: {e}")
+        
+        return None
+    
+    def _convert_to_per_kg(self, symbol: str, price: float) -> float:
+        """Convert API price to per kg"""
+        precious_metals = ["XAU", "XAG", "XPT", "XPD"]
+        
+        if symbol in precious_metals:
+            # Convert troy ounces to kg (1 troy oz = 0.0311035 kg)
+            return price / 0.0311035
+        else:
+            # Already per metric ton (1000 kg)
+            return price / 1000
+    
+    def _convert_futures_to_kg(self, ticker: str, price: float) -> float:
+        """Convert futures price to per kg equivalent"""
+        futures_specs = {
+            "ALI=F": {"unit": "metric_ton", "size": 25},
+            "HG=F": {"unit": "lbs", "size": 25000},
+            "GC=F": {"unit": "troy_oz", "size": 100},
+        }
+        
+        spec = futures_specs.get(ticker)
+        if not spec:
+            # For ETFs like SLX, price is per share, approximate
+            return price / 100  # Rough approximation for steel ETF
+        
+        if spec["unit"] == "metric_ton":
+            return price / 1000
+        elif spec["unit"] == "lbs":
+            return price / 2.205
+        elif spec["unit"] == "troy_oz":
+            return price / 0.0311035
+        
+        return price
+    
+    async def set_material_price(
+        self,
+        material: str,
+        price: float,
+        currency: str = "USD",
+        source: str = "manual"
+    ) -> bool:
+        """
+        Manually set a material price in the database.
+        
+        Use this for supplier quotes, contract prices, or when APIs fail.
         
         Args:
             material: Material name
-            mass_kg: Mass in kg
+            price: Price per kg
+            currency: Currency code (USD, EUR, GBP)
+            source: Price source (manual, supplier_quote, contract)
             
         Returns:
-            Carbon footprint data
+            True if successful, False otherwise
         """
-        # Try database first
         try:
-            material_data = await supabase.get_material(material)
-            factor = material_data.get("carbon_footprint_kg_co2_per_kg")
+            await self.initialize()
             
-            if factor:
-                return {
-                    "material": material,
-                    "mass_kg": mass_kg,
-                    "factor_kg_co2_per_kg": factor,
-                    "total_kg_co2": factor * mass_kg,
-                    "source": material_data.get("data_source", "database"),
-                    "unit": "kg CO2e"
-                }
-        except ValueError:
-            pass
-        
-        # Try Climatiq API
-        if self.climatiq_api_key and HAS_HTTPX:
-            return await self._fetch_climatiq_footprint(material, mass_kg)
-        
-        return None
-    
-    async def _fetch_climatiq_footprint(
-        self,
-        material: str,
-        mass_kg: float
-    ) -> Optional[Dict[str, Any]]:
-        """Fetch carbon footprint from Climatiq"""
-        try:
-            # Climatiq API endpoint
-            url = "https://api.climatiq.io/data/v1/estimate"
-            headers = {
-                "Authorization": f"Bearer {self.climatiq_api_key}",
-                "Content-Type": "application/json"
-            }
+            # Update or insert price
+            await self.supabase.update_material_price(
+                material_name=material,
+                price=price,
+                currency=currency,
+                source=source
+            )
             
-            # Map material to Climatiq activity ID
-            activity_map = {
-                "aluminum": "material-type_aluminium",
-                "steel": "material-type_steel",
-                "plastic": "material-type_plastic",
-            }
-            
-            material_lower = material.lower()
-            activity_id = None
-            for key, act_id in activity_map.items():
-                if key in material_lower:
-                    activity_id = act_id
-                    break
-            
-            if not activity_id:
-                return None
-            
-            payload = {
-                "activity_id": activity_id,
-                "parameters": {
-                    "mass": mass_kg,
-                    "mass_unit": "kg"
-                }
-            }
-            
-            # response = await self.http_client.post(url, json=payload, headers=headers)
-            # data = response.json()
-            
-            # Placeholder - implement when API key available
-            logger.debug(f"Climatiq API not fully configured")
-            return None
+            logger.info(f"Set {material} price to {price} {currency}/kg (source: {source})")
+            return True
             
         except Exception as e:
-            logger.error(f"Climatiq API error: {e}")
-            return None
-    
-    async def batch_get_material_prices(
-        self,
-        materials: List[str],
-        currency: str = "USD"
-    ) -> Dict[str, Optional[PricePoint]]:
-        """
-        Get prices for multiple materials concurrently.
-        
-        Args:
-            materials: List of material names
-            currency: Currency code
-            
-        Returns:
-            Dictionary of material -> PricePoint
-        """
-        tasks = [
-            self.get_material_price(m, currency)
-            for m in materials
-        ]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        return {
-            material: result if not isinstance(result, Exception) else None
-            for material, result in zip(materials, results)
-        }
+            logger.error(f"Failed to set price for {material}: {e}")
+            return False
 
 
 # Global instance

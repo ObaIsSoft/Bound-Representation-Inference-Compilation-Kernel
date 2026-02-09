@@ -4,6 +4,7 @@ import { ArrowLeft, MessageCircle, Send, Mic, Loader, CheckCircle, FileText } fr
 import { useTheme } from '../contexts/ThemeContext';
 import { usePanel } from '../contexts/PanelContext';
 import apiClient from '../utils/apiClient';
+import ThoughtStream from '../components/xai/ThoughtStream';
 
 export default function RequirementsGatheringPage() {
     const location = useLocation();
@@ -282,6 +283,12 @@ export default function RequirementsGatheringPage() {
                             </div>
                         </div>
 
+
+                        {/* XAI: Live Thought Stream */}
+                        <div className="mb-4">
+                            <ThoughtStream compact={true} />
+                        </div>
+
                         {/* User Intent Display */}
                         <div
                             className="mb-6 p-4 rounded-lg"
@@ -416,52 +423,54 @@ export default function RequirementsGatheringPage() {
             </div>
 
             {/* Input Area (Fixed at Bottom) - Only in Gathering Phase */}
-            {phase === 'gathering' && !conversationComplete && (
-                <div
-                    className="px-8 py-4 border-t"
-                    style={{
-                        borderColor: theme.colors.border.primary,
-                        backgroundColor: theme.colors.bg.primary
-                    }}
-                >
-                    <form onSubmit={handleSubmit} className="max-w-3xl mx-auto flex gap-2">
-                        <input
-                            type="text"
-                            value={userInput}
-                            className="flex-1 px-4 py-3 rounded-lg border outline-none"
-                            style={{
-                                backgroundColor: theme.colors.bg.secondary,
-                                borderColor: theme.colors.border.primary,
-                                color: theme.colors.text.primary,
-                            }}
-                            placeholder="Type your answer..."
-                            onChange={handleUserInput}
-                            autoFocus
-                            disabled={loading}
-                        />
-                        <button
-                            type="button"
-                            className="p-3 rounded-lg transition-all hover:opacity-80"
-                            style={{ backgroundColor: theme.colors.accent.secondary }}
-                            aria-label="Voice Input"
-                            disabled={loading}
-                        >
-                            <Mic size={22} style={{ color: theme.colors.text.primary }} />
-                        </button>
-                        <button
-                            type="submit"
-                            className="px-6 py-3 rounded-lg font-bold transition-all hover:opacity-90"
-                            style={{
-                                backgroundColor: theme.colors.accent.primary,
-                                color: theme.colors.text.primary
-                            }}
-                            disabled={loading || !userInput.trim()}
-                        >
-                            Submit
-                        </button>
-                    </form>
-                </div>
-            )}
+            {
+                phase === 'gathering' && !conversationComplete && (
+                    <div
+                        className="px-8 py-4 border-t"
+                        style={{
+                            borderColor: theme.colors.border.primary,
+                            backgroundColor: theme.colors.bg.primary
+                        }}
+                    >
+                        <form onSubmit={handleSubmit} className="max-w-3xl mx-auto flex gap-2">
+                            <input
+                                type="text"
+                                value={userInput}
+                                className="flex-1 px-4 py-3 rounded-lg border outline-none"
+                                style={{
+                                    backgroundColor: theme.colors.bg.secondary,
+                                    borderColor: theme.colors.border.primary,
+                                    color: theme.colors.text.primary,
+                                }}
+                                placeholder="Type your answer..."
+                                onChange={handleUserInput}
+                                autoFocus
+                                disabled={loading}
+                            />
+                            <button
+                                type="button"
+                                className="p-3 rounded-lg transition-all hover:opacity-80"
+                                style={{ backgroundColor: theme.colors.accent.secondary }}
+                                aria-label="Voice Input"
+                                disabled={loading}
+                            >
+                                <Mic size={22} style={{ color: theme.colors.text.primary }} />
+                            </button>
+                            <button
+                                type="submit"
+                                className="px-6 py-3 rounded-lg font-bold transition-all hover:opacity-90"
+                                style={{
+                                    backgroundColor: theme.colors.accent.primary,
+                                    color: theme.colors.text.primary
+                                }}
+                                disabled={loading || !userInput.trim()}
+                            >
+                                Submit
+                            </button>
+                        </form>
+                    </div>
+                )
+            }
 
             {/* CSS Animations */}
             <style>{`
@@ -495,6 +504,6 @@ export default function RequirementsGatheringPage() {
     animation: fadeIn 0.5s ease-out;
 }
 `}</style>
-        </div>
+        </div >
     );
 }

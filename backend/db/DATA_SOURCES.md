@@ -25,14 +25,25 @@ Complete reference for all data sources used in the BRICK OS backend.
 | Thermal Conductivity | ASM Handbook | ✅ In DB | `materials.thermal_conductivity_w_mk` |
 | Max Temperature | Material Datasheets | ✅ In DB | `materials.max_temp_c` |
 
-### Pricing Data
-| Data | Source | Status | API Key Required |
-|------|--------|--------|------------------|
-| Aluminum Prices | LME (London Metal Exchange) | 🔄 API | `LME_API_KEY` |
-| Copper Prices | LME | 🔄 API | `LME_API_KEY` |
-| Steel Prices | Fastmarkets | 🔄 API | `FASTMARKETS_API_KEY` |
-| Plastic Prices | PlasticsNews/ICIS | ⚠️ Missing | Not configured |
-| Titanium Prices | LME/Traders | 🔄 API | `LME_API_KEY` |
+### Pricing Data - FREE TIER OPTIONS
+
+| Data | Source | Cost | Limits | API Key |
+|------|--------|------|--------|---------|
+| **Aluminum** | Metals-API | ✅ Free | 200 calls/month | `METALS_API_KEY` |
+| **Copper** | Metals-API | ✅ Free | 200 calls/month | `METALS_API_KEY` |
+| **Aluminum** | Yahoo Finance | ✅ Free | Unlimited | None (uses yfinance) |
+| **Copper** | Yahoo Finance | ✅ Free | Unlimited | None (uses yfinance) |
+| **Gold/Silver** | Yahoo Finance | ✅ Free | Unlimited | None |
+| **Steel** | Yahoo Finance ETF | ✅ Free | Unlimited | None (proxy via SLX) |
+| **All Metals** | MetalpriceAPI | ✅ Free tier | Varies | `METALPRICE_API_KEY` |
+| Aluminum/Copper | LME | 💰 Paid | Commercial | `LME_API_KEY` |
+
+**Recommended Setup (Free):**
+1. Sign up for Metals-API (200 free calls/month)
+2. Install yfinance: `pip install yfinance`
+3. Set `METALS_API_KEY` in .env
+
+**Fallback:** Manual price entry via `pricing_service.set_material_price()`
 
 ### Carbon Footprint
 | Data | Source | Status | API Key Required |

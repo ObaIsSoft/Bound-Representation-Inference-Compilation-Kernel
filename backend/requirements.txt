@@ -43,3 +43,15 @@ python-multipart
 
 # Additional utilities
 jinja2
+
+# Database & API Client (Phase 8 - De-hardcoding)
+supabase>=2.0.0
+httpx>=0.24.0
+python-dotenv>=1.0.0
+
+# Free Pricing APIs
+yfinance>=0.2.0
+
+# Web scraping (optional fallback)
+beautifulsoup4>=4.12.0
+lxml>=4.9.0

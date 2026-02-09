@@ -18,7 +18,10 @@ Usage:
 """
 
 from .supabase_service import SupabaseService, supabase
-from .pricing_service import PricingService, pricing_service
+from .pricing_service import (
+    PricingService, pricing_service,
+    HAS_YFINANCE, HAS_HTTPX
+)
 from .standards_service import StandardsService, standards_service
 from .component_catalog_service import ComponentCatalogService, component_catalog
 from .asset_sourcing_service import AssetSourcingService, asset_sourcing
@@ -39,4 +42,7 @@ __all__ = [
     "component_catalog",
     "asset_sourcing",
     "currency_service",
+    # Feature flags
+    "HAS_YFINANCE",
+    "HAS_HTTPX",
 ]

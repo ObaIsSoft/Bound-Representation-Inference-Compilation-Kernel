@@ -3,6 +3,7 @@ import { useTheme } from '../contexts/ThemeContext';
 import { usePanel } from '../contexts/PanelContext';
 import { Box, ChevronDown, ChevronUp, Sparkles, Loader2 } from 'lucide-react';
 import ChatMessage from '../components/shared/ChatMessage';
+import ThoughtStream from '../components/xai/ThoughtStream';
 
 const ThoughtBlock = ({ thought, theme }) => {
     const [isExpanded, setIsExpanded] = React.useState(true);
@@ -47,27 +48,8 @@ const ArtifactBlock = ({ artifact, theme }) => {
     );
 };
 
-const LiveThoughtStream = ({ thoughts, theme }) => {
-    if (!thoughts || thoughts.length === 0) return null;
-    return (
-        <div className="fixed bottom-24 right-8 w-full max-w-[280px] z-50 pointer-events-none px-4">
-            <div className="flex flex-col gap-1.5 p-3 bg-black/40 backdrop-blur-2xl border border-white/5 rounded-2xl shadow-2xl animate-in fade-in slide-in-from-right-4 duration-700">
-                <div className="flex items-center gap-2 mb-0.5 px-1">
-                    <div className="w-1 h-1 rounded-full bg-blue-400 animate-pulse" />
-                    <span className="text-[8px] font-black uppercase tracking-[0.2em] opacity-30" style={{ color: theme.colors.text.primary }}>Neural Stream</span>
-                </div>
-                {thoughts.slice(-4).map((t, idx) => (
-                    <div key={idx} className="text-[9px] leading-tight opacity-50 animate-in fade-in slide-in-from-right-2 duration-500 border-l border-white/10 pl-2 py-0.5 italic font-mono" style={{ color: theme.colors.text.secondary }}>
-                        {t}
-                    </div>
-                ))}
-            </div>
-        </div>
-    );
-};
-
 const PlanningPage = () => {
-    const { sessions, activeSessionId, theme, isSubmitting, passiveThoughts } = usePanel();
+    const { sessions, activeSessionId, theme, isSubmitting } = usePanel();
     const chatEndRef = useRef(null);
 
     const session = sessions.find(s => s.id === activeSessionId);
@@ -79,7 +61,11 @@ const PlanningPage = () => {
     return (
         <div className="flex flex-col h-full relative" style={{ backgroundColor: theme.colors.bg.primary }}>
             {/* Real-time Thought Stream Overlay (HUD Style) */}
-            <LiveThoughtStream thoughts={passiveThoughts} theme={theme} />
+            <div className="fixed bottom-24 right-8 w-full max-w-[280px] z-50 pointer-events-none">
+                <div className="pointer-events-auto bg-black/40 backdrop-blur-md rounded-xl border border-white/10 overflow-hidden shadow-2xl">
+                    <ThoughtStream compact={true} />
+                </div>
+            </div>
 
             <div className="flex-1 overflow-y-auto px-6 py-8 space-y-6 scrollbar-hide pb-32">
                 {(!session || session.messages.length === 0) && (

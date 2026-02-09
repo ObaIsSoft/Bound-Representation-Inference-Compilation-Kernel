@@ -3008,6 +3008,279 @@ def broadcast_orchestrator_error(project_id: str, error: str, details: Optional[
 
 
 # =============================================================================
+# COST ESTIMATION API (Phase 8 - De-hardcoding)
+# =============================================================================
+
+from agents.cost_agent import CostAgent
+from pydantic import BaseModel, Field
+
+class CostEstimateRequest(BaseModel):
+    mass_kg: float = Field(default=5.0, description="Material mass in kilograms")
+    material_name: str = Field(default="Aluminum 6061-T6", description="Material name")
+    complexity: str = Field(default="moderate", description="simple/moderate/complex")
+    currency: str = Field(default="USD", description="Currency code (USD, EUR, GBP)")
+    budget_threshold: Optional[float] = Field(default=None, description="Budget limit for feasibility check")
+
+class SetMaterialPriceRequest(BaseModel):
+    material: str = Field(description="Material name")
+    price: float = Field(description="Price per kg")
+    currency: str = Field(default="USD", description="Currency code")
+    source: str = Field(default="manual", description="Price source (manual, supplier_quote)")
+
+# Global CostAgent instance
+cost_agent = CostAgent()
+
+@app.post("/api/cost/estimate")
+async def estimate_cost(req: CostEstimateRequest):
+    """
+    Quick cost estimate for a design.
+    
+    Uses free APIs (Metals-API, Yahoo Finance) or cached prices.
+    Returns error if no price available instead of guessing.
+    """
+    try:
+        result = await cost_agent.quick_estimate(
+            params={
+                "mass_kg": req.mass_kg,
+                "material_name": req.material_name,
+                "complexity": req.complexity,
+                "budget_threshold": req.budget_threshold
+            },
+            currency=req.currency
+        )
+        
+        # If there's an error, return it with 400 status
+        if "error" in result:
+            return {
+                "success": False,
+                "error": result["error"],
+                "solution": result.get("solution", ""),
+                "setup_guide": {
+                    "option_1": "Set METALS_API_KEY (free tier: https://metals-api.com/)",
+                    "option_2": "Install yfinance: pip install yfinance (completely free)",
+                    "option_3": "POST to /api/pricing/set-price to set manual prices"
+                }
+            }
+        
+        return {
+            "success": True,
+            "estimate": result
+        }
+        
+    except Exception as e:
+        logger.error(f"Cost estimation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/pricing/set-price")
+async def set_material_price(req: SetMaterialPriceRequest):
+    """
+    Manually set a material price (for when APIs unavailable).
+    
+    Use this to set supplier quotes or contract prices.
+    """
+    try:
+        from backend.services import pricing_service
+        
+        success = await pricing_service.set_material_price(
+            material=req.material,
+            price=req.price,
+            currency=req.currency,
+            source=req.source
+        )
+        
+        if success:
+            return {
+                "success": True,
+                "message": f"Set {req.material} price to {req.price} {req.currency}/{req.source}"
+            }
+        else:
+            raise HTTPException(status_code=500, detail="Failed to set price")
+            
+    except Exception as e:
+        logger.error(f"Set price error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/pricing/check")
+async def check_pricing_status():
+    """
+    Check which pricing APIs are configured and working.
+    """
+    from backend.services import pricing_service, HAS_YFINANCE, HAS_HTTPX
+    
+    await pricing_service.initialize()
+    
+    # Test Yahoo Finance
+    yfinance_working = False
+    if HAS_YFINANCE:
+        try:
+            import yfinance as yf
+            ticker = yf.Ticker("ALI=F")
+            hist = ticker.history(period="1d")
+            yfinance_working = not hist.empty
+        except Exception:
+            pass
+    
+    return {
+        "apis": {
+            "metals_api": {
+                "configured": bool(pricing_service.metals_api_key),
+                "status": "ready" if pricing_service.metals_api_key else "not_configured"
+            },
+            "metalprice_api": {
+                "configured": bool(pricing_service.metalprice_api_key),
+                "status": "ready" if pricing_service.metalprice_api_key else "not_configured"
+            },
+            "yahoo_finance": {
+                "installed": HAS_YFINANCE,
+                "working": yfinance_working,
+                "status": "ready" if yfinance_working else "not_working"
+            }
+        },
+        "setup_guide": {
+            "free_options": [
+                "1. Metals-API: Sign up at https://metals-api.com/ (200 calls/month free)",
+                "2. Yahoo Finance: pip install yfinance (completely free, unlimited)",
+                "3. Manual: POST to /api/pricing/set-price with your supplier quotes"
+            ]
+        }
+    }
+
+# =============================================================================
+# STANDARDS INTEGRATION API (Week 3 - Standards Layer)
+# =============================================================================
+
+@app.get("/api/standards/sources")
+async def list_standards_sources():
+    """
+    List available standards sources (NIST, NASA, ISO, ASTM, etc.)
+    """
+    from backend.services.standards_integration import (
+        NISTConnector, NASAConnector, StandardsWebScraper
+    )
+    
+    sources = []
+    
+    # NIST
+    nist = NISTConnector()
+    nist_sources = await nist.list_available()
+    sources.append({
+        "name": "NIST",
+        "description": "National Institute of Standards and Technology",
+        "types": [s["type"] for s in nist_sources],
+        "public_access": True,
+        "url": "https://www.nist.gov"
+    })
+    
+    # NASA
+    nasa = NASAConnector()
+    nasa_sources = await nasa.list_available()
+    sources.append({
+        "name": "NASA",
+        "description": "NASA Technical Standards and Publications",
+        "types": [s["type"] for s in nasa_sources],
+        "public_access": True,
+        "url": "https://standards.nasa.gov"
+    })
+    
+    # Web sources (metadata only)
+    web = StandardsWebScraper()
+    web_sources = await web.list_available()
+    sources.append({
+        "name": "Web_Scraper",
+        "description": "Metadata from ISO, ASTM, ANSI (full standards require purchase)",
+        "types": [s["type"] for s in web_sources],
+        "public_access": "metadata_only",
+        "url": "https://www.iso.org, https://www.astm.org"
+    })
+    
+    return {
+        "sources": sources,
+        "total": len(sources)
+    }
+
+@app.get("/api/standards/search")
+async def search_standards(
+    query: str,
+    source: str = "all",
+    limit: int = 10
+):
+    """
+    Search for standards across sources.
+    
+    Args:
+        query: Search terms
+        source: Source to search (nist, nasa, web, all)
+        limit: Max results
+    """
+    from backend.services.standards_integration import (
+        NISTConnector, NASAConnector, StandardsWebScraper
+    )
+    
+    results = []
+    
+    connectors = {
+        "nist": NISTConnector(),
+        "nasa": NASAConnector(),
+        "web": StandardsWebScraper()
+    }
+    
+    sources_to_search = [source] if source != "all" else ["nist", "nasa", "web"]
+    
+    for src_name in sources_to_search:
+        if src_name in connectors:
+            try:
+                connector = connectors[src_name]
+                search_results = await connector.search_standards(query, limit=limit)
+                results.extend([{
+                    **r,
+                    "source": src_name
+                } for r in search_results])
+            except Exception as e:
+                logger.warning(f"Search failed for {src_name}: {e}")
+    
+    return {
+        "query": query,
+        "results": results[:limit],
+        "total_found": len(results)
+    }
+
+@app.post("/api/standards/sync")
+async def sync_standard(
+    source: str,
+    standard_type: str,
+    standard_number: str,
+    revision: Optional[str] = None
+):
+    """
+    Sync a standard from external source to database.
+    
+    Args:
+        source: Source name (nist, nasa)
+        standard_type: Type of standard (FIPS, NASA-STD, etc.)
+        standard_number: Standard number
+        revision: Optional revision
+    """
+    from backend.services.standards_integration import StandardsSync
+    
+    sync = StandardsSync()
+    result = await sync.sync_standard(source, standard_type, standard_number, revision)
+    
+    if result["success"]:
+        return result
+    else:
+        raise HTTPException(status_code=400, detail=result)
+
+@app.get("/api/standards/status")
+async def get_standards_status():
+    """Get standards sync status"""
+    from backend.services.standards_integration import StandardsSync
+    
+    sync = StandardsSync()
+    status = await sync.get_sync_status()
+    
+    return status
+
+# =============================================================================
 # Server Startup
 # =============================================================================
 

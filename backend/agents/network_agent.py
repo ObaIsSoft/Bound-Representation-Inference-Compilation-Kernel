@@ -15,50 +15,66 @@ class NetworkAgent:
         """
         Analyze Network Topology and Predict Latency using Learned Models.
         """
-        logger.info(f"{self.name} starting traffic analysis...")
-        
-        # 1. Inputs: Topology graph and Traffic Load
-        # Topology: List of nodes/links
-        topology = params.get("topology", {})
-        nodes = topology.get("nodes", [])
-        links = topology.get("links", [])
-        
-        # Traffic: List of flows {"src": "A", "dst": "B", "mbps": 10.0}
-        traffic_flows = params.get("traffic_flows", [])
-        
-        # 2. Latency Prediction Model
-        # Predict bottlecks before simulation
-        # Latency = f(Hops, Bandwidth, LoadFactor)
-        
-        predictions = []
-        max_latency = 0.0
-        
-        for flow in traffic_flows:
-            src = flow.get("src")
-            dst = flow.get("dst")
-            load = flow.get("mbps", 1.0)
+        try:
+            logger.info(f"{self.name} starting traffic analysis...")
             
-            # Find path (BFS/Dijkstra) is needed but we approximate "Hops" here
-            # Or assume direct link if small network
-            hops = 2 # Mock average hops
+            # 1. Inputs: Topology graph and Traffic Load
+            topology = params.get("topology", {})
+            nodes = topology.get("nodes", [])
+            links = topology.get("links", [])
             
-            # Predict
-            pred_latency = self._predict_latency(hops, load)
+            # Traffic: List of flows {"src": "A", "dst": "B", "mbps": 10.0}
+            traffic_flows = params.get("traffic_flows", [])
             
-            predictions.append({
-                "flow_id": f"{src}->{dst}",
-                "predicted_latency_ms": pred_latency,
-                "status": "ok" if pred_latency < 50 else "high_latency"
-            })
-            max_latency = max(max_latency, pred_latency)
+            if not traffic_flows:
+                return {
+                    "status": "error",
+                    "error": "No traffic_flows provided",
+                    "network_health": "unknown"
+                }
             
-        return {
-            "status": "success",
-            "network_health": "degraded" if max_latency > 100 else "good",
-            "max_latency_ms": round(max_latency, 2),
-            "flow_predictions": predictions,
-            "logs": [f"Analyzed {len(predictions)} flows using Latency Regressor."]
-        }
+            # 2. Latency Prediction Model
+            predictions = []
+            max_latency = 0.0
+            
+            for flow in traffic_flows:
+                try:
+                    src = flow.get("src")
+                    dst = flow.get("dst")
+                    load = flow.get("mbps", 1.0)
+                    
+                    hops = 2  # Default average hops
+                    
+                    pred_latency = self._predict_latency(hops, load)
+                    
+                    predictions.append({
+                        "flow_id": f"{src}->{dst}",
+                        "predicted_latency_ms": pred_latency,
+                        "status": "ok" if pred_latency < 50 else "high_latency"
+                    })
+                    max_latency = max(max_latency, pred_latency)
+                except Exception as e:
+                    logger.error(f"Error analyzing flow {flow}: {e}")
+                    predictions.append({
+                        "flow_id": f"{flow.get('src', '?')}->{flow.get('dst', '?')}",
+                        "error": str(e),
+                        "status": "error"
+                    })
+                
+            return {
+                "status": "success",
+                "network_health": "degraded" if max_latency > 100 else "good",
+                "max_latency_ms": round(max_latency, 2),
+                "flow_predictions": predictions,
+                "logs": [f"Analyzed {len(predictions)} flows using Latency Regressor."]
+            }
+        except Exception as e:
+            logger.error(f"Error in network analysis: {e}")
+            return {
+                "status": "error",
+                "error": str(e),
+                "network_health": "unknown"
+            }
 
     def _predict_latency(self, hops: int, load_mbps: float) -> float:
         """

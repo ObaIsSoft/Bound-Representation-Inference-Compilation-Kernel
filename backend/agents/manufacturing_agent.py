@@ -117,7 +117,12 @@ class ManufacturingAgent:
         """Setup time from database"""
         if not self._initialized:
             raise RuntimeError("ManufacturingAgent not initialized. Call initialize() first.")
-        return self._rates.get("setup_time_minutes", 30)
+        if not self._initialized:
+            raise RuntimeError("ManufacturingAgent not initialized. Call initialize() first.")
+        setup_time = self._rates.get("setup_time_minutes")
+        if setup_time is None:
+            raise ValueError("setup_time_minutes not found in manufacturing rates")
+        return setup_time
     
     @property
     def min_cnc_radius_mm(self) -> float:
@@ -141,9 +146,9 @@ class ManufacturingAgent:
             material = await supabase.get_material(material_name)
             
             return {
-                "density": material.get("density_kg_m3", 2700),
+                "density": material.get("density_kg_m3"),
                 "cost_per_kg": material.get("cost_per_kg_usd"),
-                "machining_factor": 1.0  # Default, can be enhanced
+                "machining_factor": material.get("machining_factor", 1.0)
             }
         except ValueError:
             # Material not in database - return error info
@@ -173,7 +178,8 @@ class ManufacturingAgent:
             h = params.get("height", params.get("length", 0))
             return (math.pi * r**2 * h) * scale
             
-        return 0.001  # Fallback volume
+        logger.warning(f"Unknown shape type: {shape_type}, cannot calculate volume")
+        return 0.0
 
     async def run(
         self, 
@@ -236,7 +242,8 @@ class ManufacturingAgent:
                 material_cost = mass * base_cost
                 
                 # Machining time from rates
-                time_per_kg = 1.0  # Default hours per kg
+                # Get time_per_kg from rates or use process-specific default
+                time_per_kg = self._rates.get("time_per_kg_hours", 1.0)
                 est_hours = mass * time_per_kg * machining_factor
                 machining_cost = (self.hourly_rate * est_hours) + self.setup_cost
                 

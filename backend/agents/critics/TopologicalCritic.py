@@ -14,13 +14,59 @@ class TopologicalCritic:
     - Path Success Rate (Did the vehicle reach goal?)
     - Traversability Accuracy (Did we predict 'Safe' for a hazardous area?)
     - Mode Appropriateness (Did Ground mode fail where Aerial would work?)
+    
+    Thresholds loaded from Supabase critic_thresholds table.
     """
     
-    def __init__(self, window_size: int = 50):
-        self.window_size = window_size
-        self.history = deque(maxlen=window_size)
+    def __init__(self, window_size: int = None, vehicle_type: str = "default"):
+        self._vehicle_type = vehicle_type
+        self._thresholds_loaded = False
+        self._thresholds = {}
+        
+        # These will be loaded from Supabase if None
+        self._window_size = window_size
+        
+        self.history = deque(maxlen=window_size or 50)
             
-    def observe(self, 
+    async def _load_thresholds(self):
+        """Load thresholds from Supabase if not provided."""
+        if self._thresholds_loaded:
+            return
+            
+        try:
+            from backend.services import supabase
+            self._thresholds = await supabase.get_critic_thresholds("TopologicalCritic", self._vehicle_type)
+            
+            if self._window_size is None:
+                self._window_size = self._thresholds.get("window_size", 50)
+                
+            # Update deque sizes if changed
+            if len(self.history) != self._window_size:
+                self.history = deque(self.history, maxlen=self._window_size)
+                
+            self._thresholds_loaded = True
+            logger.info(f"TopologicalCritic thresholds loaded for {self._vehicle_type}")
+        except Exception as e:
+            logger.warning(f"Could not load thresholds from Supabase: {e}. Using defaults.")
+            if self._window_size is None:
+                self._window_size = 50
+            self._thresholds = self._default_thresholds()
+            self._thresholds_loaded = True
+    
+    def _default_thresholds(self) -> Dict:
+        """Default thresholds if Supabase unavailable."""
+        return {
+            "failure_rate_high": 0.3,
+            "avg_pred_overconfident": 0.7,
+            "failure_rate_low": 0.1,
+            "avg_pred_conservative": 0.4,
+        }
+        
+    @property
+    def window_size(self) -> int:
+        return self._window_size
+            
+    async def observe(self, 
                 params: Dict, 
                 prediction: Dict, 
                 outcome: Dict):
@@ -30,62 +76,84 @@ class TopologicalCritic:
         prediction: Agent's traversability score & mode recommendation.
         outcome: Actual result {"success": bool, "hazard_encountered": str}
         """
-        self.history.append({
-            "params": params,
-            "prediction": prediction,
-            "outcome": outcome
-        })
+        try:
+            self.history.append({
+                "params": params,
+                "prediction": prediction,
+                "outcome": outcome
+            })
+        except Exception as e:
+            logger.error(f"Error in observe: {e}")
             
-    def analyze(self) -> Dict:
-        if len(self.history) < 5:
-            return {"status": "insufficient_data"}
-            
-        # 1. Prediction Error (RMSE of Traversability vs Outcome)
-        # Outcome: 1.0 (Success), 0.0 (Failure/Stuck)
-        errors = []
-        failures = 0
-        total = len(self.history)
+    async def analyze(self) -> Dict:
+        await self._load_thresholds()
         
-        for entry in self.history:
-            pred_score = entry["prediction"].get("traversability", 0.5)
-            # Ground truth: Did we pass?
-            actual_score = 1.0 if entry["outcome"].get("success", False) else 0.0
-            
-            errors.append((pred_score - actual_score) ** 2)
-            if not entry["outcome"].get("success"):
-                failures += 1
+        try:
+            if len(self.history) < 5:
+                return {"status": "insufficient_data"}
                 
-        rmse = np.sqrt(sum(errors) / len(errors))
-        failure_rate = failures / total
-        
-        # 2. Recommendations
-        recommendations = []
-        action = None
-        
-        # High failure rate but High Predicted Traversability => Overconfident
-        avg_pred = sum([e["prediction"].get("traversability", 0) for e in self.history]) / total
-        
-        if failure_rate > 0.3 and avg_pred > 0.7:
-            recommendations.append("Agent is OVERCONFIDENT. Increase terrain penalty weights.")
-            action = "INCREASE_PENALTY"
-        elif failure_rate < 0.1 and avg_pred < 0.4:
-             recommendations.append("Agent is TOO CONSERVATIVE. Reduce terrain penalty weights.")
-             action = "DECREASE_PENALTY"
+            # 1. Prediction Error (RMSE of Traversability vs Outcome)
+            # Outcome: 1.0 (Success), 0.0 (Failure/Stuck)
+            errors = []
+            failures = 0
+            total = len(self.history)
             
-        return {
-            "prediction_rmse": rmse,
-            "failure_rate": failure_rate,
-            "avg_prediction": avg_pred,
-            "suggested_action": action
-        }
-        
-    def should_evolve(self) -> Tuple[bool, str, str]:
-        if len(self.history) < 5: return False, "", None
-        
-        report = self.analyze()
-        action = report.get("suggested_action")
-        
-        if action:
-            return True, f"Calibration required: {action}", action
+            for entry in self.history:
+                pred_score = entry["prediction"].get("traversability", 0.5)
+                # Ground truth: Did we pass?
+                actual_score = 1.0 if entry["outcome"].get("success", False) else 0.0
+                
+                errors.append((pred_score - actual_score) ** 2)
+                if not entry["outcome"].get("success"):
+                    failures += 1
+                    
+            rmse = np.sqrt(sum(errors) / len(errors))
+            failure_rate = failures / total
             
+            # 2. Recommendations
+            recommendations = []
+            action = None
+            
+            # High failure rate but High Predicted Traversability => Overconfident
+            avg_pred = sum([e["prediction"].get("traversability", 0) for e in self.history]) / total
+            
+            fail_high = self._thresholds.get("failure_rate_high", 0.3)
+            pred_over = self._thresholds.get("avg_pred_overconfident", 0.7)
+            fail_low = self._thresholds.get("failure_rate_low", 0.1)
+            pred_con = self._thresholds.get("avg_pred_conservative", 0.4)
+            
+            if failure_rate > fail_high and avg_pred > pred_over:
+                recommendations.append("Agent is OVERCONFIDENT. Increase terrain penalty weights.")
+                action = "INCREASE_PENALTY"
+            elif failure_rate < fail_low and avg_pred < pred_con:
+                 recommendations.append("Agent is TOO CONSERVATIVE. Reduce terrain penalty weights.")
+                 action = "DECREASE_PENALTY"
+                
+            return {
+                "prediction_rmse": rmse,
+                "failure_rate": failure_rate,
+                "avg_prediction": avg_pred,
+                "suggested_action": action
+            }
+        except Exception as e:
+            logger.error(f"Error in analyze: {e}")
+            return {
+                "status": "error",
+                "error": str(e)
+            }
+        
+    async def should_evolve(self) -> Tuple[bool, str, str]:
+        try:
+            if len(self.history) < 5:
+                return False, "", None
+            
+            await self._load_thresholds()
+            report = await self.analyze()
+            action = report.get("suggested_action")
+            
+            if action:
+                return True, f"Calibration required: {action}", action
+        except Exception as e:
+            logger.error(f"Error in should_evolve: {e}")
+                
         return False, "Nominal", None

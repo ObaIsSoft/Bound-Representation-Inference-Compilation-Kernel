@@ -119,10 +119,10 @@ from agents.unified_design_agent import UnifiedDesignAgent
 # Global instance for stateful operations like exploration
 unified_design_agent = UnifiedDesignAgent()
 
-# Global Conversational Agent with RLM (Recursive Language Model)
-# RLMEnhancedAgent is a drop-in replacement that adds recursive reasoning
-from rlm.integration import RLMEnhancedAgent
-conversational_agent = RLMEnhancedAgent(
+# Global Conversational Agent with integrated RLM
+# RLM is now unified into ConversationalAgent (no separate module)
+from agents.conversational_agent import ConversationalAgent
+conversational_agent = ConversationalAgent(
     enable_rlm=True,
     rlm_config={
         "max_depth": 3,

@@ -17,6 +17,21 @@ class SessionStore(ABC):
     """Abstract base class for session storage."""
     
     @abstractmethod
+    async def get(self, key: str) -> Optional[Any]:
+        """Get value by key."""
+        pass
+    
+    @abstractmethod
+    async def set(self, key: str, value: Any, ttl: int = 3600):
+        """Set value with TTL."""
+        pass
+    
+    @abstractmethod
+    async def delete(self, key: str):
+        """Delete key."""
+        pass
+    
+    @abstractmethod
     async def get_discovery_state(self, session_id: str) -> Optional[Dict]:
         """Retrieve discovery state for a session."""
         pass
@@ -44,9 +59,28 @@ class InMemorySessionStore(SessionStore):
     """
     
     def __init__(self):
-        self._store: Dict[str, Dict] = {}
+        self._store: Dict[str, Any] = {}
         self._timestamps: Dict[str, float] = {}
         self._lock = asyncio.Lock()
+    
+    async def get(self, key: str) -> Optional[Any]:
+        """Get value by key."""
+        async with self._lock:
+            await self._cleanup_expired()
+            return self._store.get(key)
+    
+    async def set(self, key: str, value: Any, ttl: int = 3600):
+        """Set value with TTL."""
+        async with self._lock:
+            import time
+            self._store[key] = value
+            self._timestamps[key] = time.time() + ttl
+    
+    async def delete(self, key: str):
+        """Delete key."""
+        async with self._lock:
+            self._store.pop(key, None)
+            self._timestamps.pop(key, None)
     
     async def get_discovery_state(self, session_id: str) -> Optional[Dict]:
         async with self._lock:
@@ -90,6 +124,38 @@ class RedisSessionStore(SessionStore):
         self.redis_url = redis_url or self._get_redis_url()
         self._redis: Optional[Any] = None
         self._lock = asyncio.Lock()
+    
+    async def get(self, key: str) -> Optional[Any]:
+        """Get value by key from Redis."""
+        try:
+            redis = await self._get_redis()
+            data = await redis.get(key)
+            if data is None:
+                return None
+            try:
+                return json.loads(data)
+            except json.JSONDecodeError:
+                return data
+        except Exception as e:
+            logger.error(f"Failed to get key {key}: {e}")
+            return None
+    
+    async def set(self, key: str, value: Any, ttl: int = 3600):
+        """Set value with TTL in Redis."""
+        try:
+            redis = await self._get_redis()
+            await redis.setex(key, ttl, json.dumps(value, default=str))
+        except Exception as e:
+            logger.error(f"Failed to set key {key}: {e}")
+            raise
+    
+    async def delete(self, key: str):
+        """Delete key from Redis."""
+        try:
+            redis = await self._get_redis()
+            await redis.delete(key)
+        except Exception as e:
+            logger.error(f"Failed to delete key {key}: {e}")
     
     def _get_redis_url(self) -> str:
         """Get Redis URL from environment or default."""

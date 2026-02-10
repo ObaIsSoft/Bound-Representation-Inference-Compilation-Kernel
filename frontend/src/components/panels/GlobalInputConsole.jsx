@@ -25,7 +25,9 @@ const GlobalInputConsole = () => {
         activeTab,
         activeArtifact,
         isSubmitting,
-        setIsSubmitting
+        setIsSubmitting,
+        thoughts,
+        clearThoughts
     } = usePanel();
 
     const [message, setMessage] = useState('');
@@ -117,8 +119,20 @@ const GlobalInputConsole = () => {
                 await fetchSessions();
             }
 
-            // 5. Add agent response
-            addMessageToSession(responseData.session_id, 'agent', responseData.response, {
+            // 5. Sync accumulated thoughts to session history
+            const targetSessionId = responseData.session_id || activeSessionId;
+            if (thoughts && thoughts.length > 0) {
+                thoughts.forEach(t => {
+                    addMessageToSession(targetSessionId, 'thought', t.text || t.content, {
+                        agent: t.agent,
+                        timestamp: t.timestamp
+                    });
+                });
+                clearThoughts();
+            }
+
+            // 6. Add agent response
+            addMessageToSession(targetSessionId, 'agent', responseData.response, {
                 intent: responseData.intent
             });
 

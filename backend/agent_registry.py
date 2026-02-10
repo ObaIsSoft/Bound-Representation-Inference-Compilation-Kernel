@@ -57,9 +57,9 @@ class GlobalAgentRegistry:
         "ControlAgent": ("agents.control_agent", "ControlAgent"),
             
             # Specialized
-        # NOTE: ConversationalAgent now uses RLM (Recursive Language Model) by default
-        # This provides recursive decomposition, parallel execution, and delta updates
-        "ConversationalAgent": ("rlm.integration", "RLMEnhancedAgent"),
+        # NOTE: ConversationalAgent now has RLM integrated inline (unified implementation)
+        # The rlm/ module has been deprecated and merged into conversational_agent.py
+        "ConversationalAgent": ("agents.conversational_agent", "ConversationalAgent"),
         "AssetSourcingAgent": ("agents.asset_sourcing_agent", "AssetSourcingAgent"),
         "STTAgent": ("agents.stt_agent", "STTAgent"),
         "ChemistryAgent": ("agents.chemistry_agent", "ChemistryAgent"),

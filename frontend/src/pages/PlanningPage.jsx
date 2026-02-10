@@ -1,4 +1,5 @@
 import React, { useRef, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useTheme } from '../contexts/ThemeContext';
 import { usePanel } from '../contexts/PanelContext';
 import { Box, ChevronDown, ChevronUp, Sparkles, Loader2 } from 'lucide-react';
@@ -49,53 +50,48 @@ const ArtifactBlock = ({ artifact, theme }) => {
 };
 
 const PlanningPage = () => {
-    const { sessions, activeSessionId, theme, isSubmitting } = usePanel();
+    const location = useLocation();
+    const { sessions, activeSessionId, isSubmitting, switchSession, togglePanel, PANEL_IDS } = usePanel();
+    const { theme } = useTheme();
     const chatEndRef = useRef(null);
+
+    // Activate the session from requirements gathering
+    const incomingSessionId = location.state?.sessionId;
+    useEffect(() => {
+        if (incomingSessionId && incomingSessionId !== activeSessionId) {
+            switchSession(incomingSessionId);
+            // Open the panel so the conversation is visible
+            togglePanel(PANEL_IDS.MAIN);
+        }
+    }, [incomingSessionId]);
 
     const session = sessions.find(s => s.id === activeSessionId);
 
     useEffect(() => {
         chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }, [session?.messages, isSubmitting]);
+    }, [session?.history, isSubmitting]);
 
     return (
-        <div className="flex flex-col h-full relative" style={{ backgroundColor: theme.colors.bg.primary }}>
+        <div className="flex flex-col h-screen w-full" style={{ backgroundColor: theme.colors.bg.primary }}>
             {/* Real-time Thought Stream Overlay (HUD Style) */}
-            <div className="fixed bottom-24 right-8 w-full max-w-[280px] z-50 pointer-events-none">
+            <div className="fixed bottom-24 right-8 max-w-[280px] z-50 pointer-events-none">
                 <div className="pointer-events-auto bg-black/40 backdrop-blur-md rounded-xl border border-white/10 overflow-hidden shadow-2xl">
                     <ThoughtStream compact={true} />
                 </div>
             </div>
 
             <div className="flex-1 overflow-y-auto px-6 py-8 space-y-6 scrollbar-hide pb-32">
-                {(!session || session.messages.length === 0) && (
-                    <div className="h-full flex flex-col items-center justify-center opacity-20 py-20">
-                        <div className="p-6 rounded-full bg-white/5 border border-white/10 mb-6">
-                            <Sparkles size={48} />
-                        </div>
-                        <h2 className="text-2xl font-black uppercase tracking-widest mb-2">Genesis Matrix</h2>
-                        <p className="text-xs font-mono">Kernel initialized. Awaiting user intent...</p>
+                {/* Main view shows only artifacts via tabs - conversation is in the floating panel */}
+                <div className="h-full flex flex-col items-center justify-center opacity-20 py-20">
+                    <div className="p-6 rounded-full bg-white/5 border border-white/10 mb-6">
+                        <Sparkles size={48} />
                     </div>
-                )}
-
-                {session?.messages.map((msg, idx) => (
-                    <ChatMessage key={msg.id || idx} message={msg} theme={theme} />
-                ))}
-
-                {isSubmitting && (
-                    <div className="flex items-start gap-4 animate-pulse opacity-50 px-2">
-                        <div className="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center border border-white/10">
-                            <Loader2 className="animate-spin" size={12} />
-                        </div>
-                        <div className="flex-1 py-1">
-                            <div className="h-1.5 w-24 bg-white/10 rounded-full mb-3" />
-                            <div className="space-y-2">
-                                <div className="h-1.5 w-full bg-white/5 rounded-full" />
-                                <div className="h-1.5 w-[80%] bg-white/5 rounded-full" />
-                            </div>
-                        </div>
-                    </div>
-                )}
+                    <h2 className="text-2xl font-black uppercase tracking-widest mb-2">Planning Phase</h2>
+                    <p className="text-xs font-mono mb-4">Plan artifacts will appear here when generated</p>
+                    <p className="text-[10px] opacity-40 max-w-md text-center">
+                        Use the floating panel to view conversation history and open artifact tabs
+                    </p>
+                </div>
 
                 <div ref={chatEndRef} />
             </div>

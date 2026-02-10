@@ -86,11 +86,10 @@ const MainPanel = () => {
     const renderContent = () => {
         if (activeTab === 'chat' || !activeTab) {
             return (
-                <div className="flex flex-col min-h-full p-4">
-                    <div className="flex-grow" />
-                    <div className="flex flex-col gap-6 py-4">
+                <div className="flex flex-col justify-end min-h-full p-4">
+                    <div className="space-y-6">
                         {activeSession?.history.length === 0 ? (
-                            <div className="text-center opacity-30 text-xs mb-10 italic" style={{ color: theme.colors.text.secondary }}>
+                            <div className="text-center opacity-30 text-xs py-10 italic" style={{ color: theme.colors.text.secondary }}>
                                 No activity recorded. Send a prompt to begin.
                             </div>
                         ) : (
@@ -168,11 +167,11 @@ const MainPanel = () => {
         <DraggablePanel
             id={PANEL_IDS.MAIN}
             headerContent={headerContent}
-            className="pointer-events-auto"
+            className="pointer-events-auto overflow-hidden"
         >
             <div
                 ref={scrollRef}
-                className="h-full flex flex-col overflow-y-auto custom-scrollbar relative"
+                className="h-full overflow-y-auto overflow-x-hidden custom-scrollbar relative"
                 style={{ backgroundColor: theme.colors.bg.secondary + '80' }} // Slight transparency
             >
                 {renderContent()}

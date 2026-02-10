@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { ArrowLeft, MessageCircle, Send, Mic, Loader, CheckCircle, FileText } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';
@@ -29,8 +29,9 @@ export default function RequirementsGatheringPage() {
     const [planArtifacts, setPlanArtifacts] = useState([]);
     const [planGenerating, setPlanGenerating] = useState(false);
     const [conversationComplete, setConversationComplete] = useState(false);
-    const { activeSessionId, setIsAgentProcessing, startNewSession } = usePanel();
+    const { activeSessionId, setIsAgentProcessing, startNewSession, addMessageToSession } = usePanel();
     const [localSessionId, setLocalSessionId] = useState(null);
+    const hasInitiatedChat = useRef(false); // Prevent double execution
 
     // CRITICAL: Create a fresh session for this new conversation
     useEffect(() => {
@@ -46,9 +47,13 @@ export default function RequirementsGatheringPage() {
     // Initial trigger using userIntent
     useEffect(() => {
         const initChat = async () => {
+            if (hasInitiatedChat.current) return; // Prevent double execution
             if (agentMessages.length === 0 && userIntent && !loading) {
+                hasInitiatedChat.current = true;
                 // Display user intent as first message
                 setAgentMessages([`You: ${userIntent}`]);
+                // Sync to PanelContext session
+                if (localSessionId) addMessageToSession(localSessionId, 'user', userIntent);
 
                 setLoading(true);
                 setIsTyping(true);
@@ -69,6 +74,8 @@ export default function RequirementsGatheringPage() {
 
                     // Add response
                     setAgentMessages(prev => [...prev, `Agent: ${data.response}`]);
+                    // Sync to PanelContext session
+                    if (localSessionId) addMessageToSession(localSessionId, 'assistant', data.response);
 
                     // Update all requirements including NEW fields
                     if (data.feasibility) {
@@ -101,6 +108,8 @@ export default function RequirementsGatheringPage() {
         // Add user message to conversation
         const newMessages = [...agentMessages, `You: ${userInput} `];
         setAgentMessages(newMessages);
+        // Sync to PanelContext session
+        if (localSessionId) addMessageToSession(localSessionId, 'user', userInput);
         setUserInput('');
         setLoading(true);
         setIsTyping(true);
@@ -127,6 +136,8 @@ export default function RequirementsGatheringPage() {
 
             // Add agent response
             setAgentMessages([...newMessages, `Agent: ${data.response} `]);
+            // Sync to PanelContext session
+            if (localSessionId) addMessageToSession(localSessionId, 'assistant', data.response);
             setIsTyping(false);
             if (!data.requirements_complete) {
                 setIsAgentProcessing(false); // Disable polling if done for now
@@ -161,7 +172,8 @@ export default function RequirementsGatheringPage() {
                                 planArtifacts: artifacts,
                                 requirements: data.requirements,
                                 userIntent: userIntent,
-                                conversationId: data.conversation_id
+                                conversationId: data.conversation_id,
+                                sessionId: localSessionId
                             }
                         });
                     }, 2000);
@@ -204,7 +216,8 @@ export default function RequirementsGatheringPage() {
                         planArtifacts: planData.artifacts || [],
                         requirements: requirements,
                         userIntent: userIntent,
-                        conversationId: conversationId
+                        conversationId: conversationId,
+                        sessionId: localSessionId
                     }
                 });
                 setPlanGenerating(false);
@@ -295,15 +308,14 @@ export default function RequirementsGatheringPage() {
                                 style={{ borderColor: theme.colors.border.primary + '40', backgroundColor: 'transparent' }}>
                                 <span className="text-xs font-bold uppercase tracking-wider mb-1" style={{ color: theme.colors.text.secondary }}>Safety</span>
                                 <div className="flex items-center gap-1">
-                                    <div className={`w-2 h-2 rounded-full ${
-                                        requirements.feasibility?.safety?.status === 'safe' ? 'bg-green-500' :
-                                        requirements.feasibility?.safety?.status === 'hazards_detected' ? 'bg-yellow-500' :
-                                        'bg-gray-500'
-                                    }`}></div>
+                                    <div className={`w-2 h-2 rounded-full ${requirements.feasibility?.safety?.status === 'safe' ? 'bg-green-500' :
+                                            requirements.feasibility?.safety?.status === 'hazards_detected' ? 'bg-yellow-500' :
+                                                'bg-gray-500'
+                                        }`}></div>
                                     <span className="text-xs font-bold" style={{ color: theme.colors.text.primary }}>
                                         {requirements.feasibility?.safety?.status === 'safe' ? 'Safe' :
-                                         requirements.feasibility?.safety?.status === 'hazards_detected' ? 'Check' :
-                                         'Checking...'}
+                                            requirements.feasibility?.safety?.status === 'hazards_detected' ? 'Check' :
+                                                'Checking...'}
                                     </span>
                                 </div>
                             </div>
@@ -362,7 +374,7 @@ export default function RequirementsGatheringPage() {
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                                 </svg>
                                 <span>
-                                    {requirements.file_context.files_processed} file(s) analyzed 
+                                    {requirements.file_context.files_processed} file(s) analyzed
                                     ({(requirements.file_context.total_chars / 1000).toFixed(1)}k characters)
                                 </span>
                             </div>

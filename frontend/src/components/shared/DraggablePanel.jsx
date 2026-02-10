@@ -122,7 +122,7 @@ const DraggablePanel = ({ id, children, className = '', headerContent, zIndex = 
             </div>
 
             {/* Content Area */}
-            <div className="flex-1 relative">
+            <div className="flex-1 relative min-h-0">
                 {children}
             </div>
 

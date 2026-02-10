@@ -19,9 +19,7 @@ export const PanelProvider = ({ children }) => {
     const [activeSessionId, setActiveSessionId] = useState(null);
     const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
     const [activeArtifact, setActiveArtifact] = useState(null);
-    const [openTabs, setOpenTabs] = useState([
-        { id: 'chat', name: 'Conversation history', type: 'chat', icon: 'History' }
-    ]);
+    const [openTabs, setOpenTabs] = useState([]);
     const [activeTab, setActiveTab] = useState('chat');
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [leftPanelRequest, setLeftPanelRequest] = useState(null);

@@ -39,7 +39,10 @@ class CostAgent:
         if self._initialized:
             return
             
-        from backend.services import pricing_service
+        try:
+            from services import pricing_service
+        except ImportError:
+            from backend.services import pricing_service
         await pricing_service.initialize()
         
         self._initialized = True
@@ -74,7 +77,10 @@ class CostAgent:
         
         await self.initialize()
         
-        from backend.services import pricing_service, currency_service, supabase
+        try:
+            from services import pricing_service, currency_service, supabase
+        except ImportError:
+            from backend.services import pricing_service, currency_service, supabase
         
         mass_kg = params.get("mass_kg")
         if mass_kg is None:
@@ -176,8 +182,12 @@ class CostAgent:
         else:
             confidence = 0.5
         
+        # Format cost with currency-specific key for frontend compatibility
+        cost_key = f"estimated_cost_{currency.lower()}"
+        
         return {
-            "estimated_cost": round(total_cost, 2),
+            "estimated_cost": round(total_cost, 2),  # Generic key
+            cost_key: round(total_cost, 2),  # Currency-specific key (e.g., estimated_cost_usd)
             "currency": currency.upper(),
             "confidence": confidence,
             "feasible": feasible,

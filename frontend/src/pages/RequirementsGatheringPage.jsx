@@ -201,7 +201,7 @@ export default function RequirementsGatheringPage() {
             setTimeout(() => {
                 navigate('/planning', {
                     state: {
-                        planArtifacts: data.artifacts || [],
+                        planArtifacts: planData.artifacts || [],
                         requirements: requirements,
                         userIntent: userIntent,
                         conversationId: conversationId

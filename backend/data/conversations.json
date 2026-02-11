@@ -86,8 +86,133 @@
     "gathered_requirements": {},
     "missing_requirements": [],
     "ready_for_planning": false,
-    "created_at": "2026-02-10T14:42:21.031045",
-    "updated_at": "2026-02-10T14:46:57.358478",
+    "created_at": "2026-02-11T00:33:50.932454",
+    "updated_at": "2026-02-11T00:33:50.932460",
+    "language": "en"
+  },
+  "session-1770762819": {
+    "conversation_id": "session-1770762819",
+    "title": "New Conversation",
+    "branch_name": "Main",
+    "parent_id": null,
+    "messages": [],
+    "design_type": null,
+    "gathered_requirements": {},
+    "missing_requirements": [],
+    "ready_for_planning": false,
+    "created_at": "2026-02-11T00:33:50.932484",
+    "updated_at": "2026-02-11T00:33:50.932485",
+    "language": "en"
+  },
+  "session-1770766431": {
+    "conversation_id": "session-1770766431",
+    "title": "New Conversation",
+    "branch_name": "Main",
+    "parent_id": null,
+    "messages": [
+      {
+        "role": "user",
+        "content": "deep sea",
+        "timestamp": "2026-02-11T00:54:15.212433",
+        "metadata": {}
+      },
+      {
+        "role": "agent",
+        "content": "What is the intended duration of the submarine's mission?",
+        "timestamp": "2026-02-11T00:54:16.408868",
+        "metadata": {}
+      },
+      {
+        "role": "user",
+        "content": "about 5-15 days ",
+        "timestamp": "2026-02-11T00:55:11.611738",
+        "metadata": {}
+      },
+      {
+        "role": "agent",
+        "content": "What is the desired speed of the submarine in knots?",
+        "timestamp": "2026-02-11T00:55:12.610062",
+        "metadata": {}
+      },
+      {
+        "role": "user",
+        "content": "30 knots",
+        "timestamp": "2026-02-11T00:55:52.863282",
+        "metadata": {}
+      },
+      {
+        "role": "agent",
+        "content": "What is the desired depth range for the submarine to operate within?",
+        "timestamp": "2026-02-11T00:55:53.982251",
+        "metadata": {}
+      },
+      {
+        "role": "user",
+        "content": "close to seabed level",
+        "timestamp": "2026-02-11T00:56:11.490832",
+        "metadata": {}
+      },
+      {
+        "role": "agent",
+        "content": "What is the approximate size or dimensions of the submarine you are designing?",
+        "timestamp": "2026-02-11T00:56:12.439162",
+        "metadata": {}
+      },
+      {
+        "role": "user",
+        "content": "it should weight about 300kg maximum",
+        "timestamp": "2026-02-11T00:56:51.225320",
+        "metadata": {}
+      },
+      {
+        "role": "agent",
+        "content": "What type of material should the submarine's hull be made of to ensure durability and minimize corrosion in the underwater environment?",
+        "timestamp": "2026-02-11T00:56:52.099658",
+        "metadata": {}
+      },
+      {
+        "role": "user",
+        "content": "hardened plastic that can withstand deep sea level pressure",
+        "timestamp": "2026-02-11T00:57:26.886780",
+        "metadata": {}
+      },
+      {
+        "role": "agent",
+        "content": "What is the primary mission or purpose of the submarine?",
+        "timestamp": "2026-02-11T00:57:27.684464",
+        "metadata": {}
+      },
+      {
+        "role": "user",
+        "content": "warfare",
+        "timestamp": "2026-02-11T00:57:36.867350",
+        "metadata": {}
+      },
+      {
+        "role": "agent",
+        "content": "What is the expected speed or propulsion system for the submarine?",
+        "timestamp": "2026-02-11T00:57:38.232617",
+        "metadata": {}
+      },
+      {
+        "role": "user",
+        "content": "electric propulsion, internal battery, chraging by dynamo, about 30 knots speed",
+        "timestamp": "2026-02-11T00:58:32.738935",
+        "metadata": {}
+      },
+      {
+        "role": "agent",
+        "content": "What is the approximate size or dimensions of the submarine you are designing?",
+        "timestamp": "2026-02-11T00:58:33.754487",
+        "metadata": {}
+      }
+    ],
+    "design_type": null,
+    "gathered_requirements": {},
+    "missing_requirements": [],
+    "ready_for_planning": false,
+    "created_at": "2026-02-11T00:33:51.914963",
+    "updated_at": "2026-02-11T00:58:33.754496",
     "language": "en"
   }
 }

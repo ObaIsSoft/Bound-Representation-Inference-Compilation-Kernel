@@ -4,6 +4,7 @@ from typing import Dict, Any, List, Optional
 from pydantic import BaseModel
 from datetime import datetime
 import time
+import asyncio
 import numpy as np
 from contextlib import asynccontextmanager
 
@@ -700,6 +701,8 @@ async def chat_requirements_endpoint(
     
     # 8. Run all agents with EXTRACTED parameters (not hardcoded!)
     updated_intent = f"{req.user_intent} {req.message}"
+    
+    # Environment runs first (sync, fast) since safety_agent depends on its result
     env_result = env_agent.detect_environment(updated_intent)
     
     # Use extracted params or defaults
@@ -720,29 +723,40 @@ async def chat_requirements_endpoint(
                 logger.info(f"Using 3D file dimensions: {dims}")
                 break
     
-    # Geometry estimation with extracted params
+    # Prepare params for parallel execution
     design_params = {"max_dim": max_dim_m, "mass_kg": mass_kg}
-    geom_result = geom_estimator.estimate(updated_intent, design_params)
-    
-    # Cost estimation with extracted params
     cost_params = {
         "mass_kg": mass_kg,
         "complexity": complexity,
         "material_name": material
     }
-    cost_result = await cost_agent.quick_estimate(cost_params)
+    safety_params = {
+        "materials": [material],
+        "application_type": application,
+        "physics_results": {},
+        "mass_kg": mass_kg
+    }
     
-    # NEW: Safety check
-    try:
-        safety_result = await safety_agent.run({
-            "materials": [material],
-            "application_type": application,
-            "physics_results": {},
-            "mass_kg": mass_kg
-        })
-    except Exception as e:
-        logger.warning(f"SafetyAgent failed: {e}")
-        safety_result = {"status": "unknown", "error": str(e)}
+    # Run geometry, cost, and safety agents IN PARALLEL
+    # Sync agents wrapped with asyncio.to_thread for true parallelism
+    async def _run_geometry():
+        return await asyncio.to_thread(geom_estimator.estimate, updated_intent, design_params)
+    
+    async def _run_cost():
+        return await cost_agent.quick_estimate(cost_params)
+    
+    async def _run_safety():
+        try:
+            return await safety_agent.run(safety_params)
+        except Exception as e:
+            logger.warning(f"SafetyAgent failed: {e}")
+            return {"status": "unknown", "error": str(e)}
+    
+    geom_result, cost_result, safety_result = await asyncio.gather(
+        _run_geometry(),
+        _run_cost(),
+        _run_safety()
+    )
     
     # 9. Check for Completeness
     requirements_complete = await conversational_agent.is_requirements_complete(session_id)

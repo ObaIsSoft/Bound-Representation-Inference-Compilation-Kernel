@@ -186,10 +186,14 @@ class TopologicalAgent:
             # Marine mode depends on water depth and currents
             return 0.85  # Placeholder
 
+        # Default for unknown modes
+        logger.warning(f"Unknown locomotion mode '{mode}', returning default traversability")
+        return 0.5
+
     def _load_weights(self) -> Dict:
         import json
         import os
-        path = "data/topological_agent_weights.json"
+        path = os.path.join(os.path.dirname(__file__), "..", "data", "topological_agent_weights.json")
         if not os.path.exists(path): return {"slope_penalty": 0.6, "roughness_penalty": 0.4}
         try:
             with open(path, 'r') as f: return json.load(f)
@@ -214,7 +218,8 @@ class TopologicalAgent:
         # Could also update roughness, keeping simple single-parameter tuning for now.
         
         import json
-        with open("data/topological_agent_weights.json", 'w') as f:
+        weights_path = os.path.join(os.path.dirname(__file__), "..", "data", "topological_agent_weights.json")
+        with open(weights_path, 'w') as f:
             json.dump(weights, f, indent=2)
         
 

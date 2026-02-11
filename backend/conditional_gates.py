@@ -169,10 +169,8 @@ def check_validation(state: Dict[str, Any]) -> Literal[ValidationStatus.VALID, V
              logger.info("🔄 Routing to Forensic Analysis -> Optimization")
              return ValidationStatus.FORENSIC
         else:
-             logger.info("🔄 Max retries reached. Routing to Optimization (Final Attempt) or Manual Review")
-             # Could be FORENSIC too, or just NEEDS_OPTIMIZATION.
-             # Orchestrator flows Forensic -> Optimization anyway.
-             return ValidationStatus.FORENSIC
+             logger.info("🔄 Max retries reached. Routing to direct Optimization (final attempt)")
+             return ValidationStatus.NEEDS_OPTIMIZATION
 
     logger.info("✅ Validation PASSED: All checks successful")
     return ValidationStatus.VALID

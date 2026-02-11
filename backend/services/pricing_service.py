@@ -343,7 +343,7 @@ class PricingService:
                         expires_at=datetime.now() + timedelta(hours=6)
                     )
         except Exception as e:
-            logger.debug(f"Yahoo Finance error for {ticker_symbol}: {e}")
+            logger.warning(f"Yahoo Finance error for {ticker_symbol}: {e}")
         
         return None
     

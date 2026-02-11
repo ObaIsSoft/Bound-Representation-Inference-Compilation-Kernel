@@ -333,9 +333,6 @@ class EnvironmentAgent:
                 if harvested >= amount:
                     break
                     
-                if harvested >= amount:
-                    break
-                    
         return harvested
 
     def evaluate_terrain_sdf(self, position: List[float], terrain_map: Dict[str, Any]) -> Dict[str, Any]:

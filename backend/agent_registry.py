@@ -31,6 +31,7 @@ class GlobalAgentRegistry:
         "MaterialAgent": ("agents.material_agent", "MaterialAgent"),
         "CostAgent": ("agents.cost_agent", "CostAgent"),
         "MassPropertiesAgent": ("agents.mass_properties_agent", "MassPropertiesAgent"),
+        "GeometryEstimator": ("agents.geometry_estimator", "GeometryEstimator"),
         "ManifoldAgent": ("agents.manifold_agent", "ManifoldAgent"),
         "OpenSCADAgent": ("agents.openscad_agent", "OpenSCADAgent"),
         "SlicerAgent": ("agents.slicer_agent", "SlicerAgent"),
@@ -46,7 +47,7 @@ class GlobalAgentRegistry:
         "DfmAgent": ("agents.dfm_agent", "DfmAgent"),
         "ToleranceAgent": ("agents.tolerance_agent", "ToleranceAgent"),
         "ReviewAgent": ("agents.review_agent", "ReviewAgent"),
-        "DesignQualityAgent": ("agents.design_quality_agent", "DesignQualityAgent"),
+        # DesignQualityAgent removed — file does not exist. Use DesignerAgent (UnifiedDesignAgent) instead.
         "VerificationAgent": ("agents.verification_agent", "VerificationAgent"),
         "VisualValidatorAgent": ("agents.visual_validator_agent", "VisualValidatorAgent"),
         

@@ -158,13 +158,14 @@ class DocumentAgent:
             logger.warning(f"CostAgent failed: {e}")
             errors["cost"] = str(e)
         
-        # 4. Design Quality & Risk Assessment (DesignQualityAgent)
+        # 4. Design Quality & Risk Assessment (via DesignerAgent / UnifiedDesignAgent)
         try:
-            quality_agent = registry.get_agent("DesignQualityAgent")
-            if not quality_agent:
-                raise ValueError("DesignQualityAgent not found in registry")
+            design_agent = registry.get_agent("DesignerAgent")
+            if not design_agent:
+                raise ValueError("DesignerAgent not found in registry")
             
-            quality_result = quality_agent.run({
+            quality_result = design_agent.run({
+                "mode": "refine",
                 "design_type": intent,
                 "requirements": params,
                 "environment": env
@@ -173,9 +174,9 @@ class DocumentAgent:
                 quality_result = await quality_result
             
             data["quality"] = quality_result
-            logger.info("DesignQualityAgent: Identified risks and challenges")
+            logger.info("DesignerAgent: Identified risks and challenges")
         except Exception as e:
-            logger.warning(f"DesignQualityAgent failed: {e}")
+            logger.warning(f"DesignerAgent (quality) failed: {e}")
             errors["quality"] = str(e)
         
         # 5. Testing Strategy (local, doesn't call external agent)

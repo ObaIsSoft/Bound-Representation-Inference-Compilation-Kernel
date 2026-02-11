@@ -47,7 +47,10 @@ class SafetyAgent:
         """
         logger.info("[SafetyAgent] Evaluating design safety...")
         
-        from backend.services import supabase, standards_service
+        try:
+            from services import supabase, standards_service
+        except ImportError:
+            from backend.services import supabase, standards_service
         
         hazards = []
         score = 1.0

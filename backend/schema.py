@@ -4,7 +4,6 @@ from datetime import datetime
 
 # --- primitive types ---
 
-# --- primitive types ---
 
 # Import robust types from Hardware ISA
 from isa import PhysicalValue, ConstraintNode, Unit
@@ -81,7 +80,7 @@ class AgentState(TypedDict):
     mitigation_plan: Dict[str, Any]
     
     # Validation
-    validation_flags: ValidationFlags
+    validation_flags: Dict[str, Any]  # Plain dict, not Pydantic BaseModel (nodes write dicts)
     
     # Template
     selected_template: Optional[Dict[str, Any]]
@@ -90,6 +89,7 @@ class AgentState(TypedDict):
     material: str
     material_properties: Dict[str, Any]
     sub_agent_reports: Dict[str, Any]
+    topology_report: Dict[str, Any]  # Written by topological_node
 
     # Phase 8.4 Optimization Fields (Added)
     feasibility_report: Dict[str, Any]

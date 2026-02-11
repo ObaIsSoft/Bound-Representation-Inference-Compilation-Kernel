@@ -80,16 +80,8 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-from llm.factory import get_llm_provider
-
-# Mock for deprecated SurrogateAgent
-class MockSurrogateAgent:
-    def run(self, state):
-        return {
-            "recommendation": "PROCEED", 
-            "confidence": 0.9, 
-            "gate_value": 0.8
-        }
+# Duplicate import of get_llm_provider removed (A8)
+# MockSurrogateAgent removed — use registry SurrogateCritic (A9)
 
 # Initialize Critics (Global Singleton-ish for now)
 surrogate_critic = SurrogateCritic(window_size=100)
@@ -203,23 +195,8 @@ async def environment_node(state: AgentState) -> Dict[str, Any]:
     intent = state.get("user_intent", "")
     params = state.get("design_parameters", {})
     
-    # --- ARES LAYER: Unit Enforcement ---
-    if params:
-        try:
-            ares = AresMiddleware()
-            # If params are in the format {"length": {"value": 10, "unit": "mm"}, ...}
-            # Ares can validate. If they are simple key-value {"length": 10}, we skip strict unit check 
-            # or treat as defaults. 
-            # Assuming params might be raw values (Phase 1 simplicity) or structured (Phase 2).
-            # We will log for now.
-            logger.info(f"Ares performing parameter scan on: {params.keys()}")
-            
-            # TODO: Future enhancement - fully structure params into UnitValue
-        except AresUnitError as e:
-            return {
-                "error": str(e),
-                "validation_flags": {"physics_safe": False, "reasons": [f"ARES_BLOCK: {e}"]}
-            }
+    # ARES validation removed — was a no-op (only logged param keys, never validated). (A7)
+    # TODO: Re-implement ARES validation when params are structured as UnitValue objects.
             
     agent = registry.get_agent("EnvironmentAgent")
     inject_thought("Environment Node", f"Analyzing environment requirements for: {intent}")
@@ -266,11 +243,7 @@ async def topological_node(state: AgentState) -> Dict[str, Any]:
          if asyncio.iscoroutine(result):
              result = await result
     
-    # CRITIC HOOK: Monitor Navigation Prediction
-    if "topological_critic" in state.get("active_critics", []):
-         # critic = get_critic("topological") # Not defined in imports
-         # Placeholder until critic system is fully async aware
-         pass
+    # Critic hook removed — was a dead placeholder with undefined get_critic (O2)
          
     return {
         "topology_report": result,
@@ -927,14 +900,7 @@ async def sourcing_node(state: AgentState) -> Dict[str, Any]:
         logger.error(f"ComponentAgent Failed: {e}")
         return {"error": str(e)}
     
-    # CRITIC HOOK: Component
-    if "component_critic" in state.get("active_critics", []):
-        critic = get_critic("component")
-        critic.observe(
-            requirements=reqs,
-            selection_output=result,
-            # Installation & User Acceptance tracked later
-        )
+    # Critic hook removed — get_critic was undefined, would crash if active_critics was populated (A10)
         
     return {
         "components": result.get("selection", [])
@@ -967,7 +933,7 @@ async def forensic_node(state: AgentState) -> Dict[str, Any]:
     Executes the Forensic Agent (The Investigator).
     Triggered locally when validation fails.
     """
-    from agent_registry import registry
+    # Redundant registry import removed — already imported at module level (A11)
     agent = registry.get_agent("ForensicAgent")
     
     if not agent:
@@ -1060,7 +1026,7 @@ def build_graph():
     workflow.add_node("environment_agent", environment_node)
     workflow.add_node("topological_agent", topological_node)
     workflow.add_node("planning_node", planning_node)
-    workflow.add_node("document_plan", document_plan_node)
+    # document_plan node removed — planning_node already generates plan (A1)
     workflow.add_node("review_plan", review_plan_node)
     
     # ========== PHASE 3: GEOMETRY KERNEL ==========
@@ -1119,8 +1085,7 @@ def build_graph():
     workflow.add_edge("dreamer_node", "environment_agent")
     workflow.add_edge("environment_agent", "topological_agent")
     workflow.add_edge("topological_agent", "planning_node")
-    workflow.add_edge("planning_node", "document_plan")
-    workflow.add_edge("document_plan", "review_plan")
+    workflow.add_edge("planning_node", "review_plan")  # Direct — no duplicate document_plan (A1)
     
     # Gate 2: Check User Approval
     workflow.add_conditional_edges(

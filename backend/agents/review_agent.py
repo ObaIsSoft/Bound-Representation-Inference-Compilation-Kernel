@@ -132,49 +132,6 @@ class ReviewAgent:
             "feedback": f"Plan review complete. Found {len(issues)} issues."
         }
 
-        """
-        Perform automated code review on code changes.
-        """
-        if not self.llm_provider:
-            return {"status": "skipped", "message": "No LLM for code review."}
-            
-        logger.info(f"{self.name} reviewing code diff...")
-        
-        prompt = f"""
-        You are a Security and Code Quality Auditor.
-        Review the following code diff for:
-        1. Security Vulnerabilities (Hardcoded keys, injection risks)
-        2. Logic Errors
-        3. Style/Best Practices
-        
-        Diff:
-        {code_diff}
-        
-        Context:
-        {context}
-        
-        Return JSON:
-        {{
-            "approved": boolean,
-            "issues": [string],
-            "security_score": number (0-100),
-            "summary": string
-        }}
-        """
-        try:
-            return self.llm_provider.generate_json(prompt, schema={
-                "type": "object",
-                "properties": {
-                    "approved": {"type": "boolean"},
-                    "issues": {"type": "array", "items": {"type": "string"}},
-                    "security_score": {"type": "number"},
-                    "summary": {"type": "string"}
-                }
-            })
-        except Exception as e:
-            logger.error(f"Code Review Failed: {e}")
-            return {"status": "error", "message": str(e)}
-
     def review_code(self, code_diff: str, context: str = "") -> Dict[str, Any]:
         """
         Perform automated code review on code changes.

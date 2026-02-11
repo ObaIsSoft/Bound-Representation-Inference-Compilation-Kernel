@@ -3,47 +3,90 @@ import asyncio
 from supabase import create_client, Client
 from dotenv import load_dotenv
 
-# Load environment variables
-load_dotenv()
+# Robustly load backend/.env
+cwd_env = os.path.join(os.getcwd(), "backend", ".env")
+local_env = os.path.join(os.path.dirname(__file__), "../.env") # backend/scripts/../.env -> backend/.env
+
+if os.path.exists(cwd_env):
+    load_dotenv(cwd_env, override=True)
+elif os.path.exists(local_env):
+    load_dotenv(local_env, override=True)
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_KEY")
 
 if not SUPABASE_URL or not SUPABASE_KEY:
     print("❌ Error: SUPABASE_URL or SUPABASE_KEY not found in environment.")
+    print(f"   Checked: {cwd_env} and {local_env}")
     exit(1)
 
 # Initialize Supabase client
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+# Import Config for Dynamic Dimensions
+try:
+    from backend.rag.config import EMBEDDING_DIM
+except ImportError:
+    # Fallback if running script directly without package context
+    import sys
+    sys.path.append(os.path.join(os.path.dirname(__file__), "../.."))
+    from backend.rag.config import EMBEDDING_DIM
+
 async def setup_rag_schema():
-    print("🚀 Setting up RAG Schema (Vision-First)...")
+    print(f"🚀 Setting up RAG Schema (Dimension: {EMBEDDING_DIM})...")
     
-    # SQL to enable pgvector extension
+    # ... (Enable pgvector) ...
     enable_pgvector_sql = "create extension if not exists vector;"
 
-    # SQL to create the 'standard_chunks' table
-    # We include 'bbox_json' to store the coordinates of the table/text in the PDF image.
-    create_table_sql = """
+    create_table_sql = f"""
     create table if not exists standard_chunks (
         id uuid primary key default gen_random_uuid(),
-        standard_id text not null,       -- e.g., 'NASA-STD-5005'
-        section_id text,                 -- e.g., '4.2.1'
-        page_number int,                 -- e.g., 42
-        chunk_type text,                 -- 'text' or 'table'
-        content text,                    -- The parsed text or JSON representation of the table
-        bbox_json jsonb,                 -- Bounding box [x, y, w, h] in original PDF page
-        embedding vector(1536),          -- OpenAI text-embedding-3-small
+        standard_id text not null,
+        section_id text,
+        page_number int,
+        chunk_type text,
+        content text,
+        bbox_json jsonb,
+        embedding vector({EMBEDDING_DIM}),  -- Dynamic Dimension
         created_at timestamptz default now()
     );
     """
     
-    # SQL to create the HNSW Index for "Really, Really Fast" retrieval
-    # HNSW (Hierarchical Navigable Small World) is much faster than IVFFlat.
     create_index_sql = """
     create index if not exists standard_chunks_embedding_idx 
     on standard_chunks 
     using hnsw (embedding vector_cosine_ops);
+    """
+
+    create_params_sql = f"""
+    create or replace function match_standard_chunks (
+      query_embedding vector({EMBEDDING_DIM}),
+      match_threshold float,
+      match_count int
+    )
+    returns table (
+      id uuid,
+      standard_id text,
+      section_id text,
+      content text,
+      similarity float
+    )
+    language plpgsql
+    as $$
+    begin
+      return query
+      select
+        standard_chunks.id,
+        standard_chunks.standard_id,
+        standard_chunks.section_id,
+        standard_chunks.content,
+        1 - (standard_chunks.embedding <=> query_embedding) as similarity
+      from standard_chunks
+      where 1 - (standard_chunks.embedding <=> query_embedding) > match_threshold
+      order by standard_chunks.embedding <=> query_embedding
+      limit match_count;
+    end;
+    $$;
     """
 
     try:
@@ -66,6 +109,7 @@ async def setup_rag_schema():
         print(enable_pgvector_sql)
         print(create_table_sql)
         print(create_index_sql)
+        print(create_params_sql)
         print("-" * 50)
         
         # We can also try to "check" if the table exists by selecting from it.

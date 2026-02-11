@@ -1,88 +1,133 @@
 import os
-import asyncio
+import io
 import json
 import logging
-from typing import List, Dict
+import asyncio
+from typing import List
+from uuid import uuid4
+
+import sys
+# Add project root to sys.path to allow running as script
+sys.path.append(os.path.join(os.path.dirname(__file__), "../../.."))
+
+try:
+    from pdf2image import convert_from_path
+except ImportError:
+    pass # We use fitz now
+
+from backend.rag.ingestion.vision_parser import VisionPDFParser
+from backend.rag.ingestion.vlm_extractor import get_vlm
+from backend.rag.retrieval.embedder import get_embedder
 from supabase import create_client, Client
+
+# Use backend/.env
 from dotenv import load_dotenv
+env_path = os.path.join(os.path.dirname(__file__), "../../.env")
+load_dotenv(env_path)
 
-# Import our custom modules
-from vision_parser import VisionPDFParser
-from vlm_extractor import VLMExtractor
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("INGESTION")
 
-# Load Environment
-load_dotenv()
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
-
-# Config
-KNOWLEDGE_BASE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "knowledge_base", "standards", "open")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+# Use Service Key for ingestion to bypass RLS if needed
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_KEY")
 
 class IngestionPipeline:
     def __init__(self):
+        if not SUPABASE_URL or not SUPABASE_KEY:
+            raise ValueError("Supabase Credentials Missing")
+            
         self.supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
         self.parser = VisionPDFParser()
-        self.vlm = VLMExtractor() # Default: gpt-4o-mini
+        self.vlm = get_vlm()      # Factory Call
+        self.embedder = get_embedder() # Factory Call
+
+    async def process_pdf(self, file_path: str, standard_id: str):
+        """
+        End-to-end ingestion: PDF -> Images -> VLM (Tables) -> Embeddings -> Supabase
+        """
+        logger.info(f"🚀 Starting Ingestion for {standard_id} ({os.path.basename(file_path)})")
         
-        # Future: We need an 'embedder' to vectorize the text summary of the table.
-        # For this prototype, we will just store the JSON.
-    
-    async def process_pdf(self, pdf_path: str):
-        filename = os.path.basename(pdf_path)
-        doc_id = filename.replace(".pdf", "")
+        # 1. Parse PDF to Images
+        # Note: VisionPDFParser returns PIL images
+        pages = self.parser.parse_pdf(file_path)
         
-        logger.info(f"🚀 Processing: {doc_id}")
-        
-        # 1. Vision Parse
-        pages = self.parser.pdf_to_images(pdf_path)
-        
-        for page_num, image in pages:
-            logger.info(f"  📄 Page {page_num}...")
+        for i, page_img in enumerate(pages):
+            page_num = i + 1
+            logger.info(f"   Processing Page {page_num}/{len(pages)}...")
             
-            # 2. Detect ROI (Heuristic for now returns full page as one chunk)
-            rois = self.parser.detect_table_candidates(image)
-            
-            for i, roi in enumerate(rois):
-                bbox = roi['bbox']
-                # crop = self.parser.extract_roi(image, bbox) 
-                # For full page VLM, we pass the whole image associated with the bbox
-                # In this simplified version, 'bbox' is the whole page.
+            # 2. VLM Extraction (Table Detection & Transcription)
+            # We pass the PIL image directly to the new Gemini VLM extractor
+            try:
+                table_data = self.vlm.extract_table_data(page_img, context=f"{standard_id} Page {page_num}")
                 
-                # 3. VLM Extraction
-                # We interpret the WHOLE page as context for the VLM.
-                context = f"Standard: {doc_id}, Page: {page_num}"
-                data = self.vlm.extract_table_data(image, context)
+                # If valid data found, store it
+                # Logic: If 'rows' or meaningful keys exist
+                content_text = ""
+                if "rows" in table_data and len(table_data["rows"]) > 0:
+                    content_text = json.dumps(table_data, indent=2)
+                    chunk_type = "table"
+                else:
+                    # Fallback or partial text (if we had OCR, but for now we rely on VLM)
+                    # For this MVP, if VLM returns nothing interesting, we skip or store generic description
+                    content_text = f"Page {page_num} content (VLM Extraction)"
+                    chunk_type = "text"
                 
-                # 4. Store in Supabase
-                chunk_record = {
-                    "standard_id": doc_id,
+                # 3. Generate Embedding
+                embedding = self.embedder.embed_text(content_text)
+                
+                if not embedding:
+                    logger.warning(f"   ⚠️ No embedding generated for Page {page_num}")
+                    continue
+                    
+                # 4. Upsert to Supabase
+                data = {
+                    "standard_id": standard_id,
                     "page_number": page_num,
-                    "chunk_type": "hybrid_vlm",
-                    "content": json.dumps(data), # Store the structured JSON
-                    "bbox_json": json.dumps(bbox),
-                    # "embedding": ... # TODO: Embed summary(data)
+                    "chunk_type": chunk_type,
+                    "content": content_text,
+                    "embedding": embedding,
+                    "bbox_json": {} # Placeholder for now
                 }
                 
-                try:
-                    self.supabase.table("standard_chunks").insert(chunk_record).execute()
-                    logger.info(f"    ✅ Indexed Page {page_num} Chunk {i}")
-                except Exception as e:
-                    logger.error(f"    ❌ Insert Failed: {e}")
-
-    async def run(self):
-        # 1. List files
-        if not os.path.exists(KNOWLEDGE_BASE_DIR):
-            logger.warning(f"⚠️ Directory not found: {KNOWLEDGE_BASE_DIR}")
-            return
-
-        files = [f for f in os.listdir(KNOWLEDGE_BASE_DIR) if f.endswith(".pdf")]
-        logger.info(f"📂 Found {len(files)} PDFs in {KNOWLEDGE_BASE_DIR}")
-        
-        for f in files:
-            await self.process_pdf(os.path.join(KNOWLEDGE_BASE_DIR, f))
+                self.supabase.table("standard_chunks").insert(data).execute()
+                logger.info(f"   ✅ Indexed Page {page_num} ({chunk_type})")
+                
+            except Exception as e:
+                logger.error(f"   ❌ Failed to process Page {page_num}: {e}")
 
 if __name__ == "__main__":
-    pipeline = IngestionPipeline()
-    asyncio.run(pipeline.run())
+    import asyncio
+    
+    async def run_ingestion():
+        pipeline = IngestionPipeline()
+        
+        # Directories to scan
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__))) # brick/backend
+        kb_dir = os.path.join(base_dir, "knowledge_base", "standards")
+        
+        dirs_to_scan = [
+            os.path.join(kb_dir, "open"),
+            os.path.join(kb_dir, "uploads")
+        ]
+        
+        print(f"🚀 Scanning Directories: {dirs_to_scan}")
+        
+        tasks = []
+        for d in dirs_to_scan:
+            if not os.path.exists(d):
+                print(f"⚠️ Directory not found: {d}")
+                continue
+                
+            for filename in os.listdir(d):
+                if filename.lower().endswith(".pdf"):
+                    path = os.path.join(d, filename)
+                    # Extract Standard ID from filename (simple heuristic)
+                    # e.g. "NASA-STD-5005D.pdf" -> "NASA-STD-5005D"
+                    std_id = os.path.splitext(filename)[0]
+                    
+                    print(f"📥 Queuing {std_id}...")
+                    # Run sequentially for now to avoid Rate Limits on Gemini Free Tier
+                    await pipeline.process_pdf(path, std_id)
+
+    asyncio.run(run_ingestion())

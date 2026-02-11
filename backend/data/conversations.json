@@ -86,8 +86,8 @@
     "gathered_requirements": {},
     "missing_requirements": [],
     "ready_for_planning": false,
-    "created_at": "2026-02-11T00:33:50.932454",
-    "updated_at": "2026-02-11T00:33:50.932460",
+    "created_at": "2026-02-11T01:26:23.666766",
+    "updated_at": "2026-02-11T01:26:23.666776",
     "language": "en"
   },
   "session-1770762819": {
@@ -100,8 +100,8 @@
     "gathered_requirements": {},
     "missing_requirements": [],
     "ready_for_planning": false,
-    "created_at": "2026-02-11T00:33:50.932484",
-    "updated_at": "2026-02-11T00:33:50.932485",
+    "created_at": "2026-02-11T01:26:23.666815",
+    "updated_at": "2026-02-11T01:26:23.666818",
     "language": "en"
   },
   "session-1770766431": {
@@ -211,8 +211,71 @@
     "gathered_requirements": {},
     "missing_requirements": [],
     "ready_for_planning": false,
-    "created_at": "2026-02-11T00:33:51.914963",
-    "updated_at": "2026-02-11T00:58:33.754496",
+    "created_at": "2026-02-11T01:26:23.666826",
+    "updated_at": "2026-02-11T01:26:23.666828",
+    "language": "en"
+  },
+  "session-1770769510": {
+    "conversation_id": "session-1770769510",
+    "title": "New Conversation",
+    "branch_name": "Main",
+    "parent_id": null,
+    "messages": [
+      {
+        "role": "user",
+        "content": "deep sea and ocean",
+        "timestamp": "2026-02-11T01:25:37.883032",
+        "metadata": {}
+      },
+      {
+        "role": "agent",
+        "content": "What type of material would you like the submarine to be made of, considering the deep sea and ocean environment?",
+        "timestamp": "2026-02-11T01:25:39.065210",
+        "metadata": {}
+      },
+      {
+        "role": "user",
+        "content": "hardened plastic or something that is light but can withstand the pressure at deep sea levels",
+        "timestamp": "2026-02-11T01:26:25.040383",
+        "metadata": {}
+      },
+      {
+        "role": "agent",
+        "content": "What is the expected operating speed of the submarine in knots?",
+        "timestamp": "2026-02-11T01:26:26.133571",
+        "metadata": {}
+      },
+      {
+        "role": "user",
+        "content": "30 knots at maximum",
+        "timestamp": "2026-02-11T01:26:44.797174",
+        "metadata": {}
+      },
+      {
+        "role": "agent",
+        "content": "What is the expected duration of the submarine's mission, and what type of payload will it be carrying?",
+        "timestamp": "2026-02-11T01:26:45.710715",
+        "metadata": {}
+      },
+      {
+        "role": "user",
+        "content": "from to weeks to a month. missiles/warhead",
+        "timestamp": "2026-02-11T01:27:34.998388",
+        "metadata": {}
+      },
+      {
+        "role": "agent",
+        "content": "What is the estimated size or dimensions of the submarine, and how many missiles or warheads is it expected to carry?",
+        "timestamp": "2026-02-11T01:27:36.030810",
+        "metadata": {}
+      }
+    ],
+    "design_type": null,
+    "gathered_requirements": {},
+    "missing_requirements": [],
+    "ready_for_planning": false,
+    "created_at": "2026-02-11T01:26:23.666859",
+    "updated_at": "2026-02-11T01:27:36.030817",
     "language": "en"
   }
 }

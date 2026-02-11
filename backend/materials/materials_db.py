@@ -102,6 +102,16 @@ class MaterialsDatabase:
     
     def find_material(self, name: str) -> Optional[Dict]:
         """Find material by name."""
+        # 0. Check unified 'materials' table (New Source of Truth)
+        if self.supabase.enabled:
+             try:
+                 res = self.supabase.client.table("materials").select("*").eq("name", name).execute()
+                 if res.data:
+                     return {"type": "material", "data": {**res.data[0], "_source": "supabase_materials"}}
+             except Exception as e:
+                 logger.warning(f"Supabase 'materials' table query error: {e}")
+
+
         # Element
         elem = self.get_element(name)
         if elem: return {"type": "element", "data": elem}
@@ -112,17 +122,17 @@ class MaterialsDatabase:
         compound = self.get_compound(name)
         if compound: return {"type": "compound", "data": compound}
         
-        # Fuzzy Search Supabase
+        # Fuzzy Search Supabase (New: Search 'materials' table)
         if self.supabase.enabled:
             try:
                 # Basic fuzzy search approach
-                res = self.supabase.client.table("alloys").select("*").ilike("name", f"%{name}%").execute()
+                res = self.supabase.client.table("materials").select("*").ilike("name", f"%{name}%").execute()
                 if res.data:
                     d = res.data[0]
-                    if isinstance(d.get("composition"), str): d["composition"] = json.loads(d["composition"])
-                    d["_source"] = "supabase_fuzzy"
-                    return {"type": "alloy", "data": d}
-            except: pass
+                    # 'materials' table doesn't use 'composition' json column, it's flat properties
+                    return {"type": "material", "data": {**d, "_source": "supabase_materials_fuzzy"}}
+            except Exception as e:
+                logger.warning(f"Supabase fuzzy search error: {e}")
         
         return None
 

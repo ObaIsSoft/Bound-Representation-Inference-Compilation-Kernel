@@ -1,28 +1,31 @@
 from typing import Dict, Any, TypedDict, Literal, List, Optional
 from langgraph.graph import StateGraph, END
-from schema import AgentState
-from agents.environment_agent import EnvironmentAgent
+try:
+    from backend.schema import AgentState
+except ImportError:
+    from schema import AgentState
+from backend.agents.environment_agent import EnvironmentAgent
 import asyncio
 import time
 
 # Phase 5: WebSocket & Performance Monitoring
-from websocket_manager import (
+from backend.websocket_manager import (
     broadcast_agent_progress,
     broadcast_thought,
     broadcast_state_update,
     broadcast_completion,
     broadcast_error,
 )
-from performance_monitor import perf_monitor, track_agent
+from backend.performance_monitor import perf_monitor, track_agent
 
 # Critics (Global - Keep for now as they are used in global scope instantiation below)
 # Ideally these should also be lazy, but for Phase 8.4 we focus on the 64 main agents.
-from agents.critics.SurrogateCritic import SurrogateCritic
-from agents.critics.PhysicsCritic import PhysicsCritic
-from agents.stt_agent import get_stt_agent
+from backend.agents.critics.SurrogateCritic import SurrogateCritic
+from backend.agents.critics.PhysicsCritic import PhysicsCritic
+from backend.agents.stt_agent import get_stt_agent
 
 # Import new node functions for 8-phase architecture
-from new_nodes import (
+from backend.new_nodes import (
     # Phase 1: Feasibility
     geometry_estimator_node,
     cost_quick_estimate_node,
@@ -56,7 +59,7 @@ from new_nodes import (
 
 
 # Import conditional gates
-from conditional_gates import (
+from backend.conditional_gates import (
     check_feasibility,
     check_user_approval,
     check_fluid_needed,
@@ -66,16 +69,16 @@ from conditional_gates import (
 )
 
 # Import agent selector for intelligent physics agent selection
-from agent_selector import select_physics_agents
+from backend.agent_selector import select_physics_agents
 
-from llm.factory import get_llm_provider
-from xai_stream import inject_thought
-from enums import (
+from backend.llm.factory import get_llm_provider
+from backend.xai_stream import inject_thought
+from backend.enums import (
     OrchestratorMode, ValidationStatus, FeasibilityStatus, 
     ApprovalStatus, FluidNeeded, ManufacturingType, LatticeNeeded
 )
 
-from ares import AresMiddleware, AresUnitError
+from backend.ares import AresMiddleware, AresUnitError
 import logging
 
 logger = logging.getLogger(__name__)
@@ -90,7 +93,7 @@ physics_critic = PhysicsCritic(window_size=100) # For future hybrid agents
 
 
 # --- Global Registry Integration ---
-from agent_registry import registry
+from backend.agent_registry import registry
 
 def get_agent_registry():
     """
@@ -134,7 +137,7 @@ async def dreamer_node(state: AgentState) -> Dict[str, Any]:
     session_id = state.get("project_id", "default_session") # Use project_id as session_id for now
     
     # Use Registry Instance (Persistent) using safe accessor
-    from agent_registry import registry
+    from backend.agent_registry import registry
     agent = registry.get_agent("ConversationalAgent")
     
     inject_thought("Dreamer Node", f"Analyzing intent: {raw_intent}")
@@ -221,7 +224,7 @@ async def topological_node(state: AgentState) -> Dict[str, Any]:
     Executes the Topological Agent.
     Analyzes terrain and recommends operational mode.
     """
-    from agents.topological_agent import TopologicalAgent
+    from backend.agents.topological_agent import TopologicalAgent
     
     intent = state.get("user_intent", "")
     env = state.get("environment", {})
@@ -259,8 +262,8 @@ async def designer_node(state: AgentState) -> Dict[str, Any]:
     Executes the Design stage using the UnifiedDesignAgent.
     Generates aesthetic 'DNA' (genome) from user intent.
     """
-    from agents.unified_design_agent import UnifiedDesignAgent
-    from xai_stream import inject_thought
+    from backend.agents.unified_design_agent import UnifiedDesignAgent
+    from backend.xai_stream import inject_thought
     
     intent = state.get("user_intent", "")
     
@@ -349,7 +352,7 @@ async def ldp_node(state: AgentState) -> Dict[str, Any]:
 
 async def geometry_node(state: AgentState) -> Dict[str, Any]:
     """Geometry node with Phase 5 performance tracking and WebSocket broadcasting."""
-    from agents.geometry_agent import GeometryAgent
+    from backend.agents.geometry_agent import GeometryAgent
 
     intent = state.get("user_intent", "")
     params = state.get("design_parameters", {})
@@ -673,8 +676,8 @@ async def physics_node(state: AgentState) -> Dict[str, Any]:
     # --- CONTROL LAYER END ---
 
     # 4. Physics (Flight Dynamics)
-    from agents.physics_agent_v2 import PhysicsAgent
-    from agents.explainable_agent import create_xai_wrapper
+    from backend.agents.physics_agent_v2 import PhysicsAgent
+    from backend.agents.explainable_agent import create_xai_wrapper
     
     # WRAPPED (XAI) - ENHANCED
     # We create the wrapper using the factory.
@@ -717,7 +720,7 @@ async def physics_node(state: AgentState) -> Dict[str, Any]:
     # Retrieve thought from result (added by AgentExplainabilityWrapper)
     thought_text = phys_result.get("_thought")
     if thought_text:
-        from xai_stream import inject_thought
+        from backend.xai_stream import inject_thought
         inject_thought("PhysicsAgent", thought_text)
 
     # Build failure reasons list immutably
@@ -817,7 +820,7 @@ async def optimization_node(state: AgentState) -> Dict[str, Any]:
     #         critic.observe(agent_name="OptimizationAgent", input_state=opt_payload, output=result, metadata={...})
 
     # 5.3 INTEGRATION: Feedback Loop
-    from agents.feedback_agent import FeedbackAgent
+    from backend.agents.feedback_agent import FeedbackAgent
     feedback_agent = registry.get_agent("FeedbackAgent")
     # check if feedback_agent needs async call
     if feedback_agent:
@@ -943,7 +946,7 @@ async def forensic_node(state: AgentState) -> Dict[str, Any]:
 
 # --- Graph Definition ---
 
-from agents.swarm_manager import SwarmManager # Phase 21
+from backend.agents.swarm_manager import SwarmManager # Phase 21
 
 def swarm_node(state: AgentState) -> Dict[str, Any]:
     """
@@ -1163,7 +1166,7 @@ async def planning_node(state: AgentState) -> Dict[str, Any]:
     Synthesize the Design Brief / Plan.
     Uses DocumentAgent to generate proper Markdown.
     """
-    from agents.document_agent import DocumentAgent
+    from backend.agents.document_agent import DocumentAgent
     
     intent = state.get("user_intent", "")
     env = state.get("environment", {})
@@ -1280,7 +1283,7 @@ async def run_orchestrator(
     # --- Post-Processing Mitigation (The Fixer) ---
     flags = final_state.get("validation_flags", {})
     if not flags.get("physics_safe", True):
-        from agents.mitigation_agent import MitigationAgent
+        from backend.agents.mitigation_agent import MitigationAgent
         logger.info("Physics check failed. Running Mitigation Agent...")
         
         # Phase 5: Track mitigation agent execution

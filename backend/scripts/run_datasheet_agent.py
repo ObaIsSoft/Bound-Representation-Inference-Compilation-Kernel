@@ -109,11 +109,13 @@ def main():
 
     # Fallback to Mock if all else fails
     if not provider:
-                "specs": {"kv": 100, "max_power_w": 940}, 
-                "geometry_def": {"params": {"stator_w": 85, "stator_h": 20}},
-                "behavior_model": {"reliability": {"mtbf_hours": 5000}}
-            }
-            provider.generate_json = MagicMock(return_value=expected_response)
+        from unittest.mock import MagicMock
+        expected_response = {
+            "specs": {"kv": 100, "max_power_w": 940}, 
+            "geometry_def": {"params": {"stator_w": 85, "stator_h": 20}},
+            "behavior_model": {"reliability": {"mtbf_hours": 5000}}
+        }
+        provider.generate_json = MagicMock(return_value=expected_response)
     
     # 3. Run Agent
     agent = DatasheetIngestor(provider=provider)

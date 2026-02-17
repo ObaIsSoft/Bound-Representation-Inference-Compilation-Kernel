@@ -1,7 +1,10 @@
 import threading
 from typing import Dict, Any, Optional
 from copy import deepcopy
-from schema import AgentState
+try:
+    from backend.schema import AgentState
+except ImportError:
+    from schema import AgentState
 
 class Blackboard:
     """

@@ -6,7 +6,10 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from orchestrator import run_orchestrator
-from schema import AgentState
+try:
+    from backend.schema import AgentState
+except ImportError:
+    from schema import AgentState
 
 async def test_optimization_loop():
     print("--- Starting Optimization Loop Verification ---")

@@ -6,7 +6,10 @@ from datetime import datetime
 
 
 # Import robust types from Hardware ISA
-from isa import PhysicalValue, ConstraintNode, Unit
+try:
+    from backend.isa import PhysicalValue, ConstraintNode, Unit
+except ImportError:
+    from isa import PhysicalValue, ConstraintNode, Unit
 
 class ValidationFlags(BaseModel):
     constraints_satisfied: bool = False

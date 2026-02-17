@@ -12,26 +12,37 @@ from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 import os
 import json
+import sys
 
 # Get the directory where this file (main.py) is located
 current_dir = os.path.dirname(os.path.abspath(__file__))
 env_path = os.path.join(current_dir, '.env')
 load_dotenv(dotenv_path=env_path)
 
-from schema import AgentState, BrickProject
-from orchestrator import run_orchestrator, get_agent_registry
-from comment_schema import Comment, PlanReview, TextSelection, plan_reviews
+# Add parent directory and backend directory to path for imports
+parent_dir = os.path.dirname(current_dir)
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
+if current_dir not in sys.path:
+    sys.path.insert(0, current_dir)
+
+try:
+    from backend.schema import AgentState, BrickProject
+except ImportError:
+    from schema import AgentState, BrickProject
+from backend.orchestrator import run_orchestrator, get_agent_registry
+from backend.comment_schema import Comment, PlanReview, TextSelection, plan_reviews
 # from schemas.handshake import ... (Removed legacy imports)
-from agent_selector import select_physics_agents, get_agent_selection_summary
+from backend.agent_selector import select_physics_agents, get_agent_selection_summary
 import logging
 
 # --- Controllers ---
-from controllers.handshake_controller import HandshakeController
+from backend.controllers.handshake_controller import HandshakeController
 
 logger = logging.getLogger(__name__)
 
 # --- Phase 10: Global Agent Registry ---
-from agent_registry import registry as global_registry
+from backend.agent_registry import registry as global_registry
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -45,13 +56,13 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="BRICK OS API", version="0.1.0", lifespan=lifespan)
 
 # --- Project Manager Init ---
-from managers.project_manager import ProjectManager
+from backend.managers.project_manager import ProjectManager
 project_manager = ProjectManager(storage_dir="projects")
 
 # --- Phase 11: Telemetry Middleware ---
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from monitoring.latency import latency_monitor
+from backend.monitoring.latency import latency_monitor
 
 class LatencyMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
@@ -67,12 +78,12 @@ app.add_middleware(LatencyMiddleware)
 AGENTS = get_agent_registry()
 
 # --- Passive XAI Stream (via centralized module to avoid circular imports) ---
-from xai_stream import get_thoughts, inject_thought
+from backend.xai_stream import get_thoughts, inject_thought
 
 @app.get("/api/agents/thoughts")
 async def get_passive_thoughts():
     """
-    Polls for recent 'Inner Monologue' thoughts from agents.
+    Polls for recent 'Inner Monologue' thoughts from backend.agents.
     Returns and clears the buffer (destructive read for polling).
     """
     return {"thoughts": get_thoughts(clear=True)}
@@ -115,14 +126,14 @@ async def preview_agent_selection(state: Dict[str, Any]):
 
 
 # --- Design Genome API ---
-from agents.unified_design_agent import UnifiedDesignAgent
+from backend.agents.unified_design_agent import UnifiedDesignAgent
 
 # Global instance for stateful operations like exploration
 unified_design_agent = UnifiedDesignAgent()
 
 # Global Conversational Agent with integrated RLM
 # RLM is now unified into ConversationalAgent (no separate module)
-from agents.conversational_agent import ConversationalAgent
+from backend.agents.conversational_agent import ConversationalAgent
 conversational_agent = ConversationalAgent(
     enable_rlm=True,
     rlm_config={
@@ -229,7 +240,7 @@ async def get_component_catalog(category: Optional[str] = None, search: Optional
     """
     # For now, we aggregate from AssetSourcingAgent mocks + Supabase
     # and return a unified list for the UI.
-    from agents.asset_sourcing_agent import AssetSourcingAgent
+    from backend.agents.asset_sourcing_agent import AssetSourcingAgent
     
     # 1. Get Sourced Assets (NASA, etc.)
     sourcing_agent = AssetSourcingAgent()
@@ -302,7 +313,7 @@ async def get_system_status():
     }
 
 # --- Session Management API ---
-from conversation_state import conversation_manager
+from backend.conversation_state import conversation_manager
 
 @app.get("/api/sessions")
 async def list_sessions():
@@ -373,7 +384,7 @@ async def control_simulation(cmd: Dict[str, Any]):
     return {"status": "ok", "state": {"vhil": {"status": status, "details": details}}}
 
 # --- Agent Profiles API ---
-from core.profiles import list_profiles, get_profile, create_custom_profile, get_essential_agents
+from backend.core.profiles import list_profiles, get_profile, create_custom_profile, get_essential_agents
 
 @app.get("/api/system/profiles")
 async def get_system_profiles():
@@ -415,14 +426,14 @@ class UpdateProfileRequest(BaseModel):
 @app.get("/api/user/profile")
 async def get_user_profile():
     """Get the current user profile (Single User Mode)."""
-    from agents.user_agent import UserAgent
+    from backend.agents.user_agent import UserAgent
     agent = UserAgent()
     return agent.get_profile()
 
 @app.put("/api/user/profile")
 async def update_user_profile(req: UpdateProfileRequest):
     """Update user profile details."""
-    from agents.user_agent import UserAgent
+    from backend.agents.user_agent import UserAgent
     agent = UserAgent()
     # Filter None values
     updates = {k: v for k, v in req.dict().items() if v is not None}
@@ -441,7 +452,7 @@ async def explain_decision_endpoint(req: ExplainLogRequest):
     User clicks 'Explain' on a log entry -> Frontend sends context -> We return rationale.
     """
     # Use Lazy Registry
-    from agent_registry import registry
+    from backend.agent_registry import registry
     xai_agent = registry.get_agent("ExplainableAgent")
     
     if not xai_agent:
@@ -459,7 +470,7 @@ async def explain_decision_endpoint(req: ExplainLogRequest):
 @app.get("/api/agents/metrics")
 async def get_agent_metrics():
     """Returns real-time execution metrics for all agents."""
-    from core.agent_registry import AgentVersionRegistry
+    from backend.core.agent_registry import AgentVersionRegistry
     registry = AgentVersionRegistry()
     return {"metrics": registry.get_all_metrics()}
 
@@ -470,7 +481,7 @@ async def transcribe_audio(file: UploadFile = File(...)):
     """
     Transcribes uploaded audio file using STTAgent (Whisper).
     """
-    from agents.stt_agent import get_stt_agent
+    from backend.agents.stt_agent import get_stt_agent
     stt_agent = get_stt_agent()
     
     audio_content = await file.read()
@@ -583,7 +594,7 @@ Extract these parameters (return as JSON):
 Return ONLY valid JSON. Use null for unknown values."""
     
     try:
-        from llm.factory import get_llm_provider
+        from backend.llm.factory import get_llm_provider
         llm = get_llm_provider("groq")
         
         response = llm.generate(
@@ -660,10 +671,10 @@ async def chat_requirements_endpoint(
     session.add_message("user", req.message)
     
     # 4. Instantiate Agents
-    from agents.geometry_estimator import GeometryEstimator
-    from agents.cost_agent import CostAgent
-    from agents.environment_agent import EnvironmentAgent
-    from agents.safety_agent import SafetyAgent
+    from backend.agents.geometry_estimator import GeometryEstimator
+    from backend.agents.cost_agent import CostAgent
+    from backend.agents.environment_agent import EnvironmentAgent
+    from backend.agents.safety_agent import SafetyAgent
     
     geom_estimator = GeometryEstimator()
     cost_agent = CostAgent()
@@ -788,8 +799,8 @@ async def chat_requirements_endpoint(
 
 
 # --- Recursive ISA Resolver (Phase 9) ---
-from core.hierarchical_resolver import ModularISA, HierarchicalResolver
-from core.system_registry import get_system_resolver
+from backend.core.hierarchical_resolver import ModularISA, HierarchicalResolver
+from backend.core.system_registry import get_system_resolver
 
 _resolver = get_system_resolver()
 
@@ -838,7 +849,7 @@ async def get_isa_tree():
     """
     Returns the full Recursive ISA Hierarchy from the Dynamic Registry.
     """
-    from core.system_registry import get_system_registry
+    from backend.core.system_registry import get_system_registry
     registry = get_system_registry()
     
     def serialize_pod(pod):
@@ -866,8 +877,8 @@ class PodActionRequest(BaseModel):
 @app.post("/api/pods/merge")
 async def merge_pod_action(req: PodActionRequest):
     """Triggers snapping and consolidates folder-linked files into an assembly."""
-    from core.system_registry import get_system_registry
-    from pod_manager import PodManager
+    from backend.core.system_registry import get_system_registry
+    from backend.pod_manager import PodManager
     
     registry = get_system_registry()
     pod = registry.get_pod(req.pod_id)
@@ -886,8 +897,8 @@ async def merge_pod_action(req: PodActionRequest):
 @app.post("/api/pods/unmerge")
 async def unmerge_pod_action(req: PodActionRequest):
     """Reverts a merged assembly to independent files."""
-    from core.system_registry import get_system_registry
-    from pod_manager import PodManager
+    from backend.core.system_registry import get_system_registry
+    from backend.pod_manager import PodManager
     
     registry = get_system_registry()
     pod = registry.get_pod(req.pod_id)
@@ -908,7 +919,7 @@ class CreatePodRequest(BaseModel):
 @app.post("/api/isa/create")
 async def create_isa_pod(req: CreatePodRequest):
     """Dynamically adds a new hardware pod."""
-    from core.system_registry import get_system_registry
+    from backend.core.system_registry import get_system_registry
     registry = get_system_registry()
     
     # If no parent_id provided, default to root
@@ -952,14 +963,14 @@ async def list_agents():
 async def run_agent(name: str, payload: Dict[str, Any]):
     """Execute a specific agent directly."""
     # Use Global Registry for lazy loading support
-    from agent_registry import registry
+    from backend.agent_registry import registry
     agent = registry.get_agent(name)
     
     if not agent:
         raise HTTPException(status_code=404, detail=f"Agent '{name}' not found.")
     
     # Track Execution Time for Real Metrics
-    from core.agent_registry import AgentVersionRegistry
+    from backend.core.agent_registry import AgentVersionRegistry
     registry = AgentVersionRegistry()
     
     start_time = time.time()
@@ -1045,7 +1056,7 @@ async def run_orchestrator_internal(
     # 1. Handle Voice Data (Strict Routing to ConversationalAgent)
     transcript = ""
     if voice_data and hasattr(voice_data, "read"):
-        from agents.stt_agent import get_stt_agent
+        from backend.agents.stt_agent import get_stt_agent
         stt = get_stt_agent()
         content = await voice_data.read()
         transcript = stt.transcribe(content, filename="voice_command.wav")
@@ -1200,7 +1211,7 @@ async def handshake_endpoint(req: HandshakeRequest):
 async def schema_version_endpoint():
     """Get current Hardware ISA version/revision."""
     # This remains simple for now, but could also move to controller
-    from isa import HardwareISA
+    from backend.isa import HardwareISA
     isa_template = HardwareISA(project_id="template")
     return {
         "version": "1.0.0",
@@ -1214,7 +1225,7 @@ async def get_isa_structure_endpoint():
     Returns the full serialized ISA Hierarchy (Pods, Parameters, Constraints).
     Used by frontend to build the ISA Browser UI.
     """
-    from isa import HardwareISA
+    from backend.isa import HardwareISA
     
     # In a real scenario, this might load a specific project's ISA
     # For now, we return the template/default ISA structure
@@ -1385,7 +1396,7 @@ class SelectionRequest(BaseModel):
 async def list_available_agents():
     """List all registered agents and their statuses."""
     # Use Global Registry (Phase 10)
-    from agent_registry import registry as global_registry
+    from backend.agent_registry import registry as global_registry
     
     agents = []
     # global_registry.list_agents() returns {name: type_str}
@@ -1436,7 +1447,7 @@ async def get_system_telemetry():
     latency_stats = latency_monitor.get_metrics()
     
     # 3. Agent Registry Status
-    from agent_registry import registry as global_registry
+    from backend.agent_registry import registry as global_registry
     agent_count = len(global_registry._agents) if global_registry._initialized else 0
     
     return {
@@ -1486,7 +1497,7 @@ async def select_agents_endpoint(req: SelectionRequest):
 async def check_feasibility_endpoint(req: FeasibilityRequest):
     """Quick feasibility check for geometry."""
     try:
-        from agents.geometry_estimator import GeometryEstimator
+        from backend.agents.geometry_estimator import GeometryEstimator
         agent = GeometryEstimator()
         # Mocking check for now as GeometryEstimator doesn't expose quick_feasibility_check directly yet
         # Using run() to get volume/bbox
@@ -1513,7 +1524,7 @@ async def check_feasibility_endpoint(req: FeasibilityRequest):
 @app.post("/api/agents/geometry/estimate")
 async def geometry_estimate_endpoint(req: EstimateRequest):
     """Quick geometry complexity estimation."""
-    from agents.geometry_estimator import GeometryEstimator
+    from backend.agents.geometry_estimator import GeometryEstimator
     agent = GeometryEstimator()
     result = agent.run({"geometry_tree": req.geometry_tree})
     return result
@@ -1521,7 +1532,7 @@ async def geometry_estimate_endpoint(req: EstimateRequest):
 @app.post("/api/agents/cost/estimate")
 async def cost_estimate_endpoint(req: EstimateRequest):
     """Quick cost estimation."""
-    from agents.cost_agent import CostAgent
+    from backend.agents.cost_agent import CostAgent
     agent = CostAgent()
     params = {
         "material_name": req.material,
@@ -1537,7 +1548,7 @@ async def get_geometry_model(model_id: str):
     Serves a compiled GLB model from the Hybrid Engine cache.
     Used by GenomeViewer for real-time 3D rendering.
     """
-    from geometry.hybrid_engine import get_engine
+    from backend.geometry.hybrid_engine import get_engine
     engine = get_engine()
     data = engine.cache.get(model_id)
     
@@ -1561,7 +1572,7 @@ async def solve_physics(request: PhysicsRequest):
     Direct access to Physikel Kernel via Physics Agent.
     Previously delegated to PhysicsOracle.
     """
-    from agents.physics_agent import PhysicsAgent
+    from backend.agents.physics_agent import PhysicsAgent
     try:
         agent = PhysicsAgent()
         
@@ -1599,7 +1610,7 @@ async def validate_physics_component(req: PhysicsValidationRequest):
     Validates a single component's physics.
     Returns: Mass, Deflection, FOS, Stability Status.
     """
-    from agents.physics_agent import PhysicsAgent
+    from backend.agents.physics_agent import PhysicsAgent
     # We use PhysicsAgent which wraps UnifiedPhysicsKernel
     
     try:
@@ -1709,7 +1720,7 @@ async def verify_physics(params: Dict[str, Any]):
     Quick physics check without full compilation.
     Accepts: environment, geometry_tree, design_params
     """
-    from agents.physics_agent import PhysicsAgent
+    from backend.agents.physics_agent import PhysicsAgent
     
     try:
         agent = PhysicsAgent()
@@ -1757,7 +1768,7 @@ async def step_physics(request: PhysicsStepRequest):
     For vHIL real-time telemetry.
     """
     try:
-        from agents.physics_agent import PhysicsAgent
+        from backend.agents.physics_agent import PhysicsAgent
         agent = PhysicsAgent()
         return agent.step(request.state, request.inputs, request.dt)
     except Exception as e:
@@ -1778,7 +1789,7 @@ async def analyze_chemistry(request: ChemistryAnalysisRequest):
     Performs deep chemical analysis using UnifiedMaterialsAPI.
     Checks for compatibility and hazards.
     """
-    from agents.chemistry_agent import ChemistryAgent
+    from backend.agents.chemistry_agent import ChemistryAgent
     agent = ChemistryAgent()
     return agent.run(request.materials, request.environment)
 
@@ -1795,7 +1806,7 @@ async def analyze_full_physics(req: PhysicsAnalyzeRequest):
     Wraps PhysicsAgent.run().
     """
     try:
-        from agents.physics_agent import PhysicsAgent
+        from backend.agents.physics_agent import PhysicsAgent
         agent = PhysicsAgent()
         
         # Default environment if None
@@ -1824,7 +1835,7 @@ async def step_chemistry(request: ChemistryStepRequest):
     vHIL accelerated aging.
     """
     try:
-        from agents.chemistry_agent import ChemistryAgent
+        from backend.agents.chemistry_agent import ChemistryAgent
         agent = ChemistryAgent()
         return agent.step(request.state, request.inputs, request.dt)
     except Exception as e:
@@ -1851,7 +1862,7 @@ async def analyze_cost(request: CostAnalysisRequest):
     Uses Market Surrogates for dynamic pricing.
     """
     try:
-        from agents.cost_agent import CostAgent
+        from backend.agents.cost_agent import CostAgent
         agent = CostAgent()
         
         params = {
@@ -1873,8 +1884,8 @@ def compile_openscad(request: Dict[str, Any]):
     Compile OpenSCAD code to renderable mesh geometry.
     Supports "stl" (default) or "sdf_grid" (Phase 17).
     """
-    from agents.openscad_agent import OpenSCADAgent
-    from geometry.manifold_engine import ManifoldEngine, GeometryRequest
+    from backend.agents.openscad_agent import OpenSCADAgent
+    from backend.geometry.manifold_engine import ManifoldEngine, GeometryRequest
     import base64
     
     scad_code = request.get("code", "")
@@ -1894,7 +1905,7 @@ def compile_openscad(request: Dict[str, Any]):
             # But we have `OpenSCADParser` (Phase 4).
             
             # Let's use the parser to convert SCAD -> Manifold Tree
-            from agents.openscad_parser import parse_scad # Assuming it exists from Phase 4
+            from backend.agents.openscad_parser import parse_scad # Assuming it exists from Phase 4
             
             # Note: If parser is limited, we might need a fallback:
             # OpenSCAD process -> STL -> Trimesh -> SDF.
@@ -1919,7 +1930,7 @@ def compile_openscad(request: Dict[str, Any]):
             # 3. Trimesh -> SDF Volume
             
             import trimesh
-            from geometry.processors.sdf_generator import generate_sdf_volume
+            from backend.geometry.processors.sdf_generator import generate_sdf_volume
             
             # Load STL from result
             if "data" in result:
@@ -1957,7 +1968,7 @@ def compile_openscad(request: Dict[str, Any]):
 @app.get("/api/openscad/info")
 async def openscad_info():
     """Get OpenSCAD agent capabilities."""
-    from agents.openscad_agent import OpenSCADAgent
+    from backend.agents.openscad_agent import OpenSCADAgent
     
     agent = OpenSCADAgent()
     return agent.get_info()
@@ -1968,7 +1979,7 @@ async def compile_openscad_stream(request: Dict[str, Any]):
     Compile OpenSCAD assembly progressively using Server-Sent Events (SSE).
     Streams parts as they complete for parallel rendering.
     """
-    from agents.openscad_agent import OpenSCADAgent
+    from backend.agents.openscad_agent import OpenSCADAgent
     from fastapi.responses import StreamingResponse
     import json
     
@@ -2025,7 +2036,7 @@ async def export_geometry_stl(request: ExportRequest):
     """
     Legacy STL export. Redirecting to Hybrid Engine.
     """
-    from geometry.hybrid_engine import compile_geometry_task
+    from backend.geometry.hybrid_engine import compile_geometry_task
     
     # Adapt request to new engine
     result = await compile_geometry_task(
@@ -2046,7 +2057,7 @@ async def api_compile_geometry(req: CompileGeometryRequest):
     Hybrid Geometry Engine Endpoint.
     Returns Base64 encoded geometry or file path.
     """
-    from geometry.hybrid_engine import compile_geometry_task
+    from backend.geometry.hybrid_engine import compile_geometry_task
     
     result = await compile_geometry_task(
         tree=req.geometry_tree,
@@ -2176,7 +2187,7 @@ async def convert_mesh_to_sdf(
 
 # --- Project Persistence API (Phase 3) ---
 
-from managers.project_manager import ProjectManager
+from backend.managers.project_manager import ProjectManager
 project_manager = ProjectManager()
 
 class SaveProjectRequest(BaseModel):
@@ -2287,8 +2298,8 @@ async def critique_design(request: CritiqueRequest):
     Runs multi-agent critique on the current design.
     Returns: List of critique messages.
     """
-    from agents.manufacturing_agent import ManufacturingAgent
-    from agents.physics_agent import PhysicsAgent
+    from backend.agents.manufacturing_agent import ManufacturingAgent
+    from backend.agents.physics_agent import PhysicsAgent
     
     critiques = []
     
@@ -2411,7 +2422,7 @@ async def chat_discovery(
     
     # 1. Process Voice if present
     if voice:
-        from agents.stt_agent import get_stt_agent
+        from backend.agents.stt_agent import get_stt_agent
         stt_agent = get_stt_agent()
         voice_data = await voice.read()
         message = stt_agent.transcribe(voice_data, filename=voice.filename)
@@ -2500,7 +2511,7 @@ async def get_comments(plan_id: str):
 @app.post("/api/plans/{plan_id}/review")
 async def review_plan(plan_id: str, request: ReviewRequest):
     """Request agent review of plan comments"""
-    from agents.review_agent import ReviewAgent
+    from backend.agents.review_agent import ReviewAgent
     
     if plan_id not in plan_reviews:
         raise HTTPException(status_code=404, detail="Plan not found")
@@ -2588,7 +2599,7 @@ if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
 
 # --- VMK Verification Endpoint ---
-from vmk_kernel import SymbolicMachiningKernel, ToolProfile, VMKInstruction
+from backend.vmk_kernel import SymbolicMachiningKernel, ToolProfile, VMKInstruction
 
 
 # --- VMK Global State ---
@@ -2696,7 +2707,7 @@ async def evolve_geometry(request: Dict[str, Any]):
     """
     Triggers the Optimization Agent to morph geometry based on Adjoint Sensitivity.
     """
-    from agents.optimization_agent import OptimizationAgent
+    from backend.agents.optimization_agent import OptimizationAgent
     
     try:
         agent = OptimizationAgent()
@@ -2712,7 +2723,7 @@ async def reify_stroke(payload: Dict[str, Any]):
     Optionally optimizes the curve before fitting (Smart Snap).
     """
     from utils.geometry_fitting import fit_stroke_to_primitive
-    from agents.optimization_agent import OptimizationAgent, ObjectiveFunction
+    from backend.agents.optimization_agent import OptimizationAgent, ObjectiveFunction
     
     try:
         points = payload.get("points", [])
@@ -2822,8 +2833,8 @@ async def compile_openscad_stream(request: OpenSCADStreamRequest):
     import json
     import asyncio
     import trimesh
-    from agents.openscad_agent import OpenSCADAgent
-    from geometry.processors.mesh_voxelizer import MeshVoxelizer
+    from backend.agents.openscad_agent import OpenSCADAgent
+    from backend.geometry.processors.mesh_voxelizer import MeshVoxelizer
     
     async def event_generator():
         try:
@@ -2925,7 +2936,7 @@ async def check_compliance(request: ComplianceCheckRequest):
     """
     Check design parameters against regulatory standards.
     """
-    from agents.compliance_agent import ComplianceAgent
+    from backend.agents.compliance_agent import ComplianceAgent
     agent = ComplianceAgent()
     try:
         results = agent.run({
@@ -2946,8 +2957,8 @@ def _sse_event(event_type: str, data: Dict) -> str:
 # =============================================================================
 
 # --- WebSocket Orchestrator Endpoint ---
-from websocket_manager import ws_handler, ws_manager
-from performance_monitor import perf_monitor
+from backend.websocket_manager import ws_handler, ws_manager
+from backend.performance_monitor import perf_monitor
 
 @app.websocket("/ws/orchestrator/{project_id}")
 async def websocket_orchestrator(websocket: WebSocket, project_id: str):
@@ -3168,7 +3179,7 @@ def broadcast_orchestrator_error(project_id: str, error: str, details: Optional[
 # COST ESTIMATION API (Phase 8 - De-hardcoding)
 # =============================================================================
 
-from agents.cost_agent import CostAgent
+from backend.agents.cost_agent import CostAgent
 from pydantic import BaseModel, Field
 
 class CostEstimateRequest(BaseModel):
@@ -3307,7 +3318,7 @@ async def check_pricing_status():
 # =============================================================================
 
 import uuid
-from services.file_extractor import (
+from backend.services.file_extractor import (
     extract_file_content, get_file_category, get_size_limit
 )
 

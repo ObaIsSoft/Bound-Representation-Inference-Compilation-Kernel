@@ -7,7 +7,10 @@ from unittest.mock import MagicMock, patch, AsyncMock
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from orchestrator import stt_node, run_orchestrator
-from schema import AgentState
+try:
+    from backend.schema import AgentState
+except ImportError:
+    from schema import AgentState
 
 async def verify_stt_node():
     print("--- Testing stt_node ---")

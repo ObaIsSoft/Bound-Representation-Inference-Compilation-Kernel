@@ -17,6 +17,8 @@ def inspect_keys():
             continue
             
         print(f"✅ {name}: PRESENT (length: {len(value)})")
+        problems = []
+        if value.startswith('"') or value.startswith("'"):
             problems.append("Cannot have quotes at start")
         if " " in value:
             problems.append("Contains spaces inside")

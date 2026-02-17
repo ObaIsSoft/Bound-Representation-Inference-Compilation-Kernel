@@ -428,8 +428,6 @@ async def update_user_profile(req: UpdateProfileRequest):
     updates = {k: v for k, v in req.dict().items() if v is not None}
     return agent.update_profile(updates)
 
-    return agent.update_profile(updates)
-
 # --- XAI / Explainability API ---
 class ExplainLogRequest(BaseModel):
     agent_name: str

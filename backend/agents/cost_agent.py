@@ -141,16 +141,27 @@ class CostAgent:
         if currency.upper() != "USD":
             try:
                 exchange_rate = await currency_service.get_rate("USD", currency)
-                if exchange_rate:
-                    data_sources["currency"] = "api"
-                else:
-                    warnings.append(
-                        f"Currency conversion rate USD->{currency} not available. Using 1.0"
-                    )
-                    exchange_rate = 1.0
+                if not exchange_rate:
+                    # FAIL FAST - no hardcoded exchange rates
+                    return {
+                        "estimated_cost": None,
+                        "currency": currency.upper(),
+                        "confidence": 0.0,
+                        "feasible": False,
+                        "error": f"Currency conversion rate USD->{currency} not available. Cannot estimate cost.",
+                        "warnings": warnings + [f"Currency conversion rate USD->{currency} not available"]
+                    }
+                data_sources["currency"] = "api"
             except Exception as e:
-                warnings.append(f"Currency service error: {e}")
-                exchange_rate = 1.0
+                # FAIL FAST - no fallbacks
+                return {
+                    "estimated_cost": None,
+                    "currency": currency.upper(),
+                    "confidence": 0.0,
+                    "feasible": False,
+                    "error": f"Currency service error: {e}",
+                    "warnings": warnings + [f"Currency service error: {e}"]
+                }
         else:
             exchange_rate = 1.0
         

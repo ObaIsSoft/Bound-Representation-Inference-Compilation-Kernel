@@ -399,16 +399,12 @@ async def geometry_node(state: AgentState) -> Dict[str, Any]:
         logger.error(f"GeometryAgent Failed: {e}")
         return {"error": str(e)}
     
-    # CRITIC HOOK: Geometry Robustness
-    if "geometry_critic" in state.get("active_critics", []):
-         critic = get_critic("geometry")
-         critic.observe(
-             params=params,
-             result=result,
-             # We assume execution time tracking needs to be passed out of agent 
-             # For now, default 0 or update Agent to return 'metadata'
-             validation=result.get("validation_logs", {}) 
-         )
+    # CRITIC HOOK: Geometry Robustness (DISABLED - get_critic not implemented)
+    # TODO: Implement get_critic() or use registry.get_agent("GeometryCritic") directly
+    # if "geometry_critic" in state.get("active_critics", []):
+    #     critic = registry.get_agent("GeometryCritic")
+    #     if critic:
+    #         critic.observe(params=params, result=result, validation=result.get("validation_logs", {}))
 
     return {
         "kcl_code": result["kcl_code"],
@@ -526,16 +522,12 @@ async def physics_node(state: AgentState) -> Dict[str, Any]:
         if asyncio.iscoroutine(mat_props):
             mat_props = await mat_props
     
-    # CRITIC HOOK: Material
-    if "material_critic" in state.get("active_critics", []):
-         mat_critic = get_critic("material")
-         mat_critic.observe(
-             agent_name="MaterialAgent",
-             input_state={"material_name": material_name, "temp": temp},
-             output=mat_props,
-             # Ground truth would come from Oracle or past failure data (not yet integrated)
-             metadata={"timestamp": time.time()}
-         )
+    # CRITIC HOOK: Material (DISABLED - use registry directly)
+    # TODO: Re-enable when critic system is fully implemented
+    # if "material_critic" in state.get("active_critics", []):
+    #     mat_critic = registry.get_agent("MaterialCritic")
+    #     if mat_critic:
+    #         mat_critic.observe(...)}
 
     # Run Chemistry Agent
     chem_agent = registry.get_agent("ChemistryAgent")
@@ -546,15 +538,8 @@ async def physics_node(state: AgentState) -> Dict[str, Any]:
         if asyncio.iscoroutine(chem_check):
             chem_check = await chem_check
 
-    # CRITIC HOOK: Chemistry
-    if "chemistry_critic" in state.get("active_critics", []):
-         chem_critic = get_critic("chemistry")
-         chem_critic.observe(
-             agent_name="ChemistryAgent",
-             input_state={"materials": [material_name], "env": env.get("type")},
-             output=chem_check,
-             metadata={"timestamp": time.time()}
-         )
+    # CRITIC HOOK: Chemistry (DISABLED)
+    # TODO: Re-enable when critic system is fully implemented
 
     # --- NEW: Integrated Sub-Agents ---
     
@@ -569,15 +554,12 @@ async def physics_node(state: AgentState) -> Dict[str, Any]:
         if asyncio.iscoroutine(elec_result):
             elec_result = await elec_result
     
-    # CRITIC HOOK: Electronics
-    if "electronics_critic" in state.get("active_critics", []):
-        elec_critic = get_critic("electronics")
-        elec_critic.observe(
-            agent_name="ElectronicsAgent",
-            input_state=elec_params,
-            output=elec_result,
-            metadata={"timestamp": time.time()}
-        )
+    # CRITIC HOOK: Electronics (DISABLED)
+    # TODO: Re-enable when critic system is fully implemented
+    # if "electronics_critic" in state.get("active_critics", []):
+    #     critic = registry.get_agent("ElectronicsCritic")
+    #     if critic:
+    #         critic.observe(...)
 
     heat_load_w = 0.0
     # Try to extract unified heat load
@@ -827,19 +809,12 @@ async def optimization_node(state: AgentState) -> Dict[str, Any]:
         logger.error(f"OptimizationAgent Failed: {e}")
         return {"error": str(e)}
     
-    # CRITIC HOOK: Monitor Optimization Performance
-    # We need to know if this step actually improved things.
-    # The 'result' has 'success' (runtime) but true success is downstream.
-    # However, OptimizationCritic monitors the *Agent's* internal success/efficiency first.
-    
-    if "optimization_critic" in state.get("active_critics", []):
-         critic = get_critic("optimization")
-         critic.observe(
-             agent_name="OptimizationAgent",
-             input_state=opt_payload,
-             output=result,
-             metadata={"timestamp": time.time()} 
-         )
+    # CRITIC HOOK: Monitor Optimization Performance (DISABLED)
+    # TODO: Re-enable when critic system is fully implemented
+    # if "optimization_critic" in state.get("active_critics", []):
+    #     critic = registry.get_agent("OptimizationCritic")
+    #     if critic:
+    #         critic.observe(agent_name="OptimizationAgent", input_state=opt_payload, output=result, metadata={...})
 
     # 5.3 INTEGRATION: Feedback Loop
     from agents.feedback_agent import FeedbackAgent

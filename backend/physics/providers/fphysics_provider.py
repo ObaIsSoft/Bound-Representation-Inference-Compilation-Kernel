@@ -1,7 +1,7 @@
 """
 FPhysics Provider - Physical Constants
 
-Wraps the fphysics library to provide physical constants.
+Uses scipy.constants for physical constants (replaces non-existent fphysics library).
 """
 
 import logging
@@ -12,43 +12,42 @@ logger = logging.getLogger(__name__)
 
 class FPhysicsProvider:
     """
-    Provider for physical constants using fphysics library.
-    Falls back to hardcoded values if library not available.
+    Provider for physical constants using scipy.constants.
+    All constants are sourced from CODATA (live scientific values).
     """
     
     def __init__(self):
-        """Initialize the provider and attempt to import fphysics"""
+        """Initialize the provider with scipy.constants"""
         self.constants = self._load_constants()
-        logger.info(f"FPhysicsProvider initialized with {len(self.constants)} constants")
+        logger.info(f"FPhysicsProvider initialized with {len(self.constants)} constants from scipy")
     
     def _load_constants(self) -> Dict[str, float]:
         """
-        Load constants from fphysics library.
+        Load constants from scipy.constants (live scientific values from CODATA).
         
         Returns:
             Dictionary of physical constants
         """
         try:
-            # Import fphysics constants module
-            from fphysics import constants as fpc
+            # Use scipy.constants - widely available, scientifically accurate
+            from scipy import constants as const
             
-            # fphysics uses ALL_CAPS constant names
             return {
-                "g": fpc.EARTH_GRAVITY,  # Standard gravity (m/s^2)
-                "c": fpc.SPEED_OF_LIGHT,  # Speed of light (m/s)
-                "G": fpc.GRAVITATIONAL_CONSTANT,  # Gravitational constant
-                "h": fpc.PLANCK_CONSTANT,  # Planck constant
-                "k_B": fpc.BOLTZMANN_CONSTANT,  # Boltzmann constant
-                "R": fpc.GAS_CONSTANT,  # Gas constant (also MOLAR_GAS_CONSTANT)
-                "N_A": fpc.AVOGADRO_NUMBER,  # Avogadro constant
-                "sigma": fpc.STEFAN_BOLTZMANN_CONSTANT,  # Stefan-Boltzmann constant
-                "epsilon_0": fpc.VACUUM_PERMITTIVITY,  # Vacuum permittivity
-                "mu_0": fpc.VACUUM_PERMEABILITY,  # Vacuum permeability
-                "e": fpc.ELEMENTARY_CHARGE,  # Elementary charge
+                "g": const.g,  # Standard gravity (m/s^2)
+                "c": const.speed_of_light,  # Speed of light (m/s)
+                "G": const.gravitational_constant,  # Gravitational constant
+                "h": const.Planck,  # Planck constant
+                "k_B": const.Boltzmann,  # Boltzmann constant
+                "R": const.R,  # Gas constant
+                "N_A": const.N_A,  # Avogadro constant
+                "sigma": const.sigma,  # Stefan-Boltzmann constant
+                "epsilon_0": const.epsilon_0,  # Vacuum permittivity
+                "mu_0": const.mu_0,  # Vacuum permeability
+                "e": const.elementary_charge,  # Elementary charge
             }
-        except (ImportError, AttributeError) as e:
-            logger.error(f"Failed to import fphysics: {e}")
-            raise RuntimeError(f"fphysics library is required but not available: {e}")
+        except ImportError as e:
+            logger.error(f"Failed to import scipy.constants: {e}")
+            raise RuntimeError(f"scipy is required for physical constants: {e}")
 
     def get(self, name: str) -> float:
         """

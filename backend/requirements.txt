@@ -1,11 +1,40 @@
 # Core Physics Libraries (ALL WORKING - NO FALLBACKS)
-fphysics==1.0
+# NOTE: fphysics removed - using scipy.constants instead (live scientific values)
 pytest
 pytest-asyncio
 physipy==0.2.8
 sympy>=1.11
 scipy  # Let pip find a compatible pre-built version
 CoolProp>=6.4
+
+# Geometry & Mesh Processing (CRITICAL - NOT OPTIONAL)
+manifold3d>=2.0.0  # C++ geometry kernel
+# trimesh  # Already installed as dependency, explicit for clarity
+trimesh>=4.0.0  # Mesh processing
+pymeshfix  # Mesh repair
+rtree  # Spatial indexing for trimesh
+
+# LLM & AI Integration
+google-genai>=0.3.0  # Gemini API
+# openai, groq already listed below
+
+# PDF & Document Processing
+pymupdf>=1.23.0  # fitz import - fast PDF processing
+
+# CAD & Manufacturing
+cadquery>=2.4.0  # OCCT Python wrapper
+
+# Machine Learning & RL
+gymnasium>=0.29.0  # RL environments
+networkx>=3.0  # Graph processing
+
+# Async HTTP
+aiohttp>=3.9.0  # Async HTTP client
+requests>=2.31.0  # Sync HTTP client (still needed)
+
+# Agent Orchestration
+langgraph>=0.2.0  # LangGraph workflow engine
+langchain-core>=0.2.0  # Core LangChain
 
 # Additional Physics Libraries
 pint>=0.20  # Units management
@@ -16,7 +45,9 @@ uncertainties>=3.1  # Error propagation
 
 # Advanced Libraries (Phase 2.4)
 pymatgen>=2024.1  # Materials science and crystal structures ✓ INSTALLED
-fenics>=2019.1  # Advanced FEA (Python wrapper only, C++ backend needs Docker/conda)
+# FEniCS REMOVED - requires conda/Docker, not compatible with pip
+# If needed: conda install -c conda-forge fenics
+# Alternative: use scikit-fem (already included above) for FEA
 # torch>=2.1 - Required by the_well, install from pytorch.org (not on PyPI for Python 3.13)
 # the_well - PolymathicAI 15TB physics dataset API
 #   GitHub: https://github.com/PolymathicAI/the_well

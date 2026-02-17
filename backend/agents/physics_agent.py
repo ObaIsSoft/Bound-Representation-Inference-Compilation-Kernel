@@ -100,10 +100,10 @@ class PhysicsAgent:
                  # Apply Scale Factor Intelligence
                  # If the design has a scale_factor (e.g. 1/6), and we want REAL mass:
                  # Real Volume = Model Volume * (1/scale)^3
-                 # But we need access to the scale factor here.
-                 # For now, let's assume 'part' might have metadata or we use a global design param.
                  scale = design_params.get("metadata", {}).get("scale_factor", 1.0)
-                 if scale == 0: scale = 1.0
+                 if scale == 0:
+                     logger.warning(f"Scale factor is 0 for part, using 1.0 (no scaling)")
+                     scale = 1.0
                  
                  # Correction for 1:Scale models to get Real Mass
                  # If user wants model mass, scale=1. If user wants proto mass, scale=scale.
@@ -113,21 +113,44 @@ class PhysicsAgent:
                  # Convert mm^3 to m^3
                  vol_m3 = (vol_scad * real_vol_factor) / 1e9 
                  
-                 # Density (Steel/Aluminium avg ~ 4000 kg/m3 if unknown)
-                 # Or use specific material density
-                 density = part.get("material", {}).get("density", 2700.0) # Al
+                 # Density must come from material database
+                 density = part.get("material", {}).get("density")
+                 if density is None:
+                     logger.error(f"No material density for part: {part.get('name', 'unknown')}")
+                     return {
+                         "feasible": False,
+                         "error": f"Material density required for physics calculation. Part: {part.get('name', 'unknown')}",
+                         "logs": ["ERROR: Missing material density - cannot calculate mass"]
+                     }
                  
                  mass = vol_m3 * density
                  total_mass += mass
                  total_volume += vol_m3
              else:
-                 total_mass += 1.0 # Safe fallback to avoid div/0
+                 # No mass or volume data available
+                 logger.warning(f"Part {part.get('name', 'unknown')} has no mass or volume data")
+                 # Skip this part - don't add artificial mass
         
-        if total_mass == 0: total_mass = 1.0 # Safety
-        if total_mass == 0: total_mass = 1.0 # Safety
-        if projected_area == 0: projected_area = 0.01
+        # Validate physics parameters - NO silent fallbacks
+        if total_mass <= 0:
+            logger.error("Total mass is zero or negative - physics calculation impossible")
+            return {
+                "feasible": False,
+                "error": "Total mass must be > 0 for physics calculations. Provide part volumes and materials.",
+                "logs": ["ERROR: Cannot perform physics analysis without valid mass"]
+            }
         
-        total_surface_area = 0.001 # Avoid div/0
+        if projected_area <= 0:
+            logger.error("Projected area is zero or negative")
+            return {
+                "feasible": False,
+                "error": "Projected area must be > 0. Check part dimensions.",
+                "logs": ["ERROR: Cannot calculate aerodynamics without projected area"]
+            }
+        
+        if total_surface_area <= 0:
+            logger.warning("Surface area not calculated from parts, using geometric approximation")
+            # Will be calculated from sketches below
 
         # --- Phase 9.3: Add Sketched Primitives Mass ---
         sketches = design_params.get("geometry_sketch", [])

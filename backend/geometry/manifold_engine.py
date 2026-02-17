@@ -32,9 +32,9 @@ class ManifoldEngine(BaseGeometryEngine):
                  # Optimization: Direct Mesh -> GLB bytes
                  # For now, wrap in minimal Trimesh to perform robust export
                  import trimesh
-                 # Manifold3D v2+ API uses vert_pos, not vert_properties
+                 # Manifold3D API uses vert_properties for vertex positions
                  t_mesh = trimesh.Trimesh(
-                     vertices=np.array(mesh.vert_pos, dtype=np.float32),
+                     vertices=np.array(mesh.vert_properties, dtype=np.float32),
                      faces=np.array(mesh.tri_verts, dtype=np.int32)
                  )
                  
@@ -123,11 +123,20 @@ class ManifoldEngine(BaseGeometryEngine):
              # Return empty/cube?
              return manifold3d.Manifold()
         
-        # Validate mesh quality (watertight check)
-        if not union_result.is_watertight():
-            logger.warning("Generated manifold is not watertight - may have holes or self-intersections")
-            # Optionally: try to repair or raise error
-            # For now, log and continue - caller can check metadata
+        # Validate mesh quality (watertight check via trimesh)
+        try:
+            import trimesh
+            mesh = union_result.to_mesh()
+            t_mesh = trimesh.Trimesh(
+                vertices=np.array(mesh.vert_properties, dtype=np.float32),
+                faces=np.array(mesh.tri_verts, dtype=np.int32)
+            )
+            if not t_mesh.is_watertight:
+                logger.warning("Generated mesh is not watertight - may have holes or self-intersections")
+                # Optionally: try to repair or raise error
+                # For now, log and continue - caller can check metadata
+        except Exception as e:
+            logger.debug(f"Could not validate watertightness: {e}")
         
         return union_result
 

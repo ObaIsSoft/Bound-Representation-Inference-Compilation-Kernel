@@ -84,8 +84,9 @@ export default function Omniviewport({ projectId }) {
 
   return (
     <div 
-      className="w-full h-full relative overflow-hidden"
+      className="w-full h-full relative overflow-hidden touch-none"
       style={{ backgroundColor: canvasBackground }}
+      onWheel={(e) => e.stopPropagation()}
     >
       {/* Connection Status Indicator */}
       <ConnectionStatus status={connectionStatus} theme={theme} />
@@ -198,8 +199,19 @@ function SceneContents({
         makeDefault 
         enableDamping
         dampingFactor={0.05}
-        minDistance={0.5}
-        maxDistance={100}
+        minDistance={1}
+        maxDistance={50}
+        enableZoom={true}
+        zoomSpeed={0.5}
+        enablePan={true}
+        panSpeed={0.8}
+        enableRotate={true}
+        rotateSpeed={0.8}
+        mouseButtons={{
+          LEFT: THREE.MOUSE.ROTATE,
+          MIDDLE: THREE.MOUSE.DOLLY,
+          RIGHT: THREE.MOUSE.PAN
+        }}
       />
     </group>
   );

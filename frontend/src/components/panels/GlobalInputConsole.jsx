@@ -3,10 +3,18 @@ import { useLocation } from 'react-router-dom';
 import { useTheme } from '../../contexts/ThemeContext';
 import { usePanel } from '../../contexts/PanelContext';
 import DraggablePanel from '../shared/DraggablePanel';
-import { Image, Pencil, Mic, History, GitGraph, X, Paperclip } from 'lucide-react';
+import { Image, Pencil, Mic, History, GitGraph, X, Paperclip, Box, Play, Activity, PenTool, MousePointer2 } from 'lucide-react';
 import { useDropzone } from 'react-dropzone';
 import { LLM_PROVIDERS } from '../../utils/constants';
 import apiClient from '../../utils/apiClient';
+
+// Spatial toolbar modes - only shown in workspace
+const SPATIAL_MODES = [
+    { id: 'design', label: 'Design', icon: Box },
+    { id: 'simulate', label: 'Simulate', icon: Activity },
+    { id: 'animate', label: 'Animate', icon: Play },
+    { id: 'review', label: 'Review', icon: PenTool },
+];
 
 const GlobalInputConsole = () => {
     const { theme } = useTheme();
@@ -36,8 +44,12 @@ const GlobalInputConsole = () => {
     const [isRecording, setIsRecording] = useState(false);
     const [isTranscribing, setIsTranscribing] = useState(false);
     const [showAttachMenu, setShowAttachMenu] = useState(false);
+    
+    // Spatial mode state - only for workspace
+    const [spatialMode, setSpatialMode] = useState('design');
 
     const isMainPanelOpen = panels[PANEL_IDS.MAIN]?.isOpen;
+    const isWorkspace = location.pathname === '/workspace';
 
     const textareaRef = useRef(null);
     const mediaRecorderRef = useRef(null);
@@ -50,7 +62,7 @@ const GlobalInputConsole = () => {
 
     const { getRootProps, getInputProps, isDragActive, open: openFileDialog } = useDropzone({
         onDrop,
-        noClick: true, // We trigger manually via button
+        noClick: true,
         noKeyboard: true
     });
 
@@ -64,12 +76,11 @@ const GlobalInputConsole = () => {
         const userMsg = message;
         const filesToSend = [...attachedFiles];
 
-        setMessage(''); // Clear input early for responsiveness
+        setMessage('');
         setAttachedFiles([]);
         setIsSubmitting(true);
 
         try {
-            // 1. Gather View Context
             const context = {
                 pathname: location.pathname,
                 activeTab: activeTab,
@@ -77,13 +88,11 @@ const GlobalInputConsole = () => {
                 timestamp: new Date().toISOString()
             };
 
-            // 2. Update local state optimistically
             addMessageToSession(activeSessionId, 'user', userMsg, {
                 context,
                 attachments: filesToSend.map(f => ({ name: f.name, type: f.type, size: f.size }))
             });
 
-            // 3. Prepare Payload (Multipart if files exist)
             let responseData;
 
             if (filesToSend.length > 0) {
@@ -94,10 +103,6 @@ const GlobalInputConsole = () => {
                 formData.append('context', JSON.stringify(context));
                 filesToSend.forEach(file => formData.append('files', file));
 
-                // Assuming backend supports multipart/form-data on /chat or a specialized endpoint
-                // Ideally, we'd upload files first then send message, but specific implementation depends on backend
-                // For now, let's assume standard JSON chat for text, separate for files or mixed if backend supports
-                // Fallback to text-only if file upload unimplemented on backend:
                 responseData = await apiClient.post('/chat', {
                     message: userMsg,
                     session_id: activeSessionId,
@@ -113,13 +118,11 @@ const GlobalInputConsole = () => {
                 });
             }
 
-            // 4. Update sessions
             if (responseData.session_id && responseData.session_id !== activeSessionId) {
                 setActiveSessionId(responseData.session_id);
                 await fetchSessions();
             }
 
-            // 5. Sync accumulated thoughts to session history
             const targetSessionId = responseData.session_id || activeSessionId;
             if (thoughts && thoughts.length > 0) {
                 thoughts.forEach(t => {
@@ -131,7 +134,6 @@ const GlobalInputConsole = () => {
                 clearThoughts();
             }
 
-            // 6. Add agent response
             addMessageToSession(targetSessionId, 'agent', responseData.response, {
                 intent: responseData.intent
             });
@@ -222,14 +224,18 @@ const GlobalInputConsole = () => {
             <div
                 {...getRootProps()}
                 className={`flex flex-col h-full backdrop-blur-xl relative overflow-visible rounded-xl border shadow-2xl transition-colors
-                    ${isDragActive ? 'border-accent-primary bg-accent-primary/10' : 'border-white/10 bg-white/10'}`}
+                    ${isDragActive ? 'border-accent-primary bg-accent-primary/10' : ''}`}
+                style={{
+                    borderColor: isDragActive ? theme.colors.accent.primary : theme.colors.border.primary,
+                    backgroundColor: theme.colors.bg.secondary + 'CC'
+                }}
             >
                 <input {...getInputProps()} />
 
                 {/* Drag Overlay */}
                 {isDragActive && (
                     <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 rounded-xl backdrop-blur-sm">
-                        <div className="text-white font-bold text-lg flex items-center gap-2">
+                        <div className="font-bold text-lg flex items-center gap-2" style={{ color: theme.colors.text.primary }}>
                             <Paperclip size={24} />
                             Drop to Attach
                         </div>
@@ -241,8 +247,11 @@ const GlobalInputConsole = () => {
                     <div className="flex-1 flex justify-start pointer-events-none">
                         <button
                             onClick={() => setIsHistoryModalOpen(true)}
-                            className="flex items-center gap-2 px-3 py-1.5 rounded-lg backdrop-blur-xl border border-white/10 hover:bg-white/5 transition-all shadow-lg pointer-events-auto"
-                            style={{ backgroundColor: theme.colors.bg.secondary + 'CC' }}
+                            className="flex items-center gap-2 px-3 py-1.5 rounded-lg backdrop-blur-xl border hover:bg-white/5 transition-all shadow-lg pointer-events-auto"
+                            style={{ 
+                                backgroundColor: theme.colors.bg.secondary + 'CC',
+                                borderColor: theme.colors.border.primary
+                            }}
                         >
                             <History size={14} color={theme.colors.accent.primary} />
                             <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: theme.colors.text.primary }}>Recall</span>
@@ -253,8 +262,11 @@ const GlobalInputConsole = () => {
                         {!isMainPanelOpen && (
                             <button
                                 onClick={() => togglePanel(PANEL_IDS.MAIN)}
-                                className="flex items-center px-4 py-1.5 rounded-lg backdrop-blur-xl border border-white/20 hover:bg-white/10 hover:border-white/30 transition-all shadow-lg pointer-events-auto animate-in fade-in slide-in-from-bottom-2 duration-300"
-                                style={{ backgroundColor: theme.colors.bg.secondary + 'E6' }}
+                                className="flex items-center px-4 py-1.5 rounded-lg backdrop-blur-xl border hover:bg-white/10 hover:border-white/30 transition-all shadow-lg pointer-events-auto animate-in fade-in slide-in-from-bottom-2 duration-300"
+                                style={{ 
+                                    backgroundColor: theme.colors.bg.secondary + 'E6',
+                                    borderColor: theme.colors.border.primary
+                                }}
                             >
                                 <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: theme.colors.text.primary }}>Open Panel</span>
                             </button>
@@ -264,8 +276,11 @@ const GlobalInputConsole = () => {
                     <div className="flex-1 flex justify-end pointer-events-none">
                         <button
                             onClick={branchSession}
-                            className="flex items-center gap-2 px-3 py-1.5 rounded-lg backdrop-blur-xl border border-white/10 hover:bg-white/5 transition-all shadow-lg pointer-events-auto"
-                            style={{ backgroundColor: theme.colors.bg.secondary + 'CC' }}
+                            className="flex items-center gap-2 px-3 py-1.5 rounded-lg backdrop-blur-xl border hover:bg-white/5 transition-all shadow-lg pointer-events-auto"
+                            style={{ 
+                                backgroundColor: theme.colors.bg.secondary + 'CC',
+                                borderColor: theme.colors.border.primary
+                            }}
                         >
                             <GitGraph size={14} color={theme.colors.accent.primary} />
                             <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: theme.colors.text.primary }}>Branch</span>
@@ -276,12 +291,13 @@ const GlobalInputConsole = () => {
                 {/* Voice Button */}
                 <button
                     onClick={toggleRecording}
-                    className={`absolute top-2 right-2 p-2 rounded-full transition-all z-20 ${isRecording ? 'animate-pulse bg-red-500/20' : 'hover:bg-white/10'}`}
+                    className={`absolute top-2 right-2 p-2 rounded-full transition-all z-20 ${isRecording ? 'animate-pulse' : 'hover:bg-white/10'}`}
+                    style={{ backgroundColor: isRecording ? theme.colors.status.error + '20' : 'transparent' }}
                     title={isRecording ? "Stop Recording" : "Start Voice Input"}
                 >
                     <Mic
                         size={18}
-                        color={isRecording ? '#ef4444' : (isTranscribing ? theme.colors.accent.primary : theme.colors.text.tertiary)}
+                        color={isRecording ? theme.colors.status.error : (isTranscribing ? theme.colors.accent.primary : theme.colors.text.tertiary)}
                         className={isTranscribing ? 'animate-bounce' : ''}
                     />
                 </button>
@@ -290,16 +306,21 @@ const GlobalInputConsole = () => {
                 {attachedFiles.length > 0 && (
                     <div className="px-3 pt-3 flex gap-2 flex-wrap overflow-y-auto max-h-20" style={{ borderColor: theme.colors.border.primary }}>
                         {attachedFiles.map((file, index) => (
-                            <div key={index} className="relative group flex items-center gap-2 px-2 py-1 rounded bg-black/20 border border-white/10">
+                            <div key={index} className="relative group flex items-center gap-2 px-2 py-1 rounded border"
+                                style={{ 
+                                    backgroundColor: theme.colors.bg.tertiary + '60',
+                                    borderColor: theme.colors.border.secondary
+                                }}>
                                 {file.type.startsWith('image/') ? (
                                     <img src={URL.createObjectURL(file)} alt="preview" className="w-8 h-8 object-cover rounded" />
                                 ) : (
-                                    <Paperclip size={16} className="text-white/60" />
+                                    <Paperclip size={16} style={{ color: theme.colors.text.muted }} />
                                 )}
-                                <span className="text-xs max-w-[100px] truncate text-white/80">{file.name}</span>
+                                <span className="text-xs max-w-[100px] truncate" style={{ color: theme.colors.text.secondary }}>{file.name}</span>
                                 <button
                                     onClick={(e) => { e.stopPropagation(); removeFile(index); }}
-                                    className="ml-1 p-0.5 rounded-full hover:bg-red-500/20 text-white/40 hover:text-red-400 transition-colors"
+                                    className="ml-1 p-0.5 rounded-full transition-colors"
+                                    style={{ color: theme.colors.text.muted }}
                                 >
                                     <X size={12} />
                                 </button>
@@ -322,13 +343,19 @@ const GlobalInputConsole = () => {
                 </div>
 
                 {/* Toolbar */}
-                <div className="px-3 py-2 flex items-center justify-between pr-4 border-t border-white/5 relative">
+                <div className="px-3 py-2 flex items-center justify-between pr-4 border-t relative"
+                    style={{ borderColor: theme.colors.border.secondary }}
+                >
                     <div className="flex items-center gap-2">
                         <select
                             value={llmProvider}
                             onChange={(e) => setLlmProvider(e.target.value)}
-                            className="bg-black/20 rounded px-2 py-1 text-xs outline-none cursor-pointer hover:bg-black/30 transition-colors"
-                            style={{ color: theme.colors.text.secondary, border: `1px solid ${theme.colors.border.secondary}` }}
+                            className="rounded px-2 py-1 text-xs outline-none cursor-pointer transition-colors"
+                            style={{ 
+                                color: theme.colors.text.secondary, 
+                                backgroundColor: theme.colors.bg.tertiary,
+                                border: `1px solid ${theme.colors.border.secondary}` 
+                            }}
                         >
                             {LLM_PROVIDERS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
                         </select>
@@ -337,10 +364,14 @@ const GlobalInputConsole = () => {
                         <div className="relative">
                             <button
                                 onClick={() => setShowAttachMenu(!showAttachMenu)}
-                                className={`p-1.5 rounded hover:bg-white/10 transition-colors ${attachedFiles.length > 0 ? 'text-accent-primary' : ''}`}
+                                className="p-1.5 rounded transition-colors"
+                                style={{ 
+                                    color: attachedFiles.length > 0 ? theme.colors.accent.primary : theme.colors.text.secondary,
+                                    backgroundColor: attachedFiles.length > 0 ? theme.colors.accent.primary + '15' : 'transparent'
+                                }}
                                 title="Attach..."
                             >
-                                <Paperclip size={16} color={attachedFiles.length > 0 ? theme.colors.accent.primary : theme.colors.text.secondary} />
+                                <Paperclip size={16} />
                             </button>
 
                             {showAttachMenu && (
@@ -355,29 +386,29 @@ const GlobalInputConsole = () => {
                                         className="w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-white/5 transition-colors"
                                         onClick={() => { openFileDialog(); setShowAttachMenu(false); }}
                                     >
-                                        <div className="text-blue-400"><Paperclip size={16} /></div>
+                                        <div style={{ color: theme.colors.status.info }}><Paperclip size={16} /></div>
                                         <span style={{ color: theme.colors.text.primary }} className="text-xs font-bold uppercase tracking-wide">Any File</span>
                                     </button>
                                     <button
                                         className="w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-white/5 transition-colors"
-                                        onClick={() => { /* TODO: Specific image trigger */ openFileDialog(); setShowAttachMenu(false); }}
+                                        onClick={() => { openFileDialog(); setShowAttachMenu(false); }}
                                     >
-                                        <div className="text-green-400"><Image size={16} /></div>
+                                        <div style={{ color: theme.colors.status.success }}><Image size={16} /></div>
                                         <span style={{ color: theme.colors.text.primary }} className="text-xs font-bold uppercase tracking-wide">Images</span>
                                     </button>
                                     <button
                                         className="w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-white/5 transition-colors"
-                                        onClick={() => { /* TODO: App specific triggers */ setShowAttachMenu(false); }}
+                                        onClick={() => { setShowAttachMenu(false); }}
                                     >
-                                        <div className="text-purple-400"><GitGraph size={16} /></div>
+                                        <div style={{ color: theme.colors.accent.primary }}><GitGraph size={16} /></div>
                                         <span style={{ color: theme.colors.text.primary }} className="text-xs font-bold uppercase tracking-wide">Repo Context</span>
                                     </button>
                                 </div>
                             )}
                         </div>
 
-                        <button className="p-1.5 rounded hover:bg-white/10 transition-colors">
-                            <Pencil size={16} color={theme.colors.text.secondary} />
+                        <button className="p-1.5 rounded transition-colors" style={{ color: theme.colors.text.secondary }}>
+                            <Pencil size={16} />
                         </button>
                     </div>
 
@@ -394,6 +425,44 @@ const GlobalInputConsole = () => {
                     </button>
                 </div>
             </div>
+
+            {/* Bottom Floating Controls - Spatial Toolbar (Workspace Only) */}
+            {isWorkspace && (
+                <div 
+                    className="absolute -bottom-14 left-0 right-0 flex justify-center z-30 pointer-events-none"
+                >
+                    <div 
+                        className="flex items-center gap-1 px-3 py-2 rounded-xl pointer-events-auto"
+                        style={{ 
+                            backgroundColor: theme.colors.bg.secondary + 'EE',
+                            backdropFilter: 'blur(12px)',
+                            border: `1px solid ${theme.colors.border.primary}`
+                        }}
+                    >
+                        {SPATIAL_MODES.map((m) => {
+                            const Icon = m.icon;
+                            const isActive = spatialMode === m.id;
+                            
+                            return (
+                                <button
+                                    key={m.id}
+                                    onClick={() => setSpatialMode(m.id)}
+                                    className="flex items-center gap-2 px-3 py-1.5 rounded-lg transition-all"
+                                    style={{
+                                        backgroundColor: isActive ? theme.colors.accent.primary + '20' : 'transparent',
+                                        color: isActive ? theme.colors.accent.primary : theme.colors.text.secondary,
+                                        border: isActive ? `1px solid ${theme.colors.accent.primary}40` : '1px solid transparent',
+                                    }}
+                                    title={m.label}
+                                >
+                                    <Icon size={14} />
+                                    <span className="text-xs font-medium">{m.label}</span>
+                                </button>
+                            );
+                        })}
+                    </div>
+                </div>
+            )}
         </DraggablePanel>
     );
 };

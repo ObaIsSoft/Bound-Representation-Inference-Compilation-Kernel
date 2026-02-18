@@ -11,7 +11,6 @@
  * - CFD/Stress Visualization (Simulation overlays)
  * - Lightpen Annotations (3D drawing/comments)
  * - Motion Timeline (Physics simulation preview)
- * - Spatial Command Input (Text commands in 3D space)
  */
 
 import React, { useRef, useEffect, useState, useCallback } from 'react';
@@ -19,18 +18,12 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { 
   OrbitControls, 
   Grid, 
-  Environment, 
-  Html
+  Environment
 } from '@react-three/drei';
 import * as THREE from 'three';
 import { useTheme } from '../contexts/ThemeContext';
 import { useSpatialState } from '../hooks/useSpatialState';
 import useWebSocket from '../hooks/useWebSocket';
-import CommandGhost from './CommandGhost';
-import AnnotationEngine from './AnnotationEngine';
-import SimulationOverlay from './SimulationOverlay';
-import AgentPresenceOverlay from './AgentPresenceOverlay';
-import SpatialToolbar from './SpatialToolbar';
 import GhostGeometry from './GhostGeometry';
 import SDFViewport from './SDFViewport';
 import FlowVisualization from './FlowVisualization';
@@ -44,7 +37,6 @@ export default function Omniviewport({ projectId }) {
   const { theme } = useTheme();
   const viewportRef = useRef();
   const [mode, setMode] = useState('design'); // design | simulate | animate | review
-  const [selectedTool, setSelectedTool] = useState('select');
   
   // Real-time connection to backend orchestrator
   const { 
@@ -59,9 +51,6 @@ export default function Omniviewport({ projectId }) {
   const simulationResults = messages.find(m => m.type === 'simulation')?.payload || null;
   const agentThoughts = thoughts || [];
   
-  // Local ghost suggestions state
-  const [ghostSuggestions, setGhostSuggestions] = useState([]);
-  
   const connectionStatus = isConnected ? 'connected' : 'disconnected';
   
   // Mock active agents for display
@@ -70,13 +59,11 @@ export default function Omniviewport({ projectId }) {
   const acceptSuggestion = useCallback((id) => {
     console.log('[Omniviewport] Accepting suggestion:', id);
     sendMessage({ type: 'accept_suggestion', suggestion_id: id });
-    setGhostSuggestions(prev => prev.filter(g => g.id !== id));
   }, [sendMessage]);
   
   const rejectSuggestion = useCallback((id) => {
     console.log('[Omniviewport] Rejecting suggestion:', id);
     sendMessage({ type: 'reject_suggestion', suggestion_id: id });
-    setGhostSuggestions(prev => prev.filter(g => g.id !== id));
   }, [sendMessage]);
 
   // Use existing spatial state hook
@@ -88,15 +75,17 @@ export default function Omniviewport({ projectId }) {
   // Handle pointer interactions based on current mode
   const handlePointerDown = useCallback((event) => {
     if (mode === 'annotate' && event.button === 2) {
-      // Right click to start annotation
       event.stopPropagation();
     }
   }, [mode]);
 
+  // Get canvas background color from theme
+  const canvasBackground = theme.colors.bg.primary;
+
   return (
     <div 
-      className="w-full h-screen relative overflow-hidden"
-      style={{ backgroundColor: theme.colors.bg.primary }}
+      className="w-full h-full relative overflow-hidden"
+      style={{ backgroundColor: canvasBackground }}
     >
       {/* Connection Status Indicator */}
       <ConnectionStatus status={connectionStatus} theme={theme} />
@@ -107,52 +96,22 @@ export default function Omniviewport({ projectId }) {
         camera={{ position: [5, 5, 5], fov: 50 }}
         gl={{ 
           antialias: true, 
-          alpha: false,
+          alpha: true,
           powerPreference: "high-performance"
         }}
         onPointerDown={handlePointerDown}
         dpr={[1, 2]}
+        style={{ background: canvasBackground }}
       >
+        <color attach="background" args={[canvasBackground]} />
         <SceneContents 
           geometry={geometryStream}
           simulation={simulationResults}
           thoughts={agentThoughts}
-          ghostSuggestions={ghostSuggestions}
           mode={mode}
-          selectedTool={selectedTool}
-          onAcceptGhost={acceptSuggestion}
-          onRejectGhost={rejectSuggestion}
           theme={theme}
         />
       </Canvas>
-
-      {/* Simulation HUD Overlay */}
-      {mode === 'simulate' && simulationResults && (
-        <SimulationOverlay results={simulationResults} theme={theme} />
-      )}
-
-      {/* AI Agent Activity Visualization */}
-      <AgentPresenceOverlay 
-        thoughts={agentThoughts}
-        activeAgents={activeAgents}
-        theme={theme}
-      />
-
-      {/* Mode Switcher (Minimal) */}
-      <SpatialToolbar 
-        mode={mode} 
-        setMode={setMode}
-        selectedTool={selectedTool}
-        setSelectedTool={setSelectedTool}
-        theme={theme}
-      />
-
-      {/* Info Panel (Collapsible) */}
-      <InfoPanel 
-        geometry={geometryStream}
-        simulation={simulationResults}
-        theme={theme}
-      />
     </div>
   );
 }
@@ -165,11 +124,7 @@ function SceneContents({
   geometry, 
   simulation, 
   thoughts, 
-  ghostSuggestions,
   mode,
-  selectedTool,
-  onAcceptGhost,
-  onRejectGhost,
   theme
 }) {
   const groupRef = useRef();
@@ -230,21 +185,6 @@ function SceneContents({
         />
       )}
       
-      {/* Ghost Geometry (AI Suggestions) */}
-      {ghostSuggestions?.map((suggestion, index) => (
-        <GhostGeometry 
-          key={suggestion.id || index}
-          data={suggestion}
-          onAccept={() => onAcceptGhost(suggestion.id)}
-          onReject={() => onRejectGhost(suggestion.id)}
-          index={index}
-          theme={theme}
-        />
-      ))}
-      
-      {/* Selection Highlight */}
-      {selectedTool === 'select' && <SelectionCursor theme={theme} />}
-      
       {/* Default Lighting */}
       <ambientLight intensity={0.4} />
       <directionalLight position={[10, 10, 5]} intensity={1} castShadow />
@@ -302,113 +242,6 @@ function ConnectionStatus({ status, theme }) {
 }
 
 /**
- * Info Panel - Shows geometry and simulation info
- */
-function InfoPanel({ geometry, simulation, theme }) {
-  const [collapsed, setCollapsed] = useState(true);
-
-  if (collapsed) {
-    return (
-      <button
-        onClick={() => setCollapsed(false)}
-        className="absolute top-4 left-4 px-4 py-2 rounded-lg transition-colors z-50 hover:opacity-80"
-        style={{ 
-          backgroundColor: theme.colors.bg.secondary + 'CC',
-          backdropFilter: 'blur(8px)',
-          border: `1px solid ${theme.colors.border.primary}`,
-          color: theme.colors.text.primary
-        }}
-      >
-        ℹ️ Info
-      </button>
-    );
-  }
-
-  return (
-    <div 
-      className="absolute top-4 left-4 w-72 rounded-lg p-4 z-50"
-      style={{ 
-        backgroundColor: theme.colors.bg.secondary + 'EE',
-        backdropFilter: 'blur(12px)',
-        border: `1px solid ${theme.colors.border.primary}`,
-        color: theme.colors.text.primary
-      }}
-    >
-      <div className="flex justify-between items-center mb-3">
-        <h3 className="font-semibold">Scene Info</h3>
-        <button 
-          onClick={() => setCollapsed(true)}
-          style={{ color: theme.colors.text.muted }}
-          className="hover:opacity-80"
-        >
-          ✕
-        </button>
-      </div>
-      
-      {geometry && (
-        <div className="mb-4">
-          <h4 
-            className="text-xs font-medium uppercase mb-2"
-            style={{ color: theme.colors.text.muted }}
-          >
-            Geometry
-          </h4>
-          <div className="text-sm space-y-1">
-            <div className="flex justify-between">
-              <span>Type:</span>
-              <span style={{ color: theme.colors.text.secondary }}>{geometry.type || 'SDF'}</span>
-            </div>
-            {geometry.vertexCount && (
-              <div className="flex justify-between">
-                <span>Vertices:</span>
-                <span style={{ color: theme.colors.text.secondary }}>{geometry.vertexCount.toLocaleString()}</span>
-              </div>
-            )}
-            {geometry.bounds && (
-              <div className="flex justify-between">
-                <span>Bounds:</span>
-                <span style={{ color: theme.colors.text.secondary }}>{geometry.bounds.join(' × ')}</span>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-      
-      {simulation && (
-        <div>
-          <h4 
-            className="text-xs font-medium uppercase mb-2"
-            style={{ color: theme.colors.text.muted }}
-          >
-            Simulation
-          </h4>
-          <div className="text-sm space-y-1">
-            <div className="flex justify-between">
-              <span>Type:</span>
-              <span style={{ color: theme.colors.text.secondary }}>{simulation.type}</span>
-            </div>
-            {simulation.maxStress && (
-              <div className="flex justify-between">
-                <span>Max Stress:</span>
-                <span style={{ color: theme.colors.status.error }}>{(simulation.maxStress / 1e6).toFixed(2)} MPa</span>
-              </div>
-            )}
-            {simulation.safetyFactor && (
-              <div className="flex justify-between">
-                <span>Safety Factor:</span>
-                <span style={{ color: simulation.safetyFactor > 2 ? theme.colors.status.success : theme.colors.status.warning }}>
-                  {simulation.safetyFactor.toFixed(2)}
-                </span>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/**
  * Update kinematics for animation mode
  */
 function updateKinematics(group, motionData, delta) {
@@ -445,22 +278,6 @@ function GeometryMesh({ geometryData, theme }) {
         color={theme.colors.text.tertiary}
         roughness={0.4}
         metalness={0.6}
-      />
-    </mesh>
-  );
-}
-
-/**
- * Selection Cursor Component
- */
-function SelectionCursor({ theme }) {
-  return (
-    <mesh visible={false}>
-      <ringGeometry args={[0.1, 0.12, 32]} />
-      <meshBasicMaterial 
-        color={theme.colors.status.success} 
-        transparent 
-        opacity={0.8} 
       />
     </mesh>
   );

@@ -1,5 +1,0 @@
-Materials Project API error: You have specified the following kwargs which are unknown to [34m`search`[39m, but may be known to [31m`_search`[39m
-    [36msort_fields[39m
-Please see the documentation:
-    [34m`search`: https://materialsproject.github.io/api/_autosummary/mp_api.client.routes.materials.summary.SummaryRester.html#mp_api.client.routes.materials.summary.SummaryRester.search[39m
-   [31m`_search`: https://api.materialsproject.org/redoc#tag/Materials-Summary/operation/search_materials_summary__get[39m

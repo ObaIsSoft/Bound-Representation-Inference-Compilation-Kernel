@@ -32,9 +32,9 @@ class ManifoldEngine(BaseGeometryEngine):
                  # Optimization: Direct Mesh -> GLB bytes
                  # For now, wrap in minimal Trimesh to perform robust export
                  import trimesh
-                 # Manifold3D API uses vert_properties for vertex positions
+                 # Manifold3D v2+ API uses vert_pos for vertex positions
                  t_mesh = trimesh.Trimesh(
-                     vertices=np.array(mesh.vert_properties, dtype=np.float32),
+                     vertices=np.array(mesh.vert_pos, dtype=np.float32),
                      faces=np.array(mesh.tri_verts, dtype=np.int32)
                  )
                  
@@ -128,7 +128,7 @@ class ManifoldEngine(BaseGeometryEngine):
             import trimesh
             mesh = union_result.to_mesh()
             t_mesh = trimesh.Trimesh(
-                vertices=np.array(mesh.vert_properties, dtype=np.float32),
+                vertices=np.array(mesh.vert_pos, dtype=np.float32),
                 faces=np.array(mesh.tri_verts, dtype=np.int32)
             )
             if not t_mesh.is_watertight:

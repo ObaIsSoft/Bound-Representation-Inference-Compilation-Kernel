@@ -74,3 +74,25 @@ brain/
 *.weights.json
 *.brick
 *.brick.bak
+
+# Debug and temporary files
+final_*.json
+debug_*.json
+*.verify.json
+backend/final_*.json
+backend/debug*.log
+
+# Test legacy files
+tests/legacy/cleanup/
+
+# Data exports (generated)
+data/exports/
+*.step
+*.stl
+*.gltf
+*.glb
+
+# Temporary uploads
+tmp/
+temp/
+/tmp/brick_*/

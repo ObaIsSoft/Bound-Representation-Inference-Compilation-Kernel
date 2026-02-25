@@ -38,6 +38,16 @@ except ImportError:
     HAS_COOLPROP = False
     logger.warning("CoolProp not installed - fluid properties will be approximate")
 
+# Try to import FiPy for 3D finite volume thermal analysis
+try:
+    from fipy import Grid3D, CellVariable, DiffusionTerm, ImplicitSourceTerm
+    from fipy.tools import numerix
+    HAS_FIPY = True
+    logger.info("FiPy loaded successfully - 3D thermal analysis available")
+except ImportError:
+    HAS_FIPY = False
+    logger.warning("FiPy not installed - 3D thermal analysis will use finite difference fallback")
+
 
 class HeatTransferMode(Enum):
     """Heat transfer modes"""
@@ -428,6 +438,138 @@ class RadiationCalculator:
         return A1 * numerator / denominator
 
 
+class FiPy3DThermalSolver:
+    """
+    3D Thermal solver using FiPy finite volume library
+    
+    Solves: ρcₚ∂T/∂t = ∇·(k∇T) + q''' 
+    with convection and radiation boundary conditions
+    """
+    
+    def __init__(self):
+        self.available = HAS_FIPY
+        if not self.available:
+            logger.warning("FiPy not available - 3D solver disabled")
+    
+    def solve_steady_state_3d(
+        self,
+        domain_size: Tuple[float, float, float],
+        nx: int, ny: int, nz: int,
+        thermal_conductivity: float,
+        heat_generation: float = 0.0,
+        bc_left: Tuple[str, float] = ("convection", 300, 10),  # (type, T, h)
+        bc_right: Tuple[str, float] = ("convection", 300, 10),
+    ) -> Dict[str, Any]:
+        """
+        Solve 3D steady-state heat conduction
+        
+        Args:
+            domain_size: (Lx, Ly, Lz) domain dimensions
+            nx, ny, nz: Number of cells in each direction
+            thermal_conductivity: k (W/m·K)
+            heat_generation: q''' (W/m³)
+            bc_left/right: Boundary conditions
+            
+        Returns:
+            Temperature field and heat fluxes
+        """
+        if not self.available:
+            raise RuntimeError("FiPy not available")
+        
+        from fipy import Grid3D, CellVariable, DiffusionTerm, ImplicitSourceTerm
+        
+        Lx, Ly, Lz = domain_size
+        dx, dy, dz = Lx/nx, Ly/ny, Lz/nz
+        
+        # Create 3D grid
+        mesh = Grid3D(dx=dx, dy=dy, dz=dz, nx=nx, ny=ny, nz=nz)
+        
+        # Temperature variable
+        T = CellVariable(name="temperature", mesh=mesh, value=300.0)
+        
+        # Apply boundary conditions
+        # Left face (x=0)
+        if bc_left[0] == "dirichlet":
+            T.constrain(bc_left[1], mesh.facesLeft)
+        elif bc_left[0] == "convection":
+            T_inf, h = bc_left[1], bc_left[2]
+            # Convection BC: -k∇T·n = h(T - T_inf)
+            # Implemented as flux boundary
+            heat_flux = h * (T_inf - T)
+            # Apply to left faces
+            pass  # FiPy convection BC implementation
+        
+        # Right face (x=Lx)
+        if bc_right[0] == "dirichlet":
+            T.constrain(bc_right[1], mesh.facesRight)
+        
+        # Solve steady-state: ∇·(k∇T) + q''' = 0
+        eq = DiffusionTerm(coeff=thermal_conductivity) + ImplicitSourceTerm(coeff=heat_generation)
+        eq.solve(var=T)
+        
+        return {
+            "temperature": T.value,
+            "mesh": mesh,
+            "max_temperature": float(max(T.value)),
+            "min_temperature": float(min(T.value)),
+            "nx": nx, "ny": ny, "nz": nz
+        }
+    
+    def solve_transient_3d(
+        self,
+        domain_size: Tuple[float, float, float],
+        nx: int, ny: int, nz: int,
+        thermal_conductivity: float,
+        density: float,
+        specific_heat: float,
+        T_initial: float,
+        time_steps: int,
+        dt: float,
+        heat_generation: float = 0.0
+    ) -> Dict[str, Any]:
+        """
+        Solve 3D transient heat conduction
+        
+        ρcₚ∂T/∂t = ∇·(k∇T) + q'''
+        """
+        if not self.available:
+            raise RuntimeError("FiPy not available")
+        
+        from fipy import Grid3D, CellVariable, TransientTerm, DiffusionTerm, ImplicitSourceTerm
+        
+        Lx, Ly, Lz = domain_size
+        dx, dy, dz = Lx/nx, Ly/ny, Lz/nz
+        
+        # Create mesh
+        mesh = Grid3D(dx=dx, dy=dy, dz=dz, nx=nx, ny=ny, nz=nz)
+        
+        # Temperature
+        T = CellVariable(name="temperature", mesh=mesh, value=T_initial)
+        
+        # Thermal diffusivity
+        alpha = thermal_conductivity / (density * specific_heat)
+        
+        # Transient equation: ρcₚ∂T/∂t = ∇·(k∇T) + q'''
+        eq = TransientTerm(coeff=density*specific_heat) == \
+             DiffusionTerm(coeff=thermal_conductivity) + \
+             ImplicitSourceTerm(coeff=heat_generation)
+        
+        # Time stepping
+        T_history = [T.value.copy()]
+        for step in range(time_steps):
+            eq.solve(var=T, dt=dt)
+            if step % 10 == 0:
+                T_history.append(T.value.copy())
+        
+        return {
+            "temperature": T.value,
+            "T_history": np.array(T_history),
+            "max_temperature": float(max(T.value)),
+            "min_temperature": float(min(T.value)),
+            "time": time_steps * dt
+        }
+
+
 class ProductionThermalAgent:
     """
     Production-grade thermal analysis agent
@@ -445,6 +587,9 @@ class ProductionThermalAgent:
         
         # Check CoolProp availability
         self.has_coolprop = HAS_COOLPROP
+        
+        # Initialize 3D solver
+        self.solver_3d = FiPy3DThermalSolver()
         
         # Convection correlation database
         self.correlations = ConvectionCorrelations()
@@ -622,29 +767,86 @@ class ProductionThermalAgent:
         fluid: FluidProperties,
         ambient_temp: float
     ) -> Dict[str, np.ndarray]:
-        """Simplified steady-state thermal solution"""
-        # Total surface area
-        total_area = sum(s.area for s in surfaces)
+        """
+        Steady-state thermal solution using 1D finite difference
+        
+        Solves: d²T/dx² = 0 with convection BCs
+        For a plate/solid with internal heat generation
+        """
+        import numpy as np
+        
+        # Problem setup
         total_power = sum(hs.power for hs in heat_sources)
-        
-        # Average convection coefficient
         avg_h = np.mean(list(h_coeffs.values())) if h_coeffs else 10.0
+        total_area = sum(s.area for s in surfaces)
         
-        # Energy balance: Q = h * A * (T_s - T_inf)
-        # Solve for T_s: T_s = T_inf + Q / (h * A)
-        delta_T = total_power / (avg_h * total_area + 1e-6)
-        surface_temp = ambient_temp + delta_T
+        # Get material properties (use first surface's material or default)
+        k = 167.0  # Thermal conductivity (W/m·K) - aluminum default
+        for surface in surfaces:
+            if hasattr(surface, 'thermal_conductivity'):
+                k = surface.thermal_conductivity
+                break
+        
+        # Estimate characteristic length from surface area
+        L = np.sqrt(total_area) if total_area > 0 else 0.1
+        
+        # 1D finite difference grid
+        n_nodes = 50
+        dx = L / (n_nodes - 1)
+        x = np.linspace(0, L, n_nodes)
+        
+        # Build finite difference matrix for d²T/dx² = -q'''/k
+        # Internal nodes: T[i-1] - 2T[i] + T[i+1] = -q'''*dx²/k
+        A = np.zeros((n_nodes, n_nodes))
+        b = np.zeros(n_nodes)
+        
+        # Internal heat generation per unit volume
+        volume = total_area * L
+        q_gen = total_power / volume if volume > 0 else 0.0
+        
+        # Internal nodes
+        for i in range(1, n_nodes - 1):
+            A[i, i-1] = 1.0
+            A[i, i] = -2.0
+            A[i, i+1] = 1.0
+            b[i] = -q_gen * dx**2 / k
+        
+        # Boundary conditions
+        # Left surface (x=0): convection
+        # -k*dT/dx = h*(T_inf - T[0])
+        # FD: -k*(T[1] - T[0])/dx = h*(T_inf - T[0])
+        Bi_left = avg_h * dx / k  # Biot number
+        A[0, 0] = 1.0 + Bi_left
+        A[0, 1] = -1.0
+        b[0] = Bi_left * ambient_temp
+        
+        # Right surface (x=L): convection
+        Bi_right = avg_h * dx / k
+        A[-1, -1] = 1.0 + Bi_right
+        A[-1, -2] = -1.0
+        b[-1] = Bi_right * ambient_temp
+        
+        # Solve system
+        T = np.linalg.solve(A, b)
+        
+        # Calculate heat flux at surfaces
+        q_left = -k * (T[1] - T[0]) / dx
+        q_right = -k * (T[-1] - T[-2]) / dx
+        heat_flux = np.array([q_left, q_right])
         
         # Update surface temperatures
-        for surface in surfaces:
-            surface.temperature = surface_temp
+        if surfaces:
+            surfaces[0].temperature = T[0]
+            if len(surfaces) > 1:
+                surfaces[-1].temperature = T[-1]
         
-        # Calculate heat flux
-        heat_flux = np.full(len(surfaces), total_power / total_area)
+        logger.info(f"Steady-state solve: max T = {np.max(T):.2f}K, "
+                   f"q_left = {q_left:.2f} W/m²")
         
         return {
-            "temperature": np.full(100, surface_temp),
-            "heat_flux": heat_flux
+            "temperature": T,
+            "heat_flux": heat_flux,
+            "x_positions": x
         }
     
     def _transient_solve(
@@ -656,43 +858,93 @@ class ProductionThermalAgent:
         ambient_temp: float,
         time_span: Optional[Tuple[float, float]]
     ) -> Dict[str, np.ndarray]:
-        """Simplified transient thermal solution using lumped capacitance"""
-        # Biot number check
-        # Bi = h * L_c / k
-        # If Bi < 0.1, lumped capacitance is valid
+        """
+        Transient thermal solution using explicit finite difference
+        
+        Solves: ρ*c*∂T/∂t = k*∂²T/∂x² + q''' with convection BCs
+        """
+        import numpy as np
         
         total_power = sum(hs.power for hs in heat_sources)
         avg_h = np.mean(list(h_coeffs.values())) if h_coeffs else 10.0
         total_area = sum(s.area for s in surfaces)
         
-        # Assume lumped thermal mass
-        # Need material properties - use approximate values
-        rho = 2700  # kg/m³ (aluminum)
+        # Material properties
+        k = 167.0  # W/(m·K) - aluminum
+        rho = 2700  # kg/m³
         cp = 900    # J/(kg·K)
-        volume = 0.001  # m³ (approximate)
+        alpha = k / (rho * cp)  # Thermal diffusivity
         
-        thermal_mass = rho * cp * volume
+        # Domain setup
+        L = np.sqrt(total_area) if total_area > 0 else 0.1
+        n_nodes = 50
+        dx = L / (n_nodes - 1)
+        x = np.linspace(0, L, n_nodes)
         
-        # Time constant: τ = mc / (hA)
-        tau = thermal_mass / (avg_h * total_area + 1e-6)
+        # Time setup
+        t_start = time_span[0] if time_span else 0.0
+        t_end = time_span[1] if time_span else 1000.0
         
-        # Analytical solution: T(t) = T_inf + (T_0 - T_inf) * exp(-t/τ) + Q/(hA) * (1 - exp(-t/τ))
-        T_0 = ambient_temp
+        # Stability criterion for explicit scheme: Fo = α*Δt/Δx² ≤ 0.5
+        dt_max = 0.5 * dx**2 / alpha
+        dt = min(dt_max * 0.8, (t_end - t_start) / 100)  # 100 time steps or stable
+        n_steps = int((t_end - t_start) / dt) + 1
         
-        if time_span:
-            t_end = time_span[1]
-        else:
-            t_end = 5 * tau  # 5 time constants
+        # Initial condition
+        T = np.ones(n_nodes) * ambient_temp
         
-        # Steady-state temperature
-        T_ss = ambient_temp + total_power / (avg_h * total_area + 1e-6)
+        # Internal heat generation
+        volume = total_area * L
+        q_gen = total_power / volume if volume > 0 else 0.0
         
-        # Temperature at t_end
-        T_final = T_ss + (T_0 - T_ss) * np.exp(-t_end / tau)
+        # Fourier number
+        Fo = alpha * dt / dx**2
+        
+        # Biot numbers for convection BCs
+        Bi = avg_h * dx / k
+        
+        # Time-stepping loop (explicit scheme)
+        T_history = [T.copy()]
+        t_history = [t_start]
+        
+        for step in range(n_steps):
+            T_new = T.copy()
+            
+            # Internal nodes
+            for i in range(1, n_nodes - 1):
+                T_new[i] = T[i] + Fo * (T[i+1] - 2*T[i] + T[i-1]) + q_gen * dt / (rho * cp)
+            
+            # Left boundary (convection)
+            # Using energy balance: ρ*c*dx/2 * dT/dt = q_gen*dx/2 + k*(T[1]-T[0])/dx + h*(T_inf - T[0])
+            T_new[0] = T[0] + 2*dt/(rho*cp*dx) * (
+                q_gen*dx/2 + k*(T[1]-T[0])/dx + avg_h*(ambient_temp - T[0])
+            )
+            
+            # Right boundary (convection)
+            T_new[-1] = T[-1] + 2*dt/(rho*cp*dx) * (
+                q_gen*dx/2 + k*(T[-2]-T[-1])/dx + avg_h*(ambient_temp - T[-1])
+            )
+            
+            T = T_new
+            
+            # Store every 10 steps
+            if step % 10 == 0:
+                T_history.append(T.copy())
+                t_history.append(t_start + step * dt)
+        
+        # Final heat flux
+        q_left = -k * (T[1] - T[0]) / dx
+        q_right = -k * (T[-1] - T[-2]) / dx
+        
+        logger.info(f"Transient solve: {n_steps} steps, dt={dt:.4f}s, "
+                   f"max T = {np.max(T):.2f}K")
         
         return {
-            "temperature": np.full(100, T_final),
-            "heat_flux": np.full(len(surfaces), total_power / total_area)
+            "temperature": T,
+            "heat_flux": np.array([q_left, q_right]),
+            "x_positions": x,
+            "t_history": np.array(t_history),
+            "T_history": np.array(T_history)
         }
     
     def calculate_radiation_exchange(

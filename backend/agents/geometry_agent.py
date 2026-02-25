@@ -379,6 +379,106 @@ class OpenCASCADEKernel(CADKernelInterface):
             exp.Next()
         
         return np.array(vertices, dtype=np.float32), np.array(faces, dtype=np.int32)
+    
+    def get_edges(self, shape: Any) -> List[Any]:
+        """Get all edges from a shape for fillet/chamfer operations"""
+        from OCC.Core.TopExp import TopExp_Explorer
+        from OCC.Core.TopAbs import TopAbs_EDGE
+        
+        edges = []
+        exp = TopExp_Explorer(shape, TopAbs_EDGE)
+        while exp.More():
+            edge = exp.Current()
+            edges.append(edge)
+            exp.Next()
+        return edges
+    
+    def fillet_all_edges(self, shape: Any, radius: float) -> Any:
+        """Apply fillet to all edges of a shape"""
+        fillet = BRepFilletAPI.BRepFilletAPI_MakeFillet(shape)
+        edges = self.get_edges(shape)
+        
+        for edge in edges:
+            fillet.Add(radius, edge)
+        
+        return fillet.Shape()
+    
+    def chamfer_all_edges(self, shape: Any, distance: float) -> Any:
+        """Apply chamfer to all edges of a shape"""
+        chamfer = BRepFilletAPI.BRepFilletAPI_MakeChamfer(shape)
+        edges = self.get_edges(shape)
+        
+        for edge in edges:
+            chamfer.Add(distance, edge)
+        
+        return chamfer.Shape()
+    
+    def measure_volume(self, shape: Any) -> float:
+        """Calculate volume of a solid shape"""
+        from OCC.Core.GProp import GProp_GProps
+        from OCC.Core.BRepGProp import brepgprop_VolumeProperties
+        
+        props = GProp_GProps()
+        brepgprop_VolumeProperties(shape, props)
+        return props.Mass()
+    
+    def measure_surface_area(self, shape: Any) -> float:
+        """Calculate surface area of a shape"""
+        from OCC.Core.GProp import GProp_GProps
+        from OCC.Core.BRepGProp import brepgprop_SurfaceProperties
+        
+        props = GProp_GProps()
+        brepgprop_SurfaceProperties(shape, props)
+        return props.Mass()
+    
+    def get_bounding_box(self, shape: Any) -> Tuple[float, float, float, float, float, float]:
+        """Get bounding box (xmin, ymin, zmin, xmax, ymax, zmax)"""
+        from OCC.Core.Bnd import Bnd_Box
+        from OCC.Core.BRepBndLib import brepbndlib_Add
+        
+        bbox = Bnd_Box()
+        brepbndlib_Add(shape, bbox)
+        return bbox.Get()
+    
+    def create_extrusion(self, profile: Any, height: float, direction: Tuple[float, float, float] = (0, 0, 1)) -> Any:
+        """Extrude a 2D profile to 3D"""
+        from OCC.Core.gp import gp_Vec
+        
+        vec = gp_Vec(*direction)
+        vec.Scale(height)
+        
+        extrusion = BRepPrimAPI.BRepPrimAPI_MakePrism(profile, vec)
+        return extrusion.Shape()
+    
+    def create_revolution(self, profile: Any, angle: float = 360, 
+                         axis_point: Tuple[float, float, float] = (0, 0, 0),
+                         axis_dir: Tuple[float, float, float] = (0, 0, 1)) -> Any:
+        """Revolve a 2D profile around an axis"""
+        from OCC.Core.gp import gp_Ax1, gp_Pnt, gp_Dir
+        
+        axis = gp_Ax1(gp_Pnt(*axis_point), gp_Dir(*axis_dir))
+        angle_rad = math.radians(angle)
+        
+        revol = BRepPrimAPI.BRepPrimAPI_MakeRevol(profile, axis, angle_rad)
+        return revol.Shape()
+    
+    def hollow_shape(self, shape: Any, thickness: float) -> Any:
+        """Create a hollow shell from a solid (shelling operation)"""
+        from OCC.Core.TopExp import TopExp_Explorer
+        from OCC.Core.TopAbs import TopAbs_FACE
+        
+        # Get all faces
+        faces = []
+        exp = TopExp_Explorer(shape, TopAbs_FACE)
+        while exp.More():
+            faces.append(exp.Current())
+            exp.Next()
+        
+        # Create offset shape (simplified - offsets all faces)
+        offset = BRepOffsetAPI.BRepOffsetAPI_MakeThickSolid(
+            shape, faces, thickness, 1e-6
+        )
+        return offset.Shape()
 
 
 class FeatureTree:

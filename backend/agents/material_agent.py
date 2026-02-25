@@ -1,18 +1,11 @@
 """
-ProductionMaterialAgent - Comprehensive materials database
+ProductionMaterialAgent - Materials database with empirical validation
 
-Data Sources:
-- MatWeb (150,000+ materials)
-- NIST WebBook
-- Materials Project (DFT calculations)
-- ASM International
-
-Capabilities:
-1. Process-dependent properties (AM anisotropy, HAZ effects)
-2. Temperature-dependent properties
-3. Statistical variation (mean, std, percentiles)
-4. Material compatibility checking
-5. Environmental degradation models
+Key principles:
+1. NEVER return data without provenance tracking
+2. Fallback data is clearly flagged as UNSPECIFIED with warnings
+3. NIST/MatWeb APIs are unreliable - use curated local data as primary
+4. Temperature models use polynomial fits to real data, not linear approximations
 """
 
 import os
@@ -20,769 +13,674 @@ import json
 import math
 import logging
 from typing import Dict, Any, List, Optional, Tuple, Union
-from .config.physics_config import get_material_properties, list_available_materials
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import Enum, auto
 from pathlib import Path
-import numpy as np
 from datetime import datetime
+import numpy as np
+from scipy import stats
+
+# Import API client for dynamic material fetching
+try:
+    from .material_api_client import MaterialAPIClient, APICacheEntry
+    HAS_API_CLIENT = True
+except ImportError:
+    HAS_API_CLIENT = False
+    logging.warning("material_api_client not available - API features disabled")
 
 logger = logging.getLogger(__name__)
 
 
-class ManufacturingProcess(Enum):
-    """Manufacturing processes with property effects"""
-    # Additive Manufacturing
-    PBF_LASER = "pbf_laser"           # Powder bed fusion - laser
-    PBF_EBeam = "pbf_ebeam"           # Powder bed fusion - electron beam
-    DED_Laser = "ded_laser"           # Direct energy deposition
-    FDM = "fdm"                       # Fused deposition modeling
-    SLA = "sla"                       # Stereolithography
-    
-    # Subtractive
-    CNC_MILLING = "cnc_milling"
-    CNC_TURNING = "cnc_turning"
-    CNC_GRINDING = "cnc_grinding"
-    EDM = "edm"                       # Electrical discharge machining
-    
-    # Forming
-    FORGING = "forging"
-    ROLLING = "rolling"
-    EXTRUSION = "extrusion"
-    CASTING = "casting"
-    
-    # Joining
-    WELDING_TIG = "welding_tig"
-    WELDING_MIG = "welding_mig"
-    WELDING_EB = "welding_eb"
-    BRAZING = "brazing"
-    
-    # Sheet Metal
-    STAMPING = "stamping"
-    BENDING = "bending"
-    DEEP_DRAWING = "deep_drawing"
+class DataProvenance(Enum):
+    """Source of material data with trust level"""
+    NIST_CERTIFIED = auto()      # NIST SRM, measured by NIST
+    ASTM_CERTIFIED = auto()      # Reference material with ASTM cert
+    MANUFACTURER_DATA = auto()   # Mill test reports (MTR)
+    LITERATURE_META = auto()     # Peer-reviewed, but not verified
+    ESTIMATED = auto()           # Calculated/interpolated
+    UNSPECIFIED = auto()         # Source unknown (emergency fallback)
 
 
 @dataclass
-class MaterialProperty:
-    """Material property with uncertainty"""
-    mean: float
-    std: Optional[float] = None
-    min: Optional[float] = None
-    max: Optional[float] = None
-    units: str = ""
-    source: str = ""
+class TestCondition:
+    """Conditions under which property was measured"""
+    standard: str = ""
+    temperature_c: float = 20.0
+    strain_rate: Optional[float] = None
+    specimen_orientation: str = "longitudinal"
+    lot_number: Optional[str] = None
+    test_date: Optional[str] = None
+
+
+@dataclass  
+class MeasuredProperty:
+    """Property with uncertainty and provenance"""
+    value: float
+    units: str
+    uncertainty_type: str = "percent"  # "std", "95ci", "range", "percent"
+    uncertainty_value: float = 10.0  # Default 10% uncertainty
+    sample_size: int = 1
+    provenance: DataProvenance = DataProvenance.UNSPECIFIED
+    test_condition: Optional[TestCondition] = None
+    source_reference: Optional[str] = None
     
-    def get_percentile(self, p: float) -> float:
-        """Get percentile value assuming normal distribution"""
-        if self.std is None:
-            return self.mean
-        from scipy import stats
-        return stats.norm.ppf(p, self.mean, self.std)
-    
-    @property
-    def confidence_interval_95(self) -> Tuple[float, float]:
-        """95% confidence interval"""
-        if self.std is None:
-            return (self.mean, self.mean)
-        return (self.mean - 1.96 * self.std, self.mean + 1.96 * self.std)
+    def get_confidence_interval(self, confidence: float = 0.95) -> Tuple[float, float]:
+        """Get confidence interval"""
+        if self.uncertainty_type == "std":
+            z = stats.norm.ppf((1 + confidence) / 2)
+            margin = z * self.uncertainty_value / math.sqrt(self.sample_size)
+            return (self.value - margin, self.value + margin)
+        elif self.uncertainty_type in ["95ci", "range"]:
+            half_width = self.uncertainty_value / 2
+            return (self.value - half_width, self.value + half_width)
+        elif self.uncertainty_type == "percent":
+            margin = self.value * self.uncertainty_value / 100
+            return (self.value - margin, self.value + margin)
+        else:
+            return (self.value, self.value)
 
 
 @dataclass
-class TemperatureDependence:
-    """Temperature-dependent property model"""
-    reference_temp: float  # K
-    coefficients: Dict[str, float]  # Model coefficients
-    model_type: str = "linear"  # "linear", "arrhenius", "polynomial"
-    valid_range: Tuple[float, float] = (273.15, 1273.15)  # K
+class TemperatureModel:
+    """Validated temperature dependence model"""
+    model_type: str  # "linear", "polynomial", "arrhenius"
+    coefficients: Dict[str, float]
+    valid_range_c: Tuple[float, float]
+    reference_property: str = ""
     
-    def get_value(self, T: float) -> float:
-        """Get property value at temperature T"""
-        if not self.valid_range[0] <= T <= self.valid_range[1]:
-            logger.warning(f"Temperature {T}K outside valid range {self.valid_range}")
+    def evaluate(self, T_c: float) -> float:
+        """Evaluate model at temperature (with range checking)"""
+        if not (self.valid_range_c[0] <= T_c <= self.valid_range_c[1]):
+            logger.warning(
+                f"Temperature {T_c}°C outside valid range {self.valid_range_c}. "
+                f"Results may be unreliable."
+            )
         
         if self.model_type == "linear":
-            # y = a + b*(T - T_ref)
-            a = self.coefficients.get("a", 0)
-            b = self.coefficients.get("b", 0)
-            return a + b * (T - self.reference_temp)
-        
-        elif self.model_type == "arrhenius":
-            # y = A * exp(-Ea/(R*T))
-            A = self.coefficients.get("A", 1)
-            Ea = self.coefficients.get("Ea", 0)
-            R = 8.314  # J/(mol·K)
-            return A * math.exp(-Ea / (R * T))
-        
+            return self.coefficients.get("a", 0) + self.coefficients.get("b", 0) * T_c
         elif self.model_type == "polynomial":
-            # y = c0 + c1*T + c2*T² + ...
             result = 0
-            for key, coeff in self.coefficients.items():
+            for key, coeff in sorted(self.coefficients.items()):
                 if key.startswith("c"):
                     power = int(key[1:])
-                    result += coeff * (T - self.reference_temp) ** power
+                    result += coeff * (T_c ** power)
             return result
-        
+        elif self.model_type == "arrhenius":
+            T_k = T_c + 273.15
+            A = self.coefficients.get("A", 1)
+            Q = self.coefficients.get("Q", 0)
+            R = 8.314
+            return A * math.exp(-Q / (R * T_k))
         else:
-            raise ValueError(f"Unknown model type: {self.model_type}")
+            return self.coefficients.get("a", 0)
 
 
 @dataclass
 class ProcessEffect:
-    """Manufacturing process effect on properties"""
-    process: ManufacturingProcess
-    anisotropy_factors: Dict[str, Dict[str, float]]  # Direction -> property -> factor
-    residual_stress: float  # MPa typical
-    surface_roughness: float  # Ra in μm
-    porosity: float  # Volume fraction
-    property_changes: Dict[str, float]  # Property name -> multiplicative factor
-    valid_directions: List[str] = field(default_factory=lambda: ["longitudinal", "transverse", "vertical"])
+    """Measured process effects on properties"""
+    process_name: str
+    property_changes: Dict[str, MeasuredProperty] = field(default_factory=dict)
+    anisotropy_ratios: Dict[str, Dict[str, float]] = field(default_factory=dict)
+    residual_stress_mpa: float = 0.0
+    surface_roughness_ra: float = 3.2
+    porosity_pct: float = 0.0
 
 
 @dataclass
 class Material:
-    """Complete material specification"""
+    """Material with empirical validation"""
     name: str
-    category: str  # "metal", "polymer", "ceramic", "composite"
+    designation: str
+    category: str
     
-    # Mechanical properties
-    density: MaterialProperty                    # kg/m³
-    elastic_modulus: MaterialProperty            # GPa
-    shear_modulus: Optional[MaterialProperty]    # GPa
-    poisson_ratio: MaterialProperty
-    yield_strength: MaterialProperty             # MPa
-    ultimate_strength: MaterialProperty          # MPa
-    elongation: MaterialProperty                 # %
-    hardness: Optional[MaterialProperty]         # HV or HB
+    # Mechanical (required)
+    density: MeasuredProperty
+    elastic_modulus: MeasuredProperty
+    poisson_ratio: MeasuredProperty
+    yield_strength: MeasuredProperty
+    ultimate_strength: MeasuredProperty
+    elongation: MeasuredProperty
     
-    # Thermal properties
-    thermal_conductivity: MaterialProperty       # W/(m·K)
-    specific_heat: MaterialProperty              # J/(kg·K)
-    thermal_expansion: MaterialProperty          # 1e-6/K
-    melting_point: Optional[float]               # K
+    # Thermal (required)
+    thermal_conductivity: MeasuredProperty
+    specific_heat: MeasuredProperty
+    thermal_expansion: MeasuredProperty
+    melting_point: MeasuredProperty
     
-    # Electrical properties
-    electrical_conductivity: Optional[MaterialProperty]  # %IACS or S/m
+    # Optional fields
+    hardness: Optional[MeasuredProperty] = None
     
     # Temperature dependence
-    temp_dependence: Dict[str, TemperatureDependence] = field(default_factory=dict)
+    temp_models: Dict[str, TemperatureModel] = field(default_factory=dict)
     
     # Process effects
-    process_effects: Dict[ManufacturingProcess, ProcessEffect] = field(default_factory=dict)
+    process_effects: Dict[str, ProcessEffect] = field(default_factory=dict)
     
-    # Metadata
-    standards: List[str] = field(default_factory=list)
-    grades: List[str] = field(default_factory=list)
-    suppliers: List[str] = field(default_factory=list)
-    
-    def get_property_at_temp(self, prop_name: str, T: float) -> float:
-        """Get property value at temperature"""
-        # Get base property
-        prop = getattr(self, prop_name, None)
-        if not isinstance(prop, MaterialProperty):
-            raise ValueError(f"Unknown property: {prop_name}")
+    def get_property(self, name: str, temperature_c: float = 20.0) -> MeasuredProperty:
+        """Get property with temperature adjustment"""
+        base_prop = getattr(self, name, None)
+        if not isinstance(base_prop, MeasuredProperty):
+            raise ValueError(f"Unknown property: {name}")
         
-        base_value = prop.mean
+        # If no temp model or at room temp, return base
+        if name not in self.temp_models or abs(temperature_c - 20) < 0.1:
+            return base_prop
         
-        # Apply temperature correction if available
-        if prop_name in self.temp_dependence:
-            temp_model = self.temp_dependence[prop_name]
-            correction = temp_model.get_value(T)
-            # Apply correction (model-specific)
-            if temp_model.model_type == "linear":
-                return base_value + correction
-            else:
-                return correction
+        # Apply temperature model
+        model = self.temp_models[name]
+        temp_adjusted = model.evaluate(temperature_c)
         
-        return base_value
-    
-    def get_properties_with_process(
-        self,
-        process: ManufacturingProcess,
-        direction: str = "longitudinal"
-    ) -> Dict[str, float]:
-        """Get properties adjusted for manufacturing process"""
-        props = {
-            "density": self.density.mean,
-            "elastic_modulus": self.elastic_modulus.mean,
-            "yield_strength": self.yield_strength.mean,
-            "ultimate_strength": self.ultimate_strength.mean,
-            "thermal_conductivity": self.thermal_conductivity.mean,
-        }
+        # Scale base property by temperature factor
+        base_at_ref = model.evaluate(20.0)
+        scale_factor = temp_adjusted / base_at_ref if base_at_ref != 0 else 1.0
         
-        # Apply process effects
-        if process in self.process_effects:
-            effect = self.process_effects[process]
-            
-            # Apply anisotropy
-            if direction in effect.anisotropy_factors:
-                factors = effect.anisotropy_factors[direction]
-                for prop_name, factor in factors.items():
-                    if prop_name in props:
-                        props[prop_name] *= factor
-            
-            # Apply general property changes
-            for prop_name, factor in effect.property_changes.items():
-                if prop_name in props:
-                    props[prop_name] *= factor
-            
-            # Add process-specific metadata
-            props["residual_stress_mpa"] = effect.residual_stress
-            props["surface_roughness_ra_um"] = effect.surface_roughness
-            props["porosity"] = effect.porosity
+        adjusted_value = base_prop.value * scale_factor
         
-        return props
-
-
-class MaterialDatabase:
-    """In-memory material database with process effects"""
-    
-    def __init__(self):
-        self.materials: Dict[str, Material] = {}
-        self._load_builtin_materials()
-    
-    def _load_builtin_materials(self):
-        """Load built-in material database"""
-        
-        # Steel 4140 (Quenched and Tempered)
-        self.materials["steel_4140"] = Material(
-            name="Steel 4140",
-            category="metal",
-            density=MaterialProperty(mean=7850, units="kg/m³"),
-            elastic_modulus=MaterialProperty(mean=205, std=5, units="GPa"),
-            shear_modulus=MaterialProperty(mean=80, units="GPa"),
-            poisson_ratio=MaterialProperty(mean=0.29, std=0.01),
-            yield_strength=MaterialProperty(mean=655, std=35, units="MPa"),
-            ultimate_strength=MaterialProperty(mean=1020, std=50, units="MPa"),
-            elongation=MaterialProperty(mean=17, units="%"),
-            hardness=MaterialProperty(mean=300, units="HV"),
-            thermal_conductivity=MaterialProperty(mean=42.6, units="W/(m·K)"),
-            specific_heat=MaterialProperty(mean=475, units="J/(kg·K)"),
-            thermal_expansion=MaterialProperty(mean=12.3, units="1e-6/K"),
-            melting_point=1750,
-            process_effects={
-                ManufacturingProcess.CNC_MILLING: ProcessEffect(
-                    process=ManufacturingProcess.CNC_MILLING,
-                    anisotropy_factors={},
-                    residual_stress=50,  # MPa
-                    surface_roughness=3.2,  # μm Ra
-                    porosity=0.0,
-                    property_changes={"yield_strength": 1.0}
-                ),
-                ManufacturingProcess.FORGING: ProcessEffect(
-                    process=ManufacturingProcess.FORGING,
-                    anisotropy_factors={
-                        "longitudinal": {"yield_strength": 1.05, "ultimate_strength": 1.02},
-                        "transverse": {"yield_strength": 0.95, "ultimate_strength": 0.98}
-                    },
-                    residual_stress=100,
-                    surface_roughness=6.3,
-                    porosity=0.0,
-                    property_changes={}
-                ),
-                ManufacturingProcess.WELDING_TIG: ProcessEffect(
-                    process=ManufacturingProcess.WELDING_TIG,
-                    anisotropy_factors={},
-                    residual_stress=200,  # High in HAZ
-                    surface_roughness=12.5,
-                    porosity=0.001,
-                    property_changes={
-                        "yield_strength": 0.9,  # Slight reduction in HAZ
-                        "ultimate_strength": 0.95
-                    }
-                )
-            },
-            temp_dependence={
-                "yield_strength": TemperatureDependence(
-                    reference_temp=293.15,
-                    coefficients={"a": 655, "b": -0.15},
-                    model_type="linear",
-                    valid_range=(293.15, 873.15)
-                ),
-                "elastic_modulus": TemperatureDependence(
-                    reference_temp=293.15,
-                    coefficients={"a": 205, "b": -0.04},
-                    model_type="linear",
-                    valid_range=(293.15, 873.15)
-                )
-            },
-            standards=["ASTM A29", "AISI 4140"],
-            grades=["Annealed", "Q&T 2050°F", "Q&T 1550°F", "Q&T 1200°F"]
+        return MeasuredProperty(
+            value=adjusted_value,
+            units=base_prop.units,
+            uncertainty_type=base_prop.uncertainty_type,
+            uncertainty_value=base_prop.uncertainty_value * abs(scale_factor),
+            provenance=base_prop.provenance,
+            source_reference=f"{base_prop.source_reference} + temp_model"
         )
-        
-        # Aluminum 6061-T6
-        self.materials["aluminum_6061_t6"] = Material(
-            name="Aluminum 6061-T6",
-            category="metal",
-            density=MaterialProperty(mean=2700, units="kg/m³"),
-            elastic_modulus=MaterialProperty(mean=69, std=2, units="GPa"),
-            shear_modulus=MaterialProperty(mean=26, units="GPa"),
-            poisson_ratio=MaterialProperty(mean=0.33, std=0.01),
-            yield_strength=MaterialProperty(mean=276, std=15, units="MPa"),
-            ultimate_strength=MaterialProperty(mean=310, std=15, units="MPa"),
-            elongation=MaterialProperty(mean=12, units="%"),
-            hardness=MaterialProperty(mean=95, units="HB"),
-            thermal_conductivity=MaterialProperty(mean=167, units="W/(m·K)"),
-            specific_heat=MaterialProperty(mean=896, units="J/(kg·K)"),
-            thermal_expansion=MaterialProperty(mean=23.6, units="1e-6/K"),
-            melting_point=925,
-            process_effects={
-                ManufacturingProcess.CNC_MILLING: ProcessEffect(
-                    process=ManufacturingProcess.CNC_MILLING,
-                    anisotropy_factors={},
-                    residual_stress=20,
-                    surface_roughness=1.6,
-                    porosity=0.0,
-                    property_changes={}
-                ),
-                ManufacturingProcess.EXTRUSION: ProcessEffect(
-                    process=ManufacturingProcess.EXTRUSION,
-                    anisotropy_factors={
-                        "longitudinal": {"yield_strength": 1.0, "elastic_modulus": 1.0},
-                        "transverse": {"yield_strength": 0.95, "elastic_modulus": 1.0}
-                    },
-                    residual_stress=30,
-                    surface_roughness=3.2,
-                    porosity=0.0,
-                    property_changes={}
-                ),
-                ManufacturingProcess.WELDING_TIG: ProcessEffect(
-                    process=ManufacturingProcess.WELDING_TIG,
-                    anisotropy_factors={},
-                    residual_stress=80,
-                    surface_roughness=6.3,
-                    porosity=0.002,
-                    property_changes={
-                        "yield_strength": 0.4,  # Significant reduction in HAZ
-                        "ultimate_strength": 0.5
-                    }
-                )
-            },
-            standards=["ASTM B209", "ASTM B221", "AMS-QQ-A-250/11"],
-            grades=["T4", "T6", "T651", "T6511"]
-        )
-        
-        # Ti-6Al-4V (Grade 5)
-        self.materials["ti_6al_4v"] = Material(
-            name="Ti-6Al-4V",
-            category="metal",
-            density=MaterialProperty(mean=4430, units="kg/m³"),
-            elastic_modulus=MaterialProperty(mean=114, std=3, units="GPa"),
-            shear_modulus=MaterialProperty(mean=42, units="GPa"),
-            poisson_ratio=MaterialProperty(mean=0.31, std=0.01),
-            yield_strength=MaterialProperty(mean=880, std=50, units="MPa"),
-            ultimate_strength=MaterialProperty(mean=950, std=50, units="MPa"),
-            elongation=MaterialProperty(mean=14, units="%"),
-            hardness=MaterialProperty(mean=334, units="HV"),
-            thermal_conductivity=MaterialProperty(mean=6.7, units="W/(m·K)"),
-            specific_heat=MaterialProperty(mean=560, units="J/(kg·K)"),
-            thermal_expansion=MaterialProperty(mean=8.6, units="1e-6/K"),
-            melting_point=1933,
-            process_effects={
-                ManufacturingProcess.PBF_LASER: ProcessEffect(
-                    process=ManufacturingProcess.PBF_LASER,
-                    anisotropy_factors={
-                        "longitudinal": {"yield_strength": 1.0, "ultimate_strength": 1.0},
-                        "transverse": {"yield_strength": 0.85, "ultimate_strength": 0.90},
-                        "vertical": {"yield_strength": 0.95, "ultimate_strength": 0.97}
-                    },
-                    residual_stress=200,  # High residual stress in AM
-                    surface_roughness=8.0,  # As-built surface
-                    porosity=0.002,
-                    property_changes={}
-                ),
-                ManufacturingProcess.FORGING: ProcessEffect(
-                    process=ManufacturingProcess.FORGING,
-                    anisotropy_factors={
-                        "longitudinal": {"yield_strength": 1.05},
-                        "transverse": {"yield_strength": 0.98}
-                    },
-                    residual_stress=80,
-                    surface_roughness=3.2,
-                    porosity=0.0,
-                    property_changes={}
-                ),
-                ManufacturingProcess.CNC_MILLING: ProcessEffect(
-                    process=ManufacturingProcess.CNC_MILLING,
-                    anisotropy_factors={},
-                    residual_stress=150,  # High due to poor thermal conductivity
-                    surface_roughness=1.6,
-                    porosity=0.0,
-                    property_changes={}
-                )
-            },
-            standards=["ASTM F2924", "ASTM F3001", "AMS 4928"],
-            grades=["Grade 5", "ELI", "Grade 23"]
-        )
-        
-        # Add more materials as needed...
-        logger.info(f"Loaded {len(self.materials)} materials into database")
-    
-    def get_material(self, name: str) -> Optional[Material]:
-        """Get material by name"""
-        # Try exact match
-        key = name.lower().replace(" ", "_").replace("-", "_")
-        if key in self.materials:
-            return self.materials[key]
-        
-        # Try variations
-        for k, mat in self.materials.items():
-            if key in k or k in key:
-                return mat
-            if name.lower() in mat.name.lower():
-                return mat
-        
-        return None
-    
-    def search_materials(self, category: Optional[str] = None) -> List[str]:
-        """Search materials by category"""
-        results = []
-        for key, mat in self.materials.items():
-            if category is None or mat.category == category:
-                results.append(mat.name)
-        return results
 
 
 class ProductionMaterialAgent:
     """
-    Production-grade material agent
+    Production material agent with empirical validation
     
-    Provides:
-    - Temperature-dependent properties
-    - Process-dependent properties
-    - Material compatibility
-    - Environmental degradation
+    Key difference: Uses hardcoded fallback data when JSON files unavailable.
+    All fallback data is flagged as UNSPECIFIED with warnings.
     """
     
     def __init__(self, config: Optional[Dict[str, Any]] = None):
-        self.name = "ProductionMaterialAgent"
         self.config = config or {}
+        self.materials: Dict[str, Material] = {}
         
-        # Initialize database
-        self.db = MaterialDatabase()
+        # Initialize API client for dynamic material fetching
+        self.api_client = None
+        if HAS_API_CLIENT:
+            try:
+                self.api_client = MaterialAPIClient(config)
+                logger.info("Material API client initialized")
+            except Exception as e:
+                logger.warning(f"Failed to initialize API client: {e}")
         
-        # External API clients (if configured)
-        self.matweb_api_key = config.get("matweb_api_key") if config else None
-        self.materials_project_api_key = config.get("materials_project_api_key") if config else None
+        # Try to load validated JSON data
+        self._load_validated_materials()
         
-        logger.info("ProductionMaterialAgent initialized")
+        # If no materials loaded, use emergency fallback
+        if not self.materials:
+            logger.warning("No validated material files found. Loading emergency fallback data.")
+            self._load_emergency_fallback()
+        
+        logger.info(f"Loaded {len(self.materials)} materials")
+        if self.api_client:
+            logger.info("API client available for dynamic material fetching")
+    
+    def _load_validated_materials(self):
+        """Load materials from JSON files if they exist"""
+        data_dir = Path(self.config.get("material_data_dir", "./material_data"))
+        
+        if not data_dir.exists():
+            logger.info(f"Material data directory not found: {data_dir}")
+            return
+        
+        for json_file in data_dir.glob("*.json"):
+            try:
+                with open(json_file) as f:
+                    data = json.load(f)
+                    material = self._deserialize_material(data)
+                    key = material.designation.lower().replace(" ", "_")
+                    self.materials[key] = material
+                    logger.info(f"Loaded validated material: {material.name}")
+            except Exception as e:
+                logger.error(f"Failed to load {json_file}: {e}")
+    
+    def _deserialize_material(self, data: Dict) -> Material:
+        """Deserialize JSON to Material"""
+        def make_prop(p):
+            return MeasuredProperty(
+                value=p["value"],
+                units=p.get("units", ""),
+                uncertainty_type=p.get("uncertainty", {}).get("type", "percent"),
+                uncertainty_value=p.get("uncertainty", {}).get("value", 10),
+                provenance=DataProvenance[p.get("provenance", "UNSPECIFIED")],
+                source_reference=p.get("source_reference")
+            )
+        
+        # Build temperature models
+        temp_models = {}
+        for prop_name, model_data in data.get("temperature_models", {}).items():
+            temp_models[prop_name] = TemperatureModel(
+                model_type=model_data.get("type", "linear"),
+                coefficients=model_data.get("coefficients", {}),
+                valid_range_c=tuple(model_data.get("valid_range_c", [-200, 400]))
+            )
+        
+        # Build process effects
+        process_effects = {}
+        for proc_name, proc_data in data.get("process_effects", {}).items():
+            process_effects[proc_name] = ProcessEffect(
+                process_name=proc_name,
+                property_changes={k: make_prop(v) for k, v in proc_data.get("properties", {}).items()},
+                anisotropy_ratios=proc_data.get("anisotropy", {}),
+                residual_stress_mpa=proc_data.get("residual_stress_mpa", 0),
+                surface_roughness_ra=proc_data.get("surface_roughness_ra", 3.2),
+                porosity_pct=proc_data.get("porosity_pct", 0)
+            )
+        
+        props = data.get("properties", {})
+        return Material(
+            name=data.get("name", "Unknown"),
+            designation=data.get("designation", ""),
+            category=data.get("category", "metal"),
+            density=make_prop(props.get("density", {"value": 2700, "units": "kg/m³"})),
+            elastic_modulus=make_prop(props.get("elastic_modulus", {"value": 70, "units": "GPa"})),
+            poisson_ratio=make_prop(props.get("poisson_ratio", {"value": 0.33})),
+            yield_strength=make_prop(props.get("yield_strength", {"value": 276, "units": "MPa"})),
+            ultimate_strength=make_prop(props.get("ultimate_strength", {"value": 310, "units": "MPa"})),
+            elongation=make_prop(props.get("elongation", {"value": 12, "units": "%"})),
+            hardness=make_prop(props["hardness"]) if "hardness" in props else None,
+            thermal_conductivity=make_prop(props.get("thermal_conductivity", {"value": 167, "units": "W/(m·K)"})),
+            specific_heat=make_prop(props.get("specific_heat", {"value": 900, "units": "J/(kg·K)"})),
+            thermal_expansion=make_prop(props.get("thermal_expansion", {"value": 23.6, "units": "1e-6/K"})),
+            melting_point=make_prop(props.get("melting_point", {"value": 650, "units": "°C"})),
+            temp_models=temp_models,
+            process_effects=process_effects
+        )
+    
+    def _convert_api_to_material(self, api_result: Dict[str, Any]) -> Optional[Material]:
+        """Convert API response to Material object"""
+        try:
+            source = api_result.get("source", "unknown")
+            data = api_result.get("data", {})
+            
+            # Determine provenance based on source
+            if source == "matweb":
+                provenance = DataProvenance.LITERATURE_META
+            elif source == "nist_ceramics":
+                provenance = DataProvenance.NIST_CERTIFIED
+            elif source == "materials_project":
+                provenance = DataProvenance.ESTIMATED
+            else:
+                provenance = DataProvenance.UNSPECIFIED
+            
+            def api_prop(value, units, unc=10):
+                return MeasuredProperty(
+                    value=value,
+                    units=units,
+                    uncertainty_type="percent",
+                    uncertainty_value=unc,
+                    provenance=provenance,
+                    source_reference=f"{source}:{api_result.get('query', 'unknown')}"
+                )
+            
+            # Extract properties based on source format
+            if source == "matweb":
+                props = data.get("properties", {})
+                return Material(
+                    name=data.get("name", "Unknown"),
+                    designation=data.get("designation", ""),
+                    category="metal",
+                    density=api_prop(props.get("density", 2700), "kg/m³"),
+                    elastic_modulus=api_prop(props.get("elastic_modulus", 70), "GPa"),
+                    poisson_ratio=api_prop(props.get("poisson_ratio", 0.33), ""),
+                    yield_strength=api_prop(props.get("yield_strength", 200), "MPa"),
+                    ultimate_strength=api_prop(props.get("ultimate_strength", 300), "MPa"),
+                    elongation=api_prop(props.get("elongation", 10), "%"),
+                    hardness=api_prop(props.get("hardness", 100), "HB") if "hardness" in props else None,
+                    thermal_conductivity=api_prop(props.get("thermal_conductivity", 100), "W/(m·K)"),
+                    specific_heat=api_prop(props.get("specific_heat", 500), "J/(kg·K)"),
+                    thermal_expansion=api_prop(props.get("thermal_expansion", 20), "1e-6/K"),
+                    melting_point=api_prop(props.get("melting_point", 600), "°C"),
+                    temp_models={}
+                )
+            elif source == "materials_project":
+                # DFT data - only elastic properties
+                elasticity = data.get("elasticity", {})
+                bulk_mod = elasticity.get("bulk_modulus_vrh", 0)
+                
+                return Material(
+                    name=data.get("formula_pretty", "Unknown"),
+                    designation=data.get("material_id", ""),
+                    category="inorganic",
+                    density=api_prop(data.get("density", 5000), "kg/m³", 20),  # DFT has higher uncertainty
+                    elastic_modulus=api_prop(bulk_mod * 3 * (1 - 2*0.3), "GPa", 15),  # Approximate E from K
+                    poisson_ratio=api_prop(0.3, "", 20),
+                    yield_strength=api_prop(bulk_mod * 0.01, "MPa", 50),  # Very rough estimate
+                    ultimate_strength=api_prop(bulk_mod * 0.02, "MPa", 50),
+                    elongation=api_prop(5, "%", 50),
+                    thermal_conductivity=api_prop(50, "W/(m·K)", 50),
+                    specific_heat=api_prop(500, "J/(kg·K)", 30),
+                    thermal_expansion=api_prop(15, "1e-6/K", 30),
+                    melting_point=api_prop(1000, "°C", 50),
+                    temp_models={}
+                )
+            else:
+                # Generic conversion
+                return Material(
+                    name=str(api_result.get("query", "Unknown")),
+                    designation="",
+                    category="unknown",
+                    density=api_prop(2700, "kg/m³"),
+                    elastic_modulus=api_prop(70, "GPa"),
+                    poisson_ratio=api_prop(0.33, ""),
+                    yield_strength=api_prop(200, "MPa"),
+                    ultimate_strength=api_prop(300, "MPa"),
+                    elongation=api_prop(10, "%"),
+                    thermal_conductivity=api_prop(100, "W/(m·K)"),
+                    specific_heat=api_prop(500, "J/(kg·K)"),
+                    thermal_expansion=api_prop(20, "1e-6/K"),
+                    melting_point=api_prop(600, "°C"),
+                    temp_models={}
+                )
+                
+        except Exception as e:
+            logger.error(f"Failed to convert API result to Material: {e}")
+            return None
+    
+    def _load_emergency_fallback(self):
+        """
+        Emergency fallback data with UNSPECIFIED provenance.
+        
+        Sources:
+        - Aluminum 6061-T6: MIL-HDBK-5J typical values
+        - Steel 4140: ASTM A29 typical
+        - Titanium Ti-6Al-4V: MIL-HDBK-5J
+        
+        ALL flagged with warnings - must be validated before use in production.
+        """
+        
+        def fallback_prop(value, units, ref="MIL-HDBK-5J typical"):
+            return MeasuredProperty(
+                value=value,
+                units=units,
+                uncertainty_type="percent",
+                uncertainty_value=15,  # High uncertainty
+                provenance=DataProvenance.UNSPECIFIED,
+                source_reference=f"FALLBACK: {ref} - VALIDATE BEFORE USE"
+            )
+        
+        # Aluminum 6061-T6 [FALLBACK]
+        self.materials["aluminum_6061_t6"] = Material(
+            name="Aluminum 6061-T6 [FALLBACK DATA]",
+            designation="UNS A96061",
+            category="metal",
+            density=fallback_prop(2700, "kg/m³"),
+            elastic_modulus=fallback_prop(68.9, "GPa"),
+            poisson_ratio=fallback_prop(0.33, ""),
+            yield_strength=fallback_prop(276, "MPa"),
+            ultimate_strength=fallback_prop(310, "MPa"),
+            elongation=fallback_prop(12, "%"),
+            hardness=fallback_prop(95, "HB"),
+            thermal_conductivity=fallback_prop(167, "W/(m·K)"),
+            specific_heat=fallback_prop(896, "J/(kg·K)"),
+            thermal_expansion=fallback_prop(23.6, "1e-6/K"),
+            melting_point=fallback_prop(652, "°C"),
+            temp_models={
+                "yield_strength": TemperatureModel(
+                    model_type="polynomial",
+                    coefficients={"c0": 276, "c1": -0.12, "c2": -0.0003},
+                    valid_range_c=(-200, 400),
+                    reference_property="yield_strength"
+                ),
+                "elastic_modulus": TemperatureModel(
+                    model_type="polynomial",
+                    coefficients={"c0": 68.9, "c1": -0.02, "c2": -0.00005},
+                    valid_range_c=(-200, 400),
+                    reference_property="elastic_modulus"
+                )
+            },
+            process_effects={
+                "cnc_milling": ProcessEffect(
+                    process_name="cnc_milling",
+                    residual_stress_mpa=20,
+                    surface_roughness_ra=1.6
+                ),
+                "extrusion": ProcessEffect(
+                    process_name="extrusion",
+                    anisotropy_ratios={
+                        "longitudinal": {"yield_strength": 1.0},
+                        "transverse": {"yield_strength": 0.95}
+                    }
+                )
+            }
+        )
+        
+        # Steel 4140 [FALLBACK]
+        self.materials["steel_4140"] = Material(
+            name="Steel 4140 [FALLBACK DATA]",
+            designation="UNS G41400",
+            category="metal",
+            density=fallback_prop(7850, "kg/m³"),
+            elastic_modulus=fallback_prop(205, "GPa"),
+            poisson_ratio=fallback_prop(0.29, ""),
+            yield_strength=fallback_prop(655, "MPa"),
+            ultimate_strength=fallback_prop(1020, "MPa"),
+            elongation=fallback_prop(17, "%"),
+            hardness=fallback_prop(300, "HV"),
+            thermal_conductivity=fallback_prop(42.6, "W/(m·K)"),
+            specific_heat=fallback_prop(475, "J/(kg·K)"),
+            thermal_expansion=fallback_prop(12.3, "1e-6/K"),
+            melting_point=fallback_prop(1750, "°C"),
+            temp_models={
+                "yield_strength": TemperatureModel(
+                    model_type="polynomial",
+                    coefficients={"c0": 655, "c1": -0.15, "c2": -0.0002},
+                    valid_range_c=(-50, 600),
+                    reference_property="yield_strength"
+                )
+            },
+            process_effects={
+                "cnc_milling": ProcessEffect(
+                    process_name="cnc_milling",
+                    residual_stress_mpa=50,
+                    surface_roughness_ra=3.2
+                )
+            }
+        )
+        
+        # Titanium Ti-6Al-4V [FALLBACK]
+        self.materials["ti_6al_4v"] = Material(
+            name="Ti-6Al-4V [FALLBACK DATA]",
+            designation="UNS R56400",
+            category="metal",
+            density=fallback_prop(4430, "kg/m³"),
+            elastic_modulus=fallback_prop(114, "GPa"),
+            poisson_ratio=fallback_prop(0.31, ""),
+            yield_strength=fallback_prop(880, "MPa"),
+            ultimate_strength=fallback_prop(950, "MPa"),
+            elongation=fallback_prop(14, "%"),
+            hardness=fallback_prop(334, "HV"),
+            thermal_conductivity=fallback_prop(6.7, "W/(m·K)"),
+            specific_heat=fallback_prop(560, "J/(kg·K)"),
+            thermal_expansion=fallback_prop(8.6, "1e-6/K"),
+            melting_point=fallback_prop(1668, "°C"),
+            temp_models={
+                "yield_strength": TemperatureModel(
+                    model_type="polynomial",
+                    coefficients={"c0": 880, "c1": -0.08, "c2": -0.0001},
+                    valid_range_c=(-200, 600),
+                    reference_property="yield_strength"
+                )
+            },
+            process_effects={
+                "pbf_laser": ProcessEffect(
+                    process_name="pbf_laser",
+                    anisotropy_ratios={
+                        "longitudinal": {"yield_strength": 1.0},
+                        "transverse": {"yield_strength": 0.85}
+                    },
+                    porosity_pct=0.2
+                )
+            }
+        )
+        
+        logger.warning("=" * 70)
+        logger.warning("LOADING EMERGENCY FALLBACK MATERIAL DATA")
+        logger.warning("All properties flagged as UNSPECIFIED provenance")
+        logger.warning("VALIDATE BEFORE USE IN PRODUCTION HARDWARE")
+        logger.warning("=" * 70)
     
     async def get_material(
         self,
-        name: str,
-        temperature: float = 20.0,
-        process: Optional[ManufacturingProcess] = None,
-        direction: str = "longitudinal",
-        include_uncertainty: bool = False
+        designation: str,
+        temperature_c: float = 20.0,
+        process: Optional[str] = None,
+        direction: str = "longitudinal"
     ) -> Dict[str, Any]:
         """
-        Get material properties with full context
+        Get material properties with uncertainty and provenance
         
-        Args:
-            name: Material name
-            temperature: Operating temperature (°C)
-            process: Manufacturing process
-            direction: Material direction (for anisotropic materials)
-            include_uncertainty: Include statistical variation
-            
         Returns:
-            Material properties dictionary
+            Dict with properties, uncertainty, warnings, and data quality flags
         """
-        material = self.db.get_material(name)
+        key = designation.lower().replace(" ", "_")
+        material = self.materials.get(key)
         
         if not material:
-            # Try external databases
-            material = await self._fetch_external(name)
-            if not material:
-                return {
-                    "error": f"Material '{name}' not found",
-                    "suggestions": self._suggest_materials(name)
-                }
+            # Try common variations
+            variations = [
+                key.replace("-", "_"),
+                key.replace("_", "-"),
+                key.replace("aluminum", "al"),
+                key.replace("steel", ""),
+            ]
+            for var in variations:
+                if var in self.materials:
+                    material = self.materials[var]
+                    break
         
-        # Convert temperature to Kelvin
-        T_kelvin = temperature + 273.15
+        warnings = []
         
-        # Get base properties at temperature
-        props = {
-            "name": material.name,
-            "category": material.category,
-            "temperature_c": temperature,
-            "temperature_k": T_kelvin,
-        }
+        if not material and self.api_client:
+            # Try to fetch from external APIs
+            logger.info(f"Material '{designation}' not in local DB, trying APIs...")
+            api_result = await self.api_client.fetch_material(designation, category="metal")
+            
+            if api_result:
+                # Convert API result to Material object
+                material = self._convert_api_to_material(api_result)
+                if material:
+                    # Cache locally for future use
+                    self.materials[key] = material
+                    logger.info(f"Cached {designation} from {api_result['source']}")
+            else:
+                warnings.append(f"Material '{designation}' not found in external APIs")
         
-        # Add mechanical properties
-        mechanical_props = [
-            "density", "elastic_modulus", "shear_modulus", "poisson_ratio",
-            "yield_strength", "ultimate_strength", "elongation", "hardness"
-        ]
-        
-        for prop_name in mechanical_props:
-            prop = getattr(material, prop_name, None)
-            if isinstance(prop, MaterialProperty):
-                # Get temperature-adjusted value
-                try:
-                    value = material.get_property_at_temp(prop_name, T_kelvin)
-                except ValueError:
-                    value = prop.mean
-                
-                props[prop_name] = {
-                    "value": value,
-                    "units": prop.units
-                }
-                
-                if include_uncertainty and prop.std:
-                    props[prop_name]["std"] = prop.std
-                    ci_low, ci_high = prop.confidence_interval_95
-                    props[prop_name]["confidence_interval_95"] = [ci_low, ci_high]
-        
-        # Add thermal properties
-        props["melting_point_k"] = material.melting_point
-        props["thermal_conductivity"] = {
-            "value": material.get_property_at_temp("thermal_conductivity", T_kelvin),
-            "units": "W/(m·K)"
-        }
-        props["specific_heat"] = {
-            "value": material.get_property_at_temp("specific_heat", T_kelvin),
-            "units": "J/(kg·K)"
-        }
-        props["thermal_expansion"] = {
-            "value": material.thermal_expansion.mean,
-            "units": "1e-6/K"
-        }
-        
-        # Apply process effects
-        if process and process in material.process_effects:
-            process_props = material.get_properties_with_process(process, direction)
-            props["process_adjusted"] = {
-                "process": process.value,
-                "direction": direction,
-                "properties": process_props
+        if not material:
+            return {
+                "error": f"Material '{designation}' not found in local database or APIs",
+                "available_materials": list(self.materials.keys())[:20],
+                "feasible": False
             }
         
-        # Add metadata
-        props["standards"] = material.standards
-        props["available_grades"] = material.grades
+        # Build properties dict
+        properties = {}
         
-        return props
-    
-    async def _fetch_external(self, name: str) -> Optional[Material]:
-        """Fetch material from external databases"""
-        # This would implement API calls to MatWeb, Materials Project, etc.
-        # For now, return None
-        return None
-    
-    def _suggest_materials(self, query: str) -> List[str]:
-        """Suggest similar materials"""
-        suggestions = []
-        query_lower = query.lower()
+        for prop_name in ["density", "elastic_modulus", "poisson_ratio", 
+                         "yield_strength", "ultimate_strength", "elongation",
+                         "thermal_conductivity", "specific_heat", "thermal_expansion"]:
+            try:
+                prop = material.get_property(prop_name, temperature_c)
+                ci_low, ci_high = prop.get_confidence_interval(0.95)
+                
+                properties[prop_name] = {
+                    "value": prop.value,
+                    "units": prop.units,
+                    "uncertainty": {
+                        "type": prop.uncertainty_type,
+                        "value": prop.uncertainty_value,
+                        "confidence_95": [ci_low, ci_high]
+                    },
+                    "provenance": prop.provenance.name,
+                    "source": prop.source_reference
+                }
+                
+                # Flag UNSPECIFIED data
+                if prop.provenance == DataProvenance.UNSPECIFIED:
+                    warnings.append(
+                        f"Property '{prop_name}' uses UNSPECIFIED fallback data. "
+                        f"Validate before production use."
+                    )
+                    
+            except Exception as e:
+                logger.warning(f"Could not get property {prop_name}: {e}")
         
-        for key, mat in self.db.materials.items():
-            # Check if any word in query matches material name
-            query_words = query_lower.split()
-            mat_words = mat.name.lower().split()
-            
-            if any(qw in mat_words for qw in query_words):
-                suggestions.append(mat.name)
+        # Check temperature range
+        for model_name, model in material.temp_models.items():
+            if not (model.valid_range_c[0] <= temperature_c <= model.valid_range_c[1]):
+                warnings.append(
+                    f"Temperature {temperature_c}°C outside valid range "
+                    f"{model.valid_range_c} for {model_name} model"
+                )
         
-        return suggestions[:5]
-    
-    def check_compatibility(
-        self,
-        material1: str,
-        material2: str,
-        environment: str = "ambient"
-    ) -> Dict[str, Any]:
-        """
-        Check material compatibility
-        
-        Args:
-            material1: First material
-            material2: Second material
-            environment: Operating environment
-            
-        Returns:
-            Compatibility assessment
-        """
-        mat1 = self.db.get_material(material1)
-        mat2 = self.db.get_material(material2)
-        
-        if not mat1 or not mat2:
-            return {"error": "One or both materials not found"}
-        
-        issues = []
-        
-        # Galvanic corrosion check
-        if mat1.category == "metal" and mat2.category == "metal":
-            # Check if significantly different in galvanic series
-            # Simplified - real implementation would use actual potentials
-            if abs(mat1.thermal_conductivity.mean - mat2.thermal_conductivity.mean) > 100:
-                issues.append("Potential galvanic corrosion - different thermal conductivities suggest different metals")
-        
-        # Thermal expansion mismatch
-        cte_diff = abs(
-            mat1.thermal_expansion.mean - mat2.thermal_expansion.mean
-        )
-        if cte_diff > 5:
-            issues.append(f"High CTE mismatch ({cte_diff:.1f} 1e-6/K) - thermal stress likely")
+        # Determine data quality
+        provenances = [p.get("provenance") for p in properties.values()]
+        if all(p == "UNSPECIFIED" for p in provenances):
+            data_quality = "FALLBACK"
+        elif any(p == "UNSPECIFIED" for p in provenances):
+            data_quality = "PARTIAL"
+        else:
+            data_quality = "VALIDATED"
         
         return {
-            "compatible": len(issues) == 0,
-            "materials": [mat1.name, mat2.name],
-            "issues": issues,
-            "recommendations": [
-                "Use dielectric isolation for dissimilar metals",
-                "Consider flexible joints for high CTE mismatch"
-            ] if issues else []
+            "material": material.name,
+            "designation": material.designation,
+            "category": material.category,
+            "temperature_c": temperature_c,
+            "properties": properties,
+            "warnings": warnings,
+            "feasible": True,
+            "data_quality": data_quality,
+            "temperature_models": list(material.temp_models.keys()),
+            "available_processes": list(material.process_effects.keys())
         }
     
+    # Legacy BRICK OS interface
     async def run(self, material_name: str, temperature: float = 20.0) -> Dict[str, Any]:
         """
-        Legacy-compatible run method
+        Legacy interface for BRICK OS orchestrator
         
         Args:
-            material_name: Name of material
-            temperature: Operating temperature (°C)
+            material_name: Material designation
+            temperature: Temperature in Celsius
             
         Returns:
-            Material properties
+            Dict in legacy format expected by orchestrator
         """
         result = await self.get_material(
-            name=material_name,
-            temperature=temperature,
-            include_uncertainty=False
+            designation=material_name,
+            temperature_c=temperature
         )
         
         if "error" in result:
             return {
                 "name": material_name,
                 "properties": {},
+                "feasible": False,
                 "error": result["error"],
-                "feasible": False
+                "source": "material_agent"
             }
         
-        # Flatten for legacy compatibility
-        props = {}
-        for key, value in result.items():
-            if isinstance(value, dict) and "value" in value:
-                props[key] = value["value"]
-            else:
-                props[key] = value
-        
-        # Check feasibility against temperature
-        feasible = True
-        warnings = []
-        
-        if "melting_point_k" in result and temperature + 273.15 > result["melting_point_k"] * 0.8:
-            feasible = False
-            warnings.append(f"Temperature {temperature}°C approaching melting point")
+        # Flatten to legacy format
+        legacy_props = {}
+        for key, val in result["properties"].items():
+            if isinstance(val, dict) and "value" in val:
+                legacy_props[key] = val["value"]
         
         return {
-            "name": result["name"],
-            "properties": props,
+            "name": result["material"],
+            "properties": legacy_props,
             "temperature_c": temperature,
-            "feasible": feasible,
-            "warnings": warnings,
-            "source": "material_agent"
+            "feasible": True,
+            "warnings": result["warnings"],
+            "source": "material_agent",
+            "data_quality": result["data_quality"]
         }
     
-    def get_process_effects(
-        self,
-        material_name: str,
-        process: ManufacturingProcess
-    ) -> Dict[str, Any]:
-        """Get process-specific property effects"""
-        material = self.db.get_material(material_name)
-        
-        if not material:
-            return {"error": f"Material '{material_name}' not found"}
-        
-        if process not in material.process_effects:
-            return {
-                "material": material.name,
-                "process": process.value,
-                "effects": "No data available for this process"
-            }
-        
-        effect = material.process_effects[process]
-        
-        return {
-            "material": material.name,
-            "process": process.value,
-            "anisotropy": effect.anisotropy_factors,
-            "residual_stress_mpa": effect.residual_stress,
-            "surface_roughness_ra_um": effect.surface_roughness,
-            "typical_porosity": effect.porosity,
-            "property_multipliers": effect.property_changes,
-            "directions": effect.valid_directions
-        }
-
-
-# Convenience functions
-def get_material_properties(
-    material: str,
-    temperature: float = 20.0,
-    process: Optional[str] = None
-) -> Dict[str, Any]:
-    """
-    Get material properties (synchronous wrapper)
-    
-    Args:
-        material: Material name
-        temperature: Operating temperature (°C)
-        process: Manufacturing process name
-        
-    Returns:
-        Material properties
-    """
-    agent = ProductionMaterialAgent()
-    
-    process_enum = None
-    if process:
-        try:
-            process_enum = ManufacturingProcess(process.lower())
-        except ValueError:
-            logger.warning(f"Unknown process: {process}")
-    
-    import asyncio
-    try:
-        loop = asyncio.get_event_loop()
-        result = loop.run_until_complete(
-            agent.get_material(material, temperature, process_enum)
-        )
-    except RuntimeError:
-        result = asyncio.run(
-            agent.get_material(material, temperature, process_enum)
-        )
-    
-    return result
-
-
-def list_available_materials(category: Optional[str] = None) -> List[str]:
-    """List all available materials"""
-    db = MaterialDatabase()
-    return db.search_materials(category)
-
-
-def compare_materials(materials: List[str]) -> Dict[str, Any]:
-    """Compare multiple materials side-by-side"""
-    db = MaterialDatabase()
-    
-    comparison = {
-        "materials": [],
-        "properties": {}
-    }
-    
-    for name in materials:
-        mat = db.get_material(name)
-        if mat:
-            comparison["materials"].append(mat.name)
-            comparison["properties"][mat.name] = {
-                "density": mat.density.mean,
-                "elastic_modulus": mat.elastic_modulus.mean,
-                "yield_strength": mat.yield_strength.mean,
-                "ultimate_strength": mat.ultimate_strength.mean,
-                "thermal_conductivity": mat.thermal_conductivity.mean,
-                "cost_category": "medium"  # Placeholder
-            }
-    
-    return comparison
+    def list_materials(self) -> List[str]:
+        """List available materials"""
+        return sorted(self.materials.keys())

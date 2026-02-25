@@ -2076,3 +2076,320 @@ class ProductionControlAgent:
 
 **END OF COMPREHENSIVE AGENT RESEARCH REPORT**
 
+
+
+---
+
+## 🎯 TIER 1 CORE AGENTS - PRODUCTION IMPLEMENTATION PLAN
+
+### Current Status (2026-02-24)
+| Agent | Status | Issue |
+|-------|--------|-------|
+| Structural | Partial | 1D analytical only, FEA stubbed |
+| Thermal | Partial | 1D finite difference only |
+| Geometry | Partial | Mesh only, no CAD B-rep without OCC |
+| Material | Partial | 3 fallback materials only, no API calls |
+
+### Production Blockers
+1. **No real 3D capabilities** - All agents limited to 1D/2D
+2. **Missing heavy dependencies** - CalculiX, OpenCASCADE, FiPy not integrated
+3. **No dynamic material data** - Hardcoded 3 materials, no API calls
+4. **No external validation** - NIST, MatWeb, RISC APIs not connected
+
+---
+
+## 📋 IMPLEMENTATION PLAN
+
+### Phase 1: Dependencies & Infrastructure
+
+#### 1.1 Core Dependencies (All Agents)
+```bash
+pip install pydantic numpy scipy
+```
+**Status:** ✅ Already available
+
+#### 1.2 Structural Agent Dependencies
+```bash
+# Gmsh - Mesh generation (200MB+ binary)
+pip install gmsh-sdk
+
+# CalculiX - FEA solver (requires separate binary)
+# Ubuntu/Debian: sudo apt-get install calculix-ccx
+# macOS: brew install calculix
+# OR compile from source: https://www.calculix.de
+```
+**Status:** ❌ Not installed
+**Action:** Add dependency check with graceful fallback
+
+#### 1.3 Geometry Agent Dependencies  
+```bash
+# OpenCASCADE - CAD kernel (500MB+)
+pip install pythonocc-core
+
+# Requires OpenCASCADE C++ libraries:
+# Ubuntu: sudo apt-get install libocct-foundation-dev libocct-modeling-dev
+# macOS: brew install opencascade
+```
+**Status:** ❌ Not installed
+**Action:** Add optional dependency with Manifold3D fallback
+
+#### 1.4 Thermal Agent Dependencies
+```bash
+# FiPy - 3D finite volume solver
+pip install fipy
+
+# Note: May conflict with SciPy versions, needs testing
+```
+**Status:** ❌ Not installed
+**Action:** Add dependency, test compatibility
+
+### Phase 2: Structural Agent - Full 3D FEA
+
+#### 2.1 CalculiX Integration
+**Current State:** Subprocess calls work but mesh generation is stubbed
+
+**Required Implementation:**
+```python
+class CalculiXSolver:
+    def generate_mesh_gmsh(self, geometry, mesh_size=0.1):
+        """Real 3D mesh using Gmsh"""
+        # Generate .geo file from geometry
+        # Run gmsh to create .msh
+        # Convert to CalculiX .inp format
+        pass
+    
+    def solve_steady_state(self, mesh, material, loads, bcs):
+        """Full 3D elastic analysis"""
+        # Write .inp file with *ELEMENT, *MATERIAL, *BOUNDARY, *DLOAD
+        # Run ccx
+        # Parse .frd results (already implemented)
+        pass
+    
+    def solve_modal(self, mesh, material, n_modes=10):
+        """Modal analysis for buckling/vibration"""
+        # *FREQUENCY card
+        pass
+```
+
+**Files to Modify:**
+- `backend/agents/structural_agent.py` - Add Gmsh mesh generation
+- Add mesh convergence checking
+- Add 3D geometry support (not just beams)
+
+**Testing:**
+- NAFEMS LE1 (elliptic membrane)
+- NAFEMS LE10 (thick plate)
+- Cantilever beam validation
+
+### Phase 3: Geometry Agent - Real CAD
+
+#### 3.1 OpenCASCADE Integration
+**Current State:** Optional import, falls back to Manifold3D
+
+**Required Implementation:**
+```python
+class OpenCASCADEKernel:
+    def create_solid(self, primitives):
+        """B-rep solid modeling"""
+        # BRepBuilderAPI_MakeShape
+        pass
+    
+    def export_step(self, shape, filepath):
+        """ISO 10303-21 export"""
+        # STEPControl_Writer
+        pass
+    
+    def fillet_edges(self, shape, radius, edges):
+        """Real fillet geometry"""
+        # BRepFilletAPI_MakeFillet
+        pass
+```
+
+**Files to Modify:**
+- `backend/agents/geometry_agent.py` - Complete OpenCASCADE wrapper
+- Add feature-based modeling (extrude, revolve, sweep)
+- Add constraint solving
+
+**Testing:**
+- STEP import/export round-trip
+- Boolean operations on complex shapes
+- Mesh quality metrics
+
+### Phase 4: Thermal Agent - 3D Conjugate Heat Transfer
+
+#### 4.1 FiPy Integration
+**Current State:** 1D finite difference only
+
+**Required Implementation:**
+```python
+class ThermalSolver3D:
+    def __init__(self):
+        from fipy import Grid3D, CellVariable, DiffusionTerm
+        
+    def solve_steady_state(self, geometry, material, bc):
+        """3D steady-state conduction"""
+        # Grid3D(dx, dy, dz, nx, ny, nz)
+        # CellVariable(mesh=grid, value=T_initial)
+        # DiffusionTerm(coeff=k) - q''' = 0
+        # ConvectionTerm for forced convection
+        pass
+    
+    def solve_conjugate(self, solid, fluid, interface):
+        """Conjugate heat transfer (solid + fluid)"""
+        # Coupled solid/fluid solution
+        pass
+```
+
+**Files to Modify:**
+- `backend/agents/thermal_agent.py` - Add 3D solver option
+- Keep 1D solver for fast approximations
+
+**Testing:**
+- NAFEMS T1 (linear heat conduction)
+- NAFEMS T3 (transient heat conduction)
+
+### Phase 5: Material Agent - Dynamic API Integration
+
+#### 5.1 External API Clients
+**Current State:** 3 hardcoded fallback materials
+
+**Required Implementation:**
+```python
+class MaterialAPIClient:
+    """Dynamic material data from external sources"""
+    
+    async def fetch_nist_ceramics(self, designation):
+        """NIST Structural Ceramics Database"""
+        # API: https://www.nist.gov/programs-projects/structural-ceramics-database
+        # Returns: Mechanical properties at high temperature
+        pass
+    
+    async def fetch_matweb(self, designation, api_key):
+        """MatWeb database"""
+        # API: http://www.matweb.com/reference/apigateway.aspx
+        # Returns: Comprehensive material properties
+        pass
+    
+    async def fetch_risc(self, designation):
+        """RISC material database (if available)"""
+        # API endpoint TBD
+        pass
+    
+    async def fetch_materials_project(self, formula, api_key):
+        """Materials Project DFT data"""
+        # mp-api library
+        # Returns: Elastic constants, band structure, etc.
+        pass
+```
+
+**Files to Modify:**
+- `backend/agents/material_agent.py` - Add API clients
+- Add caching layer (Redis/SQLite)
+- Add fallback chain: MatWeb → NIST → Materials Project → Hardcoded
+
+**Testing:**
+- API availability checks
+- Cache hit/miss rates
+- Fallback behavior
+
+### Phase 6: Validation Framework
+
+#### 6.1 NAFEMS Benchmark Suite
+Implement all NAFEMS benchmarks for validation:
+- LE series (Linear elastic)
+- T series (Thermal)
+- R series (Nonlinear)
+
+#### 6.2 Physical Validation
+- Instrument test specimens
+- Compare agent predictions to measurements
+- Uncertainty quantification
+
+---
+
+## 🗓️ EXECUTION TIMELINE
+
+### Week 1-2: Dependencies
+- [ ] Add dependency checks to all agents
+- [ ] Create installation scripts
+- [ ] Test on clean environment
+
+### Week 3-4: Structural 3D FEA
+- [ ] Gmsh integration
+- [ ] CalculiX .inp generation
+- [ ] 3D geometry support
+- [ ] NAFEMS validation
+
+### Week 5-6: Geometry CAD
+- [ ] OpenCASCADE integration
+- [ ] STEP export/import
+- [ ] Feature-based modeling
+- [ ] Constraint solving
+
+### Week 7-8: Thermal 3D
+- [ ] FiPy integration
+- [ ] 3D conduction solver
+- [ ] Conjugate heat transfer
+- [ ] NAFEMS validation
+
+### Week 9-10: Material APIs
+- [ ] MatWeb API client
+- [ ] NIST API client
+- [ ] Materials Project client
+- [ ] Caching layer
+
+### Week 11-12: Integration & Testing
+- [ ] End-to-end workflows
+- [ ] Performance optimization
+- [ ] Documentation
+
+---
+
+## 📊 SUCCESS CRITERIA
+
+### Structural Agent
+- [ ] Solve 3D linear elastic problems
+- [ ] Mesh convergence to <5% error
+- [ ] Pass 5 NAFEMS benchmarks
+- [ ] Handle arbitrary CAD geometry
+
+### Thermal Agent
+- [ ] Solve 3D steady-state conduction
+- [ ] Solve 3D transient conduction
+- [ ] Conjugate heat transfer (solid+fluid)
+- [ ] Pass 3 NAFEMS thermal benchmarks
+
+### Geometry Agent
+- [ ] Import/export STEP files
+- [ ] Feature-based parametric modeling
+- [ ] Real fillets/chamfers
+- [ ] Mesh quality >0.1 Jacobian
+
+### Material Agent
+- [ ] Query 5+ external APIs
+- [ ] Cache responses
+- [ ] Automatic fallback chain
+- [ ] <100ms response time (cached)
+
+---
+
+## ⚠️ RISK MITIGATION
+
+| Risk | Mitigation |
+|------|------------|
+| CalculiX binary not available | Provide Docker container with all deps |
+| OpenCASCADE too heavy | Keep Manifold3D fallback, OCC optional |
+| API rate limits | Implement aggressive caching |
+| FiPy conflicts | Pin versions, test in isolation |
+| 3D too slow | Add adaptive mesh refinement |
+
+---
+
+## 🔗 RELATED DOCUMENTATION
+
+- NAFEMS Benchmarks: https://www.nafems.org/publications/resource_center/
+- CalculiX Documentation: https://www.calculix.de/documentation/
+- OpenCASCADE Docs: https://dev.opencascade.org/doc/overview/html/
+- FiPy Manual: https://www.ctcms.nist.gov/fipy/documentation.html
+- MatWeb API: http://www.matweb.com/reference/apigateway.aspx
+

@@ -1,0 +1,66 @@
+# BRICK OS - Full 3D CAD/FEA Environment
+# Includes: OpenCASCADE, CalculiX, Gmsh, FiPy, CoolProp
+
+FROM condaforge/miniforge:latest
+
+LABEL maintainer="BRICK OS Team"
+LABEL description="Full 3D CAD/FEA environment with OpenCASCADE and CalculiX"
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    cmake \
+    git \
+    wget \
+    libgl1-mesa-glx \
+    libglu1-mesa \
+    libxmu6 \
+    libxi6 \
+    libfontconfig1 \
+    libxrender1 \
+    libxext6 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set working directory
+WORKDIR /app
+
+# Copy environment file
+COPY environment-3d.yml .
+
+# Create conda environment with OpenCASCADE and all 3D dependencies
+RUN conda env create -f environment-3d.yml
+
+# Install CalculiX (ccx) from source
+RUN cd /tmp && \
+    wget https://www.dhondt.de/ccx_2.21.src.tar.bz2 && \
+    tar -xjf ccx_2.21.src.tar.bz2 && \
+    cd CalculiX/ccx_2.21/src && \
+    make -j$(nproc) && \
+    cp ccx_2.21 /usr/local/bin/ccx && \
+    cd / && rm -rf /tmp/CalculiX*
+
+# Make RUN commands use the new environment:
+SHELL ["conda", "run", "-n", "brick-3d", "/bin/bash", "-c"]
+
+# Copy application code
+COPY backend/ ./backend/
+COPY data/ ./data/
+
+# Set environment variables
+ENV PYTHONPATH=/app
+ENV CALCULIX_PATH=/usr/local/bin/ccx
+ENV PYTHONUNBUFFERED=1
+
+# Verify installations
+RUN python -c "import OCC.Core; print('✓ OpenCASCADE available')" && \
+    python -c "import gmsh; print('✓ Gmsh available')" && \
+    python -c "import CoolProp; print('✓ CoolProp available')" && \
+    python -c "import fipy; print('✓ FiPy available')" && \
+    ccx -v | head -1 && echo "✓ CalculiX available"
+
+# Expose port for API
+EXPOSE 8000
+
+# Default command
+CMD ["conda", "run", "--no-capture-output", "-n", "brick-3d", \
+     "python", "-m", "uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]

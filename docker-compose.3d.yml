@@ -1,0 +1,56 @@
+version: '3.8'
+
+services:
+  brick-3d-api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.3d
+    image: brick-os:3d-full
+    container_name: brick-3d-api
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./output:/app/output
+      - ./logs:/app/logs
+    environment:
+      - PYTHONUNBUFFERED=1
+      - CALCULIX_PATH=/usr/local/bin/ccx
+      - BRICK_ENV=production
+      - BRICK_3D_MODE=full
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+    networks:
+      - brick-network
+
+  # Optional: Jupyter notebook for analysis
+  brick-jupyter:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.3d
+    image: brick-os:3d-full
+    container_name: brick-jupyter
+    command: >
+      conda run --no-capture-output -n brick-3d
+      jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root
+    ports:
+      - "8888:8888"
+    volumes:
+      - ./notebooks:/app/notebooks
+      - ./data:/app/data
+      - ./output:/app/output
+    environment:
+      - PYTHONUNBUFFERED=1
+    networks:
+      - brick-network
+    profiles:
+      - jupyter  # Only start with: docker-compose --profile jupyter up
+
+networks:
+  brick-network:
+    driver: bridge

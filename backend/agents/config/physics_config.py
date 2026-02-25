@@ -25,15 +25,16 @@ class SafetyFactors:
     @classmethod
     def get_for_application(cls, application: str) -> float:
         """Get appropriate safety factor"""
+        instance = cls()
         factors = {
-            "aerospace_structural": cls.aerospace_structural,
-            "aerospace_yield": cls.aerospace_yield,
-            "automotive": cls.automotive,
-            "mechanical": cls.general_mechanical,
-            "pressure_vessel": cls.pressure_vessel,
-            "lifting": cls.lifting_equipment,
+            "aerospace_structural": instance.aerospace_structural,
+            "aerospace_yield": instance.aerospace_yield,
+            "automotive": instance.automotive,
+            "mechanical": instance.general_mechanical,
+            "pressure_vessel": instance.pressure_vessel,
+            "lifting": instance.lifting_equipment,
         }
-        return factors.get(application, cls.general_mechanical)
+        return factors.get(application, instance.general_mechanical)
 
 
 @dataclass  

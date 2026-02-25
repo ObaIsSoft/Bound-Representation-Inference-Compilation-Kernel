@@ -96,3 +96,5 @@ data/exports/
 tmp/
 temp/
 /tmp/brick_*/
+CalculiX/
+nohup.out

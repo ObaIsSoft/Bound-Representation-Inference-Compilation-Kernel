@@ -11,6 +11,6 @@ Usage:
     result = physics.calculate("mechanics", "stress", force=1000, area=0.01)
 """
 
-from physics.kernel import get_physics_kernel
+from backend.physics.kernel import get_physics_kernel
 
 __all__ = ["get_physics_kernel"]

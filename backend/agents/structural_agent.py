@@ -42,13 +42,28 @@ except ImportError:
     HAS_GMSH = False
     logger.warning("Gmsh not available - 3D meshing will be limited")
 
-# Check for CalculiX
+# Check for CalculiX at module level (cached)
 def _check_calculix():
     """Check if CalculiX (ccx) is available"""
     ccx_path = shutil.which("ccx")
     if ccx_path:
-        logger.info(f"CalculiX found: {ccx_path}")
-        return True
+        # Also verify the binary is executable (not a wrong-arch binary)
+        try:
+            result = subprocess.run(
+                [ccx_path, "-v"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0 or result.stdout.strip():
+                logger.info(f"CalculiX found and working: {ccx_path}")
+                return True
+            else:
+                logger.warning(f"CalculiX found at {ccx_path} but failed to run")
+                return False
+        except (subprocess.SubprocessError, OSError) as e:
+            logger.warning(f"CalculiX found at {ccx_path} but not executable: {e}")
+            return False
     logger.warning("CalculiX (ccx) not found in PATH - FEA capabilities limited")
     return False
 
@@ -212,26 +227,11 @@ class CalculiXSolver:
     def __init__(self, executable: str = "ccx", num_threads: int = 4):
         self.executable = executable
         self.num_threads = num_threads
-        self._check_installation()
-    
-    def _check_installation(self) -> bool:
-        """Check if CalculiX is installed"""
-        try:
-            result = subprocess.run(
-                [self.executable, "-v"],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            logger.info(f"CalculiX found: {result.stdout.strip()}")
-            return True
-        except (subprocess.SubprocessError, FileNotFoundError):
-            logger.warning("CalculiX not found. FEA will be unavailable.")
-            return False
+        self._available = HAS_CALCULIX  # Use cached module-level check
     
     def is_available(self) -> bool:
-        """Check if solver is available"""
-        return self._check_installation()
+        """Check if solver is available (uses cached result)"""
+        return self._available
     
     async def solve_static(
         self,
@@ -978,34 +978,34 @@ class ProductionStructuralAgent:
         material: Material,
         loads: List[LoadCase]
     ) -> StressResult:
-        """Use neural operator surrogate"""
-        # Extract parameters
-        geo_params = np.array([0.1, 0.1, 0.1])  # Placeholder
-        mat_props = np.array([
-            material.elastic_modulus,
-            material.yield_strength,
-            material.poisson_ratio
-        ])
-        load_vec = loads[0].forces if loads else np.zeros(3)
-        bc = np.zeros(3)
+        """Use physics-based analytical surrogate"""
+        # Extract geometry parameters from primitives
+        geo_params = {}
+        if geometry.primitives:
+            for prim in geometry.primitives:
+                geo_params = prim.get("params", {})
+                break
         
-        # Use analytical beam solution for surrogate
-        geometry = options.get("geometry", {})
-        if geometry.get("type") == "beam":
+        geo_type = geo_params.get("type", geometry.primitives[0].get("type", "box") if geometry.primitives else "box")
+        
+        if geo_type == "beam" or "length" in geo_params:
             return self.surrogate.predict_beam(
-                length=geometry.get("length", 1.0),
-                width=geometry.get("width", 0.05),
-                height=geometry.get("height", 0.1),
+                length=geo_params.get("length", 1.0),
+                width=geo_params.get("width", 0.05),
+                height=geo_params.get("height", 0.1),
                 E=material.elastic_modulus * 1e9,
                 force=np.linalg.norm(loads[0].forces) if loads else 1000.0
             )
         else:
-            # Fallback to axial load
+            # Axial load prediction
+            area = geo_params.get("area", 0.01)
+            if "width" in geo_params and "height" in geo_params:
+                area = geo_params["width"] * geo_params["height"]
             return self.surrogate.predict_axialload(
-                area=geometry.get("area", 0.01),
+                area=area,
                 E=material.elastic_modulus * 1e9,
                 force=np.linalg.norm(loads[0].forces) if loads else 1000.0,
-                length=geometry.get("length", 1.0)
+                length=geo_params.get("length", 1.0)
             )
     
     async def _rom_solution(
@@ -1286,14 +1286,21 @@ class ProductionStructuralAgent:
         )
         
         # Convert to legacy format
-        overall_fos = result.safety_factors.get("overall", 1.0)
+        overall_sf = result.safety_factors.get("overall", {})
+        overall_fos = overall_sf.get("calculated", 1.0) if isinstance(overall_sf, dict) else float(overall_sf)
+        
+        # Extract individual safety factors from dict structures
+        yield_sf = result.safety_factors.get("yielding", {})
+        yield_fos = yield_sf.get("calculated", overall_fos) if isinstance(yield_sf, dict) else float(yield_sf) if yield_sf else overall_fos
+        buckling_sf = result.safety_factors.get("buckling", {})
+        buckling_fos = buckling_sf.get("calculated", 999) if isinstance(buckling_sf, dict) else float(buckling_sf) if buckling_sf else 999
         
         return {
             "status": "safe" if overall_fos >= 1.5 else "marginal" if overall_fos >= 1.0 else "failure",
             "max_stress_mpa": result.stress.von_mises.max() if result.stress else 0.0,
             "safety_factor": round(overall_fos, 2),
-            "yield_fos": round(result.safety_factors.get("yielding", overall_fos), 2),
-            "buckling_fos": round(result.safety_factors.get("buckling", 999), 2),
+            "yield_fos": round(yield_fos, 2),
+            "buckling_fos": round(buckling_fos, 2),
             "fidelity": result.fidelity.value,
             "computation_time_ms": result.computation_time_ms,
             "validation": result.validation

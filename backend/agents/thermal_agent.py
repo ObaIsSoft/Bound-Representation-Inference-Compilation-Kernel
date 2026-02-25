@@ -494,14 +494,16 @@ class FiPy3DThermalSolver:
         elif bc_left[0] == "convection":
             T_inf, h = bc_left[1], bc_left[2]
             # Convection BC: -k∇T·n = h(T - T_inf)
-            # Implemented as flux boundary
-            heat_flux = h * (T_inf - T)
-            # Apply to left faces
-            pass  # FiPy convection BC implementation
+            val = (h * T.faceValue - h * T_inf) / thermal_conductivity
+            T.faceGrad.constrain(val * mesh.faceNormals, where=mesh.facesLeft)
         
         # Right face (x=Lx)
         if bc_right[0] == "dirichlet":
             T.constrain(bc_right[1], mesh.facesRight)
+        elif bc_right[0] == "convection":
+            T_inf, h = bc_right[1], bc_right[2]
+            val = (h * T.faceValue - h * T_inf) / thermal_conductivity
+            T.faceGrad.constrain(val * mesh.faceNormals, where=mesh.facesRight)
         
         # Solve steady-state: ∇·(k∇T) + q''' = 0
         eq = DiffusionTerm(coeff=thermal_conductivity) + ImplicitSourceTerm(coeff=heat_generation)

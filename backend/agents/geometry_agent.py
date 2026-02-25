@@ -40,18 +40,28 @@ except ImportError:
     logger.warning("Manifold3D not available")
 
 try:
-    # OpenCASCADE - may not be available
-    from OCC.Core import (
-        gp, BRepBuilderAPI, BRepPrimAPI, BRepAlgoAPI,
-        BRepFilletAPI, BRepOffsetAPI, STEPControl, IGESControl,
-        BRepTools, BRepMesh, TopExp, TopAbs, GProp, Bnd
-    )
-    from OCC.Extend import DataExchange
+    # OpenCASCADE via cadquery-ocp (OCP bindings)
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox, BRepPrimAPI_MakeCylinder, BRepPrimAPI_MakeSphere, BRepPrimAPI_MakePrism, BRepPrimAPI_MakeRevol
+    from OCP.BRepAlgoAPI import BRepAlgoAPI_Fuse, BRepAlgoAPI_Cut, BRepAlgoAPI_Common
+    from OCP.BRepFilletAPI import BRepFilletAPI_MakeFillet, BRepFilletAPI_MakeChamfer
+    from OCP.BRepOffsetAPI import BRepOffsetAPI_MakeThickSolid
+    from OCP.STEPControl import STEPControl_Writer, STEPControl_Reader, STEPControl_AsIs
+    from OCP.BRepMesh import BRepMesh_IncrementalMesh
+    from OCP.TopExp import TopExp_Explorer
+    from OCP.TopAbs import TopAbs_FACE, TopAbs_EDGE
+    from OCP.BRep import BRep_Tool
+    from OCP.TopLoc import TopLoc_Location
+    from OCP.GProp import GProp_GProps
+    from OCP.BRepGProp import BRepGProp
+    from OCP.Bnd import Bnd_Box
+    from OCP.BRepBndLib import BRepBndLib
+    from OCP.gp import gp_Vec, gp_Ax1, gp_Pnt, gp_Dir
+    from OCP.TopoDS import TopoDS_Shape
     HAS_OPENCASCADE = True
-    logger.info("OpenCASCADE available")
+    logger.info("OpenCASCADE available via OCP (cadquery-ocp)")
 except ImportError:
     HAS_OPENCASCADE = False
-    logger.warning("OpenCASCADE not available - advanced CAD features disabled")
+    logger.warning("OpenCASCADE (OCP) not available - advanced CAD features disabled")
 
 try:
     import gmsh
@@ -273,44 +283,44 @@ class OpenCASCADEKernel(CADKernelInterface):
     
     def create_box(self, length: float, width: float, height: float) -> Any:
         """Create a box using OpenCASCADE"""
-        return BRepPrimAPI.BRepPrimAPI_MakeBox(length, width, height).Shape()
+        return BRepPrimAPI_MakeBox(length, width, height).Shape()
     
     def create_cylinder(self, radius: float, height: float) -> Any:
         """Create a cylinder"""
-        return BRepPrimAPI.BRepPrimAPI_MakeCylinder(radius, height).Shape()
+        return BRepPrimAPI_MakeCylinder(radius, height).Shape()
     
     def create_sphere(self, radius: float) -> Any:
         """Create a sphere"""
-        return BRepPrimAPI.BRepPrimAPI_MakeSphere(radius).Shape()
+        return BRepPrimAPI_MakeSphere(radius).Shape()
     
     def boolean_union(self, shape1: Any, shape2: Any) -> Any:
         """Boolean union"""
-        return BRepAlgoAPI.BRepAlgoAPI_Fuse(shape1, shape2).Shape()
+        return BRepAlgoAPI_Fuse(shape1, shape2).Shape()
     
     def boolean_difference(self, shape1: Any, shape2: Any) -> Any:
         """Boolean difference"""
-        return BRepAlgoAPI.BRepAlgoAPI_Cut(shape1, shape2).Shape()
+        return BRepAlgoAPI_Cut(shape1, shape2).Shape()
     
     def boolean_intersection(self, shape1: Any, shape2: Any) -> Any:
         """Boolean intersection"""
-        return BRepAlgoAPI.BRepAlgoAPI_Common(shape1, shape2).Shape()
+        return BRepAlgoAPI_Common(shape1, shape2).Shape()
     
     def fillet(self, shape: Any, radius: float, edges: List[int]) -> Any:
         """Apply fillet"""
-        fillet = BRepFilletAPI.BRepFilletAPI_MakeFillet(shape)
+        fillet = BRepFilletAPI_MakeFillet(shape)
         # Add edges to fillet (simplified)
         return fillet.Shape()
     
     def chamfer(self, shape: Any, distance: float, edges: List[int]) -> Any:
         """Apply chamfer"""
-        chamfer = BRepFilletAPI.BRepFilletAPI_MakeChamfer(shape)
+        chamfer = BRepFilletAPI_MakeChamfer(shape)
         return chamfer.Shape()
     
     def export_step(self, shape: Any, filepath: str) -> bool:
         """Export to STEP format (ISO 10303-21)"""
         try:
-            step_writer = STEPControl.STEPControl_Writer()
-            step_writer.Transfer(shape, STEPControl.STEPControl_AsIs)
+            step_writer = STEPControl_Writer()
+            step_writer.Transfer(shape, STEPControl_AsIs)
             step_writer.Write(filepath)
             return True
         except Exception as e:
@@ -320,7 +330,7 @@ class OpenCASCADEKernel(CADKernelInterface):
     def import_step(self, filepath: str) -> Any:
         """Import from STEP format"""
         try:
-            step_reader = STEPControl.STEPControl_Reader()
+            step_reader = STEPControl_Reader()
             status = step_reader.ReadFile(filepath)
             if status != 1:
                 raise RuntimeError(f"Failed to read STEP file: {status}")
@@ -333,39 +343,31 @@ class OpenCASCADEKernel(CADKernelInterface):
     def tessellate(self, shape: Any, tolerance: float = 0.01) -> Tuple[np.ndarray, np.ndarray]:
         """Tessellate to triangle mesh"""
         # Use BRepMesh for tessellation
-        BRepMesh.BRepMesh_IncrementalMesh(shape, tolerance)
+        BRepMesh_IncrementalMesh(shape, tolerance)
         
         vertices = []
         faces = []
         vertex_map = {}
         vertex_count = 0
         
-        # Traverse faces
-        from OCC.Core.TopExp import TopExp_Explorer
-        from OCC.Core.TopAbs import TopAbs_FACE
-        from OCC.Core.BRep import BRep_Tool
-        from OCC.Core.TopLoc import TopLoc_Location
-        
+        # Traverse faces using OCP imports (already imported at module level)
         exp = TopExp_Explorer(shape, TopAbs_FACE)
         while exp.More():
             face = exp.Current()
             loc = TopLoc_Location()
-            triangulation = BRep_Tool.Triangulation(face, loc)
+            triangulation = BRep_Tool.Triangulation_s(face, loc)
             
             if triangulation is not None:
-                # Get nodes
-                nodes = triangulation.Nodes()
-                triangles = triangulation.Triangles()
-                
+                # Get nodes and triangles
                 for i in range(1, triangulation.NbTriangles() + 1):
-                    tri = triangles.Value(i)
-                    # Get vertex indices (1-based in OCC)
+                    tri = triangulation.Triangle(i)
+                    # Get vertex indices (1-based in OCP)
                     n1, n2, n3 = tri.Get()
                     
                     # Get vertex coordinates
                     for n in [n1, n2, n3]:
                         if n not in vertex_map:
-                            pnt = nodes.Value(n).Transformed(loc.Transformation())
+                            pnt = triangulation.Node(n).Transformed(loc.Transformation())
                             vertices.append([pnt.X(), pnt.Y(), pnt.Z()])
                             vertex_map[n] = vertex_count
                             vertex_count += 1
@@ -382,9 +384,6 @@ class OpenCASCADEKernel(CADKernelInterface):
     
     def get_edges(self, shape: Any) -> List[Any]:
         """Get all edges from a shape for fillet/chamfer operations"""
-        from OCC.Core.TopExp import TopExp_Explorer
-        from OCC.Core.TopAbs import TopAbs_EDGE
-        
         edges = []
         exp = TopExp_Explorer(shape, TopAbs_EDGE)
         while exp.More():
@@ -395,7 +394,7 @@ class OpenCASCADEKernel(CADKernelInterface):
     
     def fillet_all_edges(self, shape: Any, radius: float) -> Any:
         """Apply fillet to all edges of a shape"""
-        fillet = BRepFilletAPI.BRepFilletAPI_MakeFillet(shape)
+        fillet = BRepFilletAPI_MakeFillet(shape)
         edges = self.get_edges(shape)
         
         for edge in edges:
@@ -405,7 +404,7 @@ class OpenCASCADEKernel(CADKernelInterface):
     
     def chamfer_all_edges(self, shape: Any, distance: float) -> Any:
         """Apply chamfer to all edges of a shape"""
-        chamfer = BRepFilletAPI.BRepFilletAPI_MakeChamfer(shape)
+        chamfer = BRepFilletAPI_MakeChamfer(shape)
         edges = self.get_edges(shape)
         
         for edge in edges:
@@ -415,58 +414,42 @@ class OpenCASCADEKernel(CADKernelInterface):
     
     def measure_volume(self, shape: Any) -> float:
         """Calculate volume of a solid shape"""
-        from OCC.Core.GProp import GProp_GProps
-        from OCC.Core.BRepGProp import brepgprop_VolumeProperties
-        
         props = GProp_GProps()
-        brepgprop_VolumeProperties(shape, props)
+        BRepGProp.VolumeProperties_s(shape, props)
         return props.Mass()
     
     def measure_surface_area(self, shape: Any) -> float:
         """Calculate surface area of a shape"""
-        from OCC.Core.GProp import GProp_GProps
-        from OCC.Core.BRepGProp import brepgprop_SurfaceProperties
-        
         props = GProp_GProps()
-        brepgprop_SurfaceProperties(shape, props)
+        BRepGProp.SurfaceProperties_s(shape, props)
         return props.Mass()
     
     def get_bounding_box(self, shape: Any) -> Tuple[float, float, float, float, float, float]:
         """Get bounding box (xmin, ymin, zmin, xmax, ymax, zmax)"""
-        from OCC.Core.Bnd import Bnd_Box
-        from OCC.Core.BRepBndLib import brepbndlib_Add
-        
         bbox = Bnd_Box()
-        brepbndlib_Add(shape, bbox)
+        BRepBndLib.Add_s(shape, bbox)
         return bbox.Get()
     
     def create_extrusion(self, profile: Any, height: float, direction: Tuple[float, float, float] = (0, 0, 1)) -> Any:
         """Extrude a 2D profile to 3D"""
-        from OCC.Core.gp import gp_Vec
-        
         vec = gp_Vec(*direction)
         vec.Scale(height)
         
-        extrusion = BRepPrimAPI.BRepPrimAPI_MakePrism(profile, vec)
+        extrusion = BRepPrimAPI_MakePrism(profile, vec)
         return extrusion.Shape()
     
     def create_revolution(self, profile: Any, angle: float = 360, 
                          axis_point: Tuple[float, float, float] = (0, 0, 0),
                          axis_dir: Tuple[float, float, float] = (0, 0, 1)) -> Any:
         """Revolve a 2D profile around an axis"""
-        from OCC.Core.gp import gp_Ax1, gp_Pnt, gp_Dir
-        
         axis = gp_Ax1(gp_Pnt(*axis_point), gp_Dir(*axis_dir))
         angle_rad = math.radians(angle)
         
-        revol = BRepPrimAPI.BRepPrimAPI_MakeRevol(profile, axis, angle_rad)
+        revol = BRepPrimAPI_MakeRevol(profile, axis, angle_rad)
         return revol.Shape()
     
     def hollow_shape(self, shape: Any, thickness: float) -> Any:
         """Create a hollow shell from a solid (shelling operation)"""
-        from OCC.Core.TopExp import TopExp_Explorer
-        from OCC.Core.TopAbs import TopAbs_FACE
-        
         # Get all faces
         faces = []
         exp = TopExp_Explorer(shape, TopAbs_FACE)
@@ -475,7 +458,7 @@ class OpenCASCADEKernel(CADKernelInterface):
             exp.Next()
         
         # Create offset shape (simplified - offsets all faces)
-        offset = BRepOffsetAPI.BRepOffsetAPI_MakeThickSolid(
+        offset = BRepOffsetAPI_MakeThickSolid(
             shape, faces, thickness, 1e-6
         )
         return offset.Shape()

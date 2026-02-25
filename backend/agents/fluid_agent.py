@@ -5,7 +5,7 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-from physics.kernel import get_physics_kernel
+from backend.physics.kernel import get_physics_kernel
 
 class FluidAgent:
     """

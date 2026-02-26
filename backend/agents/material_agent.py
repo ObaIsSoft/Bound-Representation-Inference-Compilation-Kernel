@@ -221,22 +221,44 @@ class ProductionMaterialAgent:
     
     def _load_validated_materials(self):
         """Load materials from JSON files if they exist"""
-        data_dir = Path(self.config.get("material_data_dir", "./material_data"))
+        # Check multiple locations for material database
+        data_dirs = [
+            Path(self.config.get("material_data_dir", "./material_data")),
+            Path(__file__).parent.parent.parent / "data",
+            Path("./data"),
+        ]
         
-        if not data_dir.exists():
-            logger.info(f"Material data directory not found: {data_dir}")
-            return
+        loaded = False
+        for data_dir in data_dirs:
+            if not data_dir.exists():
+                continue
+            
+            # Look for materials database files
+            for json_file in data_dir.glob("materials_database*.json"):
+                try:
+                    with open(json_file) as f:
+                        db = json.load(f)
+                        
+                        # Check if it's a database with metadata
+                        if "materials" in db:
+                            for key, mat_data in db["materials"].items():
+                                material = self._deserialize_material_v2(mat_data)
+                                self.materials[key] = material
+                            logger.info(f"Loaded {len(db['materials'])} materials from {json_file.name}")
+                            loaded = True
+                        else:
+                            # Single material file
+                            material = self._deserialize_material(db)
+                            key = material.designation.lower().replace(" ", "_")
+                            self.materials[key] = material
+                            logger.info(f"Loaded validated material: {material.name}")
+                            loaded = True
+                            
+                except Exception as e:
+                    logger.error(f"Failed to load {json_file}: {e}")
         
-        for json_file in data_dir.glob("*.json"):
-            try:
-                with open(json_file) as f:
-                    data = json.load(f)
-                    material = self._deserialize_material(data)
-                    key = material.designation.lower().replace(" ", "_")
-                    self.materials[key] = material
-                    logger.info(f"Loaded validated material: {material.name}")
-            except Exception as e:
-                logger.error(f"Failed to load {json_file}: {e}")
+        if not loaded:
+            logger.info("No validated material files found. Loading emergency fallback data.")
     
     def _deserialize_material(self, data: Dict) -> Material:
         """Deserialize JSON to Material"""
@@ -289,6 +311,56 @@ class ProductionMaterialAgent:
             melting_point=make_prop(props.get("melting_point", {"value": 650, "units": "°C"})),
             temp_models=temp_models,
             process_effects=process_effects
+        )
+    
+    def _deserialize_material_v2(self, data: Dict) -> Material:
+        """
+        Deserialize material from v2 database format (materials_database_expanded.json)
+        
+        This format has properties nested under 'properties' key with NIST-style metadata
+        """
+        def make_prop_from_db(prop_data):
+            """Create MeasuredProperty from database format"""
+            if isinstance(prop_data, dict):
+                return MeasuredProperty(
+                    value=prop_data.get("value", 0),
+                    units=prop_data.get("units", ""),
+                    uncertainty_type="percent",
+                    uncertainty_value=prop_data.get("uncertainty", 10),
+                    provenance=DataProvenance[prop_data.get("provenance", "NIST_CERTIFIED")] if isinstance(prop_data.get("provenance"), str) else DataProvenance.NIST_CERTIFIED,
+                    source_reference=prop_data.get("source", "")
+                )
+            else:
+                # Fallback for simple values
+                return MeasuredProperty(value=prop_data, units="")
+        
+        props = data.get("properties", {})
+        
+        # Handle different elastic modulus keys
+        E = props.get("elastic_modulus", props.get("elastic_modulus_longitudinal", {"value": 70, "units": "GPa"}))
+        
+        # Handle anisotropic materials
+        if "elastic_modulus_transverse" in props:
+            # For anisotropic materials, use longitudinal as primary
+            pass
+        
+        return Material(
+            name=data.get("name", data.get("designation", "Unknown")),
+            designation=data.get("designation", ""),
+            category=data.get("category", "metal"),
+            density=make_prop_from_db(props.get("density", {"value": 2700, "units": "kg/m³"})),
+            elastic_modulus=make_prop_from_db(E),
+            poisson_ratio=make_prop_from_db(props.get("poisson_ratio", {"value": 0.33})),
+            yield_strength=make_prop_from_db(props.get("yield_strength", {"value": 276, "units": "MPa"})),
+            ultimate_strength=make_prop_from_db(props.get("ultimate_strength", {"value": 310, "units": "MPa"})),
+            elongation=make_prop_from_db(props.get("elongation", {"value": 12, "units": "%"})),
+            hardness=make_prop_from_db(props["hardness"]) if "hardness" in props else None,
+            thermal_conductivity=make_prop_from_db(props.get("thermal_conductivity", {"value": 167, "units": "W/m·K"})),
+            specific_heat=make_prop_from_db(props.get("specific_heat", {"value": 900, "units": "J/kg·K"})),
+            thermal_expansion=make_prop_from_db(props.get("thermal_expansion", {"value": 23.6, "units": "μm/m·K"})),
+            melting_point=make_prop_from_db(props.get("melting_point", {"value": 650, "units": "°C"})),
+            temp_models={},  # Could extract from temperature_model if present
+            process_effects={}
         )
     
     def _convert_api_to_material(self, api_result: Dict[str, Any]) -> Optional[Material]:

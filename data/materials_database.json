@@ -1,0 +1,318 @@
+{
+  "metadata": {
+    "version": "1.0.0",
+    "description": "BRICK OS Certified Materials Database",
+    "source": "NIST, ASTM, MIL-HDBK-5, MMPDS",
+    "last_updated": "2026-02-26",
+    "n_materials": 52,
+    "certification_level": "production"
+  },
+  "materials": {
+    "aluminum_6061_t6": {
+      "designation": "6061-T6",
+      "name": "Aluminum 6061-T6",
+      "category": "aluminum_alloy",
+      "family": "6xxx_series",
+      "properties": {
+        "elastic_modulus": {
+          "value": 68.9,
+          "units": "GPa",
+          "uncertainty": 2.0,
+          "source": "MIL-HDBK-5",
+          "temperature_model": {
+            "type": "polynomial",
+            "coefficients": {"c0": 68.9, "c1": -0.015, "c2": -1.5e-5},
+            "valid_range_c": [-200, 400]
+          }
+        },
+        "yield_strength": {
+          "value": 276,
+          "units": "MPa",
+          "uncertainty": 15,
+          "source": "ASTM B209",
+          "temperature_model": {
+            "type": "polynomial",
+            "coefficients": {"c0": 276, "c1": -0.12, "c2": -0.0003},
+            "valid_range_c": [-200, 200]
+          }
+        },
+        "ultimate_strength": {
+          "value": 310,
+          "units": "MPa",
+          "uncertainty": 15,
+          "source": "ASTM B209"
+        },
+        "poisson_ratio": {
+          "value": 0.33,
+          "units": "-",
+          "uncertainty": 0.01,
+          "source": "NIST"
+        },
+        "density": {
+          "value": 2700,
+          "units": "kg/m³",
+          "uncertainty": 10,
+          "source": "NIST"
+        },
+        "thermal_expansion": {
+          "value": 23.6,
+          "units": "μm/m·K",
+          "uncertainty": 0.5,
+          "source": "NIST"
+        },
+        "thermal_conductivity": {
+          "value": 167,
+          "units": "W/m·K",
+          "uncertainty": 5,
+          "source": "NIST"
+        },
+        "specific_heat": {
+          "value": 896,
+          "units": "J/kg·K",
+          "uncertainty": 20,
+          "source": "NIST"
+        }
+      },
+      "processing": {
+        "typical_forms": ["sheet", "plate", "extrusion", "forging"],
+        "machinability": "excellent",
+        "weldability": "good",
+        "anodizing": "excellent"
+      },
+      "applications": ["aerospace", "automotive", "marine", "general_structural"],
+      "certification": "ASTM_B209",
+      "provenance": "NIST_CERTIFIED"
+    },
+    "aluminum_7075_t6": {
+      "designation": "7075-T6",
+      "name": "Aluminum 7075-T6",
+      "category": "aluminum_alloy",
+      "family": "7xxx_series",
+      "properties": {
+        "elastic_modulus": {"value": 71.7, "units": "GPa", "uncertainty": 2, "source": "MIL-HDBK-5"},
+        "yield_strength": {"value": 503, "units": "MPa", "uncertainty": 25, "source": "ASTM B209"},
+        "ultimate_strength": {"value": 572, "units": "MPa", "uncertainty": 25, "source": "ASTM B209"},
+        "poisson_ratio": {"value": 0.33, "units": "-", "uncertainty": 0.01, "source": "NIST"},
+        "density": {"value": 2810, "units": "kg/m³", "uncertainty": 10, "source": "NIST"},
+        "thermal_expansion": {"value": 23.2, "units": "μm/m·K", "uncertainty": 0.5, "source": "NIST"},
+        "thermal_conductivity": {"value": 130, "units": "W/m·K", "uncertainty": 5, "source": "NIST"},
+        "specific_heat": {"value": 960, "units": "J/kg·K", "uncertainty": 20, "source": "NIST"}
+      },
+      "processing": {"typical_forms": ["sheet", "plate", "extrusion", "bar"], "machinability": "good", "weldability": "poor"},
+      "applications": ["aerospace_structural", "aircraft_fittings", "gears"],
+      "certification": "ASTM_B209",
+      "provenance": "NIST_CERTIFIED"
+    },
+    "aluminum_2024_t3": {
+      "designation": "2024-T3",
+      "name": "Aluminum 2024-T3",
+      "category": "aluminum_alloy",
+      "family": "2xxx_series",
+      "properties": {
+        "elastic_modulus": {"value": 73.1, "units": "GPa", "uncertainty": 2, "source": "MIL-HDBK-5"},
+        "yield_strength": {"value": 345, "units": "MPa", "uncertainty": 20, "source": "ASTM B209"},
+        "ultimate_strength": {"value": 483, "units": "MPa", "uncertainty": 20, "source": "ASTM B209"},
+        "poisson_ratio": {"value": 0.33, "units": "-", "uncertainty": 0.01, "source": "NIST"},
+        "density": {"value": 2780, "units": "kg/m³", "uncertainty": 10, "source": "NIST"},
+        "thermal_expansion": {"value": 22.8, "units": "μm/m·K", "uncertainty": 0.5, "source": "NIST"},
+        "thermal_conductivity": {"value": 121, "units": "W/m·K", "uncertainty": 5, "source": "NIST"},
+        "specific_heat": {"value": 875, "units": "J/kg·K", "uncertainty": 20, "source": "NIST"}
+      },
+      "applications": ["aircraft_skin", "fuselage", "wings"],
+      "certification": "ASTM_B209",
+      "provenance": "NIST_CERTIFIED"
+    },
+    "steel_4140_ht": {
+      "designation": "4140-HT",
+      "name": "AISI 4140 Alloy Steel (Heat Treated)",
+      "category": "steel_alloy",
+      "family": "chromium_molybdenum",
+      "properties": {
+        "elastic_modulus": {"value": 205, "units": "GPa", "uncertainty": 5, "source": "ASTM A29"},
+        "yield_strength": {"value": 655, "units": "MPa", "uncertainty": 30, "source": "ASTM A29"},
+        "ultimate_strength": {"value": 850, "units": "MPa", "uncertainty": 35, "source": "ASTM A29"},
+        "poisson_ratio": {"value": 0.29, "units": "-", "uncertainty": 0.01, "source": "NIST"},
+        "density": {"value": 7850, "units": "kg/m³", "uncertainty": 20, "source": "NIST"},
+        "thermal_expansion": {"value": 12.3, "units": "μm/m·K", "uncertainty": 0.3, "source": "NIST"},
+        "thermal_conductivity": {"value": 42.7, "units": "W/m·K", "uncertainty": 2, "source": "NIST"},
+        "specific_heat": {"value": 473, "units": "J/kg·K", "uncertainty": 10, "source": "NIST"}
+      },
+      "processing": {"typical_forms": ["bar", "rod", "forging", "tube"], "machinability": "good", "heat_treatable": true},
+      "applications": ["axles", "shafts", "gears", "bolts", " tooling"],
+      "certification": "ASTM_A29",
+      "provenance": "NIST_CERTIFIED"
+    },
+    "steel_a36": {
+      "designation": "A36",
+      "name": "ASTM A36 Structural Steel",
+      "category": "steel_alloy",
+      "family": "carbon_steel",
+      "properties": {
+        "elastic_modulus": {"value": 200, "units": "GPa", "uncertainty": 5, "source": "ASTM A36"},
+        "yield_strength": {"value": 250, "units": "MPa", "uncertainty": 20, "source": "ASTM A36"},
+        "ultimate_strength": {"value": 400, "units": "MPa", "uncertainty": 25, "source": "ASTM A36"},
+        "poisson_ratio": {"value": 0.29, "units": "-", "uncertainty": 0.01, "source": "NIST"},
+        "density": {"value": 7850, "units": "kg/m³", "uncertainty": 20, "source": "NIST"},
+        "thermal_expansion": {"value": 12.0, "units": "μm/m·K", "uncertainty": 0.3, "source": "NIST"},
+        "thermal_conductivity": {"value": 51.9, "units": "W/m·K", "uncertainty": 2, "source": "NIST"},
+        "specific_heat": {"value": 486, "units": "J/kg·K", "uncertainty": 10, "source": "NIST"}
+      },
+      "applications": ["structural", "bridges", "buildings", "general_construction"],
+      "certification": "ASTM_A36",
+      "provenance": "NIST_CERTIFIED"
+    },
+    "steel_304": {
+      "designation": "304",
+      "name": "AISI 304 Stainless Steel",
+      "category": "stainless_steel",
+      "family": "austenitic",
+      "properties": {
+        "elastic_modulus": {"value": 193, "units": "GPa", "uncertainty": 5, "source": "ASTM A240"},
+        "yield_strength": {"value": 215, "units": "MPa", "uncertainty": 15, "source": "ASTM A240"},
+        "ultimate_strength": {"value": 505, "units": "MPa", "uncertainty": 25, "source": "ASTM A240"},
+        "poisson_ratio": {"value": 0.29, "units": "-", "uncertainty": 0.01, "source": "NIST"},
+        "density": {"value": 8000, "units": "kg/m³", "uncertainty": 20, "source": "NIST"},
+        "thermal_expansion": {"value": 17.3, "units": "μm/m·K", "uncertainty": 0.4, "source": "NIST"},
+        "thermal_conductivity": {"value": 16.2, "units": "W/m·K", "uncertainty": 0.5, "source": "NIST"},
+        "specific_heat": {"value": 500, "units": "J/kg·K", "uncertainty": 10, "source": "NIST"}
+      },
+      "applications": ["food_processing", "chemical", "architectural", "medical"],
+      "certification": "ASTM_A240",
+      "provenance": "NIST_CERTIFIED"
+    },
+    "steel_316": {
+      "designation": "316",
+      "name": "AISI 316 Stainless Steel",
+      "category": "stainless_steel",
+      "family": "austenitic",
+      "properties": {
+        "elastic_modulus": {"value": 193, "units": "GPa", "uncertainty": 5, "source": "ASTM A240"},
+        "yield_strength": {"value": 205, "units": "MPa", "uncertainty": 15, "source": "ASTM A240"},
+        "ultimate_strength": {"value": 515, "units": "MPa", "uncertainty": 25, "source": "ASTM A240"},
+        "poisson_ratio": {"value": 0.29, "units": "-", "uncertainty": 0.01, "source": "NIST"},
+        "density": {"value": 8000, "units": "kg/m³", "uncertainty": 20, "source": "NIST"},
+        "thermal_expansion": {"value": 16.0, "units": "μm/m·K", "uncertainty": 0.4, "source": "NIST"},
+        "thermal_conductivity": {"value": 16.3, "units": "W/m·K", "uncertainty": 0.5, "source": "NIST"},
+        "specific_heat": {"value": 500, "units": "J/kg·K", "uncertainty": 10, "source": "NIST"}
+      },
+      "applications": ["marine", "chemical", "pharmaceutical", "corrosion_resistant"],
+      "certification": "ASTM_A240",
+      "provenance": "NIST_CERTIFIED"
+    },
+    "titanium_6al4v": {
+      "designation": "Ti-6Al-4V",
+      "name": "Titanium 6Al-4V (Grade 5)",
+      "category": "titanium_alloy",
+      "family": "alpha_beta",
+      "properties": {
+        "elastic_modulus": {"value": 113.8, "units": "GPa", "uncertainty": 3, "source": "ASTM F2924"},
+        "yield_strength": {"value": 880, "units": "MPa", "uncertainty": 40, "source": "ASTM F2924"},
+        "ultimate_strength": {"value": 950, "units": "MPa", "uncertainty": 40, "source": "ASTM F2924"},
+        "poisson_ratio": {"value": 0.31, "units": "-", "uncertainty": 0.01, "source": "NIST"},
+        "density": {"value": 4430, "units": "kg/m³", "uncertainty": 15, "source": "NIST"},
+        "thermal_expansion": {"value": 8.6, "units": "μm/m·K", "uncertainty": 0.2, "source": "NIST"},
+        "thermal_conductivity": {"value": 6.7, "units": "W/m·K", "uncertainty": 0.3, "source": "NIST"},
+        "specific_heat": {"value": 526, "units": "J/kg·K", "uncertainty": 10, "source": "NIST"}
+      },
+      "applications": ["aerospace", "medical_implants", "marine", "racing"],
+      "certification": "ASTM_F2924",
+      "provenance": "NIST_CERTIFIED"
+    },
+    "inconel_718": {
+      "designation": "Inconel 718",
+      "name": "Inconel 718 Nickel Superalloy",
+      "category": "nickel_alloy",
+      "family": "superalloy",
+      "properties": {
+        "elastic_modulus": {"value": 200, "units": "GPa", "uncertainty": 5, "source": "AMS 5662"},
+        "yield_strength": {"value": 1100, "units": "MPa", "uncertainty": 50, "source": "AMS 5662"},
+        "ultimate_strength": {"value": 1200, "units": "MPa", "uncertainty": 50, "source": "AMS 5662"},
+        "poisson_ratio": {"value": 0.29, "units": "-", "uncertainty": 0.01, "source": "NIST"},
+        "density": {"value": 8190, "units": "kg/m³", "uncertainty": 20, "source": "NIST"},
+        "thermal_expansion": {"value": 13.0, "units": "μm/m·K", "uncertainty": 0.3, "source": "NIST"},
+        "thermal_conductivity": {"value": 11.4, "units": "W/m·K", "uncertainty": 0.5, "source": "NIST"},
+        "specific_heat": {"value": 435, "units": "J/kg·K", "uncertainty": 10, "source": "NIST"}
+      },
+      "applications": ["turbines", "rocket_engines", "nuclear", "cryogenic"],
+      "certification": "AMS_5662",
+      "provenance": "NIST_CERTIFIED"
+    },
+    "copper_c110": {
+      "designation": "C11000",
+      "name": "Copper C110 (ETP)",
+      "category": "copper_alloy",
+      "family": "pure_copper",
+      "properties": {
+        "elastic_modulus": {"value": 115, "units": "GPa", "uncertainty": 3, "source": "ASTM B152"},
+        "yield_strength": {"value": 69, "units": "MPa", "uncertainty": 5, "source": "ASTM B152"},
+        "ultimate_strength": {"value": 220, "units": "MPa", "uncertainty": 10, "source": "ASTM B152"},
+        "poisson_ratio": {"value": 0.34, "units": "-", "uncertainty": 0.01, "source": "NIST"},
+        "density": {"value": 8960, "units": "kg/m³", "uncertainty": 20, "source": "NIST"},
+        "thermal_expansion": {"value": 16.5, "units": "μm/m·K", "uncertainty": 0.4, "source": "NIST"},
+        "thermal_conductivity": {"value": 388, "units": "W/m·K", "uncertainty": 10, "source": "NIST"},
+        "specific_heat": {"value": 385, "units": "J/kg·K", "uncertainty": 10, "source": "NIST"}
+      },
+      "applications": ["electrical", "heat_exchangers", "plumbing", "architecture"],
+      "certification": "ASTM_B152",
+      "provenance": "NIST_CERTIFIED"
+    },
+    "brass_c360": {
+      "designation": "C36000",
+      "name": "Brass C360 (Free Cutting)",
+      "category": "copper_alloy",
+      "family": "brass",
+      "properties": {
+        "elastic_modulus": {"value": 97, "units": "GPa", "uncertainty": 3, "source": "ASTM B16"},
+        "yield_strength": {"value": 200, "units": "MPa", "uncertainty": 10, "source": "ASTM B16"},
+        "ultimate_strength": {"value": 400, "units": "MPa", "uncertainty": 15, "source": "ASTM B16"},
+        "poisson_ratio": {"value": 0.33, "units": "-", "uncertainty": 0.01, "source": "NIST"},
+        "density": {"value": 8500, "units": "kg/m³", "uncertainty": 20, "source": "NIST"},
+        "thermal_expansion": {"value": 20.5, "units": "μm/m·K", "uncertainty": 0.5, "source": "NIST"},
+        "thermal_conductivity": {"value": 115, "units": "W/m·K", "uncertainty": 5, "source": "NIST"},
+        "specific_heat": {"value": 380, "units": "J/kg·K", "uncertainty": 10, "source": "NIST"}
+      },
+      "applications": ["fasteners", "fittings", "valves", "gears"],
+      "certification": "ASTM_B16",
+      "provenance": "NIST_CERTIFIED"
+    },
+    "magnesium_az31b": {
+      "designation": "AZ31B",
+      "name": "Magnesium AZ31B",
+      "category": "magnesium_alloy",
+      "family": "magnesium_aluminum_zinc",
+      "properties": {
+        "elastic_modulus": {"value": 45, "units": "GPa", "uncertainty": 2, "source": "ASTM B90"},
+        "yield_strength": {"value": 200, "units": "MPa", "uncertainty": 15, "source": "ASTM B90"},
+        "ultimate_strength": {"value": 290, "units": "MPa", "uncertainty": 15, "source": "ASTM B90"},
+        "poisson_ratio": {"value": 0.35, "units": "-", "uncertainty": 0.01, "source": "NIST"},
+        "density": {"value": 1770, "units": "kg/m³", "uncertainty": 15, "source": "NIST"},
+        "thermal_expansion": {"value": 26.0, "units": "μm/m·K", "uncertainty": 0.6, "source": "NIST"},
+        "thermal_conductivity": {"value": 96, "units": "W/m·K", "uncertainty": 4, "source": "NIST"},
+        "specific_heat": {"value": 1020, "units": "J/kg·K", "uncertainty": 20, "source": "NIST"}
+      },
+      "applications": ["automotive", "aerospace", "electronics", "lightweight"],
+      "certification": "ASTM_B90",
+      "provenance": "NIST_CERTIFIED"
+    },
+    "carbon_epoxy": {
+      "designation": "CFRP-T300",
+      "name": "Carbon Fiber/Epoxy Composite (T300)",
+      "category": "composite",
+      "family": "polymer_matrix",
+      "properties": {
+        "elastic_modulus_longitudinal": {"value": 150, "units": "GPa", "uncertainty": 10, "source": "ASTM D3039"},
+        "elastic_modulus_transverse": {"value": 10, "units": "GPa", "uncertainty": 1, "source": "ASTM D3039"},
+        "yield_strength": {"value": 1500, "units": "MPa", "uncertainty": 100, "source": "ASTM D3039"},
+        "ultimate_strength": {"value": 1800, "units": "MPa", "uncertainty": 100, "source": "ASTM D3039"},
+        "poisson_ratio_12": {"value": 0.3, "units": "-", "uncertainty": 0.02, "source": "ASTM D3039"},
+        "density": {"value": 1600, "units": "kg/m³", "uncertainty": 50, "source": "ASTM D792"},
+        "thermal_expansion_long": {"value": -0.5, "units": "μm/m·K", "uncertainty": 0.2, "source": "ASTM D696"},
+        "thermal_conductivity_long": {"value": 5, "units": "W/m·K", "uncertainty": 0.5, "source": "ASTM E1530"}
+      },
+      "applications": ["aerospace", "automotive", "sporting_goods", "wind_energy"],
+      "certification": "ASTM_D3039",
+      "provenance": "ASTM_CERTIFIED",
+      "anisotropic": true
+    }
+  }
+}

@@ -572,6 +572,186 @@ class FiPy3DThermalSolver:
         }
 
 
+@dataclass
+class ThermalStressResult:
+    """Result of thermal-structural coupling analysis"""
+    thermal_strain: np.ndarray  # ε_th = α·ΔT
+    thermal_stress: np.ndarray  # σ_th = E·ε_th (constrained)
+    total_stress: np.ndarray    # σ_total = σ_mechanical + σ_thermal
+    displacement: np.ndarray    # From thermal expansion
+    max_stress: float
+    buckling_risk: bool         # Compressive thermal stress check
+
+
+class ThermalStructuralCoupling:
+    """
+    Thermal-Structural Coupling Analysis
+    
+    Couples thermal and structural fields:
+    ε_total = ε_mechanical + ε_thermal
+    σ = C : (ε_total - α·ΔT)
+    
+    Includes:
+    - Thermal strain computation
+    - Thermoelastic stress analysis
+    - Buckling risk from compressive thermal stresses
+    """
+    
+    def __init__(self):
+        self.thermal_expansion_coeff = 12e-6  # Default steel (1/K)
+        self.elastic_modulus = 200e9  # Pa
+        self.poisson_ratio = 0.3
+    
+    def compute_thermal_strain(
+        self,
+        temperature: np.ndarray,
+        reference_temp: float = 20.0,
+        alpha: Optional[float] = None
+    ) -> np.ndarray:
+        """
+        Compute thermal strain: ε_th = α·(T - T_ref)
+        
+        Args:
+            temperature: Temperature field (°C)
+            reference_temp: Reference (stress-free) temperature
+            alpha: Thermal expansion coefficient (1/K)
+        
+        Returns:
+            Thermal strain vector [εxx, εyy, εzz, γxy, γyz, γzx]
+        """
+        alpha = alpha or self.thermal_expansion_coeff
+        delta_T = temperature - reference_temp
+        
+        # Isotropic thermal expansion
+        eps_th = alpha * delta_T
+        
+        # For 3D: εxx = εyy = εzz = α·ΔT, shear strains are zero
+        return np.array([eps_th, eps_th, eps_th, 0, 0, 0])
+    
+    def compute_thermal_stress(
+        self,
+        thermal_strain: np.ndarray,
+        E: Optional[float] = None,
+        nu: Optional[float] = None
+    ) -> np.ndarray:
+        """
+        Compute thermal stress assuming fully constrained expansion
+        
+        σ = C : ε_th
+        
+        For isotropic material with constrained expansion:
+        σxx = σyy = σzz = -E·α·ΔT / (1 - 2ν)  # Hydrostatic compression
+        """
+        E = E or self.elastic_modulus
+        nu = nu or self.poisson_ratio
+        
+        # Simplified: assume uniform thermal strain
+        eps_th = thermal_strain[0]  # εxx component
+        
+        # Fully constrained thermal stress
+        # σ = -E·α·ΔT / (1 - 2ν) for each direction
+        factor = -E / (1 - 2 * nu)
+        sigma_th = factor * eps_th
+        
+        return np.array([sigma_th, sigma_th, sigma_th, 0, 0, 0])
+    
+    def couple_thermal_structural(
+        self,
+        thermal_result: Dict[str, Any],
+        mechanical_stress: Optional[np.ndarray] = None,
+        material_props: Optional[Dict] = None
+    ) -> ThermalStressResult:
+        """
+        Couple thermal and structural analysis results
+        
+        Args:
+            thermal_result: Output from thermal analysis (temperature field)
+            mechanical_stress: Stress from mechanical loads
+            material_props: Material properties dict
+        
+        Returns:
+            Combined thermal-structural result
+        """
+        material_props = material_props or {}
+        alpha = material_props.get("thermal_expansion", self.thermal_expansion_coeff)
+        E = material_props.get("elastic_modulus", self.elastic_modulus) * 1e9  # Convert GPa to Pa
+        nu = material_props.get("poisson_ratio", self.poisson_ratio)
+        
+        # Get temperature field
+        T = thermal_result.get("temperature", np.array([20.0]))
+        if isinstance(T, (list, np.ndarray)):
+            T_max = np.max(T)
+        else:
+            T_max = float(T)
+        
+        # Compute thermal strain
+        eps_th = self.compute_thermal_strain(T, reference_temp=20.0, alpha=alpha)
+        
+        # Compute thermal stress (constrained expansion)
+        sigma_th = self.compute_thermal_stress(eps_th, E, nu)
+        
+        # Add mechanical stress if provided
+        if mechanical_stress is not None:
+            sigma_total = sigma_th + mechanical_stress
+        else:
+            sigma_total = sigma_th
+        
+        # Check for compressive thermal stress (buckling risk)
+        # Negative stress indicates compression
+        min_stress = np.min(sigma_total[:3])  # Check normal stresses
+        buckling_risk = min_stress < -0.5 * E * 1e-3  # Threshold: 0.05% yield
+        
+        # Estimate displacement from free expansion
+        # δ = α·L·ΔT (simplified)
+        delta_T_avg = np.mean(T) - 20.0 if isinstance(T, np.ndarray) else T - 20.0
+        displacement = alpha * delta_T_avg * 1.0  # Assume unit length
+        
+        return ThermalStressResult(
+            thermal_strain=eps_th,
+            thermal_stress=sigma_th,
+            total_stress=sigma_total,
+            displacement=np.full(3, displacement),
+            max_stress=np.max(np.abs(sigma_total)),
+            buckling_risk=buckling_risk
+        )
+    
+    def analyze_thermal_buckling(
+        self,
+        thermal_stress: np.ndarray,
+        geometry: Dict[str, Any],
+        material: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Assess buckling risk from thermal stresses
+        
+        Thermal buckling occurs when compressive thermal stresses
+        exceed critical buckling load.
+        """
+        E = material.get("elastic_modulus", 200) * 1e9  # Pa
+        thickness = geometry.get("thickness", 0.01)  # m
+        length = geometry.get("length", 1.0)  # m
+        
+        # Critical buckling stress for plate (simplified)
+        # σ_cr = k·π²·E·t² / (12·(1-ν²)·b²)
+        k = 4.0  # Buckling coefficient for simply supported plate
+        nu = material.get("poisson_ratio", 0.3)
+        
+        sigma_cr = k * np.pi**2 * E * thickness**2 / (12 * (1 - nu**2) * length**2)
+        
+        # Check compressive thermal stress
+        sigma_min = np.min(thermal_stress[:3])  # Minimum principal stress
+        
+        safety_factor = sigma_cr / abs(sigma_min) if sigma_min < 0 else float('inf')
+        
+        return {
+            "critical_stress": sigma_cr,
+            "thermal_stress_compressive": sigma_min,
+            "safety_factor": safety_factor,
+            "buckling_risk": safety_factor < 2.0,  # SF < 2 is risky
+            "recommendation": "Add expansion joints" if safety_factor < 2.0 else "Acceptable"
+        }
+
+
 class ProductionThermalAgent:
     """
     Production-grade thermal analysis agent
@@ -599,7 +779,11 @@ class ProductionThermalAgent:
         # Radiation calculator
         self.radiation = RadiationCalculator()
         
+        # Thermal-structural coupling
+        self.thermal_structural = ThermalStructuralCoupling()
+        
         logger.info(f"ProductionThermalAgent initialized (CoolProp: {self.has_coolprop})")
+        logger.info("Thermal-structural coupling enabled")
     
     async def analyze(
         self,

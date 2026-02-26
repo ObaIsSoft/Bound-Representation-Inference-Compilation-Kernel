@@ -1,0 +1,42 @@
+{
+  "checkpoint_id": "de23d113-0e00-49d2-bc4f-f22235f46eff",
+  "project_id": "test-001",
+  "phase": "INITIAL",
+  "state_hash": "d9adefbe6b1904c374aaa02aa58d8a46fded958274127b717c491e58bf400322",
+  "created_at": "2026-02-26T22:07:01.263495",
+  "description": "Project creation",
+  "parent_id": null,
+  "has_snapshot": true,
+  "isa_snapshot": {
+    "project_id": "test-001",
+    "revision": 1,
+    "environment_kernel": "EARTH_AERO",
+    "domains": {
+      "dynamics": {},
+      "structural": {},
+      "propulsion": {},
+      "avionics": {},
+      "thermal": {},
+      "electrical": {},
+      "hydraulic": {},
+      "pneumatic": {},
+      "software": {},
+      "requirements": {
+        "user_intent": {
+          "magnitude": 0.0,
+          "unit": "",
+          "locked": true,
+          "source": "USER",
+          "status": "VALID",
+          "dependencies": [],
+          "agent_owner": "USER"
+        }
+      }
+    },
+    "components": {},
+    "tags": [
+      "auto_created",
+      "env:EARTH_AERO"
+    ]
+  }
+}

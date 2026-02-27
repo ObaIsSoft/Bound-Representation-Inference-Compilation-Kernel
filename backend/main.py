@@ -39,6 +39,9 @@ import logging
 # --- Controllers ---
 from backend.controllers.handshake_controller import HandshakeController
 
+# --- New ProjectOrchestrator API (Phase 12+) ---
+from backend.api import orchestrator_router
+
 logger = logging.getLogger(__name__)
 
 # --- Phase 10: Global Agent Registry ---
@@ -54,6 +57,9 @@ async def lifespan(app: FastAPI):
     logger.info("BRICK OS API Shutting down...")
 
 app = FastAPI(title="BRICK OS API", version="0.1.0", lifespan=lifespan)
+
+# --- New ProjectOrchestrator API Routes ---
+app.include_router(orchestrator_router)
 
 # --- Project Manager Init ---
 from backend.managers.project_manager import ProjectManager

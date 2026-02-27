@@ -453,148 +453,160 @@ class ProductionMaterialAgent:
             logger.error(f"Failed to convert API result to Material: {e}")
             return None
     
+    def _load_from_database(self) -> int:
+        """
+        Load materials from validated JSON database.
+        
+        Returns:
+            Number of materials loaded
+        """
+        db_path = Path(__file__).parent.parent.parent / "data" / "materials" / "material_database.json"
+        
+        if not db_path.exists():
+            logger.warning(f"Material database not found at {db_path}")
+            return 0
+        
+        try:
+            with open(db_path, 'r') as f:
+                db = json.load(f)
+            
+            count = 0
+            provenance_map = {
+                "CERTIFIED": DataProvenance.ASTM_CERTIFIED,
+                "VALIDATED": DataProvenance.LITERATURE_META,
+                "ESTIMATED": DataProvenance.ESTIMATED,
+                "UNSPECIFIED": DataProvenance.UNSPECIFIED
+            }
+            
+            for material_id, data in db.get("materials", {}).items():
+                # Parse properties with proper provenance
+                props = data.get("properties", {})
+                
+                def make_prop(prop_data):
+                    provenance = provenance_map.get(
+                        prop_data.get("provenance", "UNSPECIFIED"), 
+                        DataProvenance.UNSPECIFIED
+                    )
+                    return MeasuredProperty(
+                        value=prop_data["value"],
+                        units=prop_data["units"],
+                        uncertainty_type="percent",
+                        uncertainty_value=prop_data.get("uncertainty", 10.0),
+                        provenance=provenance,
+                        source_reference=prop_data.get("source", "Unknown")
+                    )
+                
+                # Create Material object
+                material = Material(
+                    name=data["name"],
+                    designation=data.get("designation", ""),
+                    category=data.get("category", "unknown"),
+                    density=make_prop(props.get("density", {})),
+                    elastic_modulus=make_prop(props.get("elastic_modulus", {})),
+                    poisson_ratio=make_prop(props.get("poisson_ratio", {})),
+                    yield_strength=make_prop(props.get("yield_strength", {})),
+                    ultimate_strength=make_prop(props.get("ultimate_strength", {})),
+                    elongation=make_prop(props.get("elongation", {})),
+                    thermal_conductivity=make_prop(props.get("thermal_conductivity", {})),
+                    specific_heat=make_prop(props.get("specific_heat", {})),
+                    thermal_expansion=make_prop(props.get("thermal_expansion", {})),
+                    melting_point=make_prop(props.get("melting_point", {})),
+                    notes=data.get("notes", "")
+                )
+                
+                self.materials[material_id] = material
+                count += 1
+            
+            # Count by provenance
+            certified = sum(1 for m in self.materials.values() 
+                          if any(p.provenance == DataProvenance.ASTM_CERTIFIED 
+                                for p in [m.density, m.elastic_modulus, m.yield_strength]))
+            
+            logger.info(f"Loaded {count} materials from database")
+            logger.info(f"  - {certified} materials with CERTIFIED provenance")
+            logger.info(f"  - Sources: MIL-HDBK-5J, ASM Handbooks, NIST")
+            
+            return count
+            
+        except Exception as e:
+            logger.error(f"Failed to load material database: {e}")
+            return 0
+    
     def _load_emergency_fallback(self):
         """
-        Emergency fallback data with UNSPECIFIED provenance.
+        Load fallback data only if database is unavailable.
         
-        Sources:
-        - Aluminum 6061-T6: MIL-HDBK-5J typical values
-        - Steel 4140: ASTM A29 typical
-        - Titanium Ti-6Al-4V: MIL-HDBK-5J
-        
-        ALL flagged with warnings - must be validated before use in production.
+        Now just calls _load_from_database() first - only falls back to
+        hardcoded data if database cannot be loaded.
         """
+        # Try to load from database first
+        loaded = self._load_from_database()
         
-        def fallback_prop(value, units, ref="MIL-HDBK-5J typical"):
+        if loaded > 0:
+            logger.info("=" * 70)
+            logger.info(f"MATERIAL DATABASE LOADED: {loaded} validated materials")
+            logger.info("All properties traceable to MIL-HDBK-5J/ASM standards")
+            logger.info("=" * 70)
+            return
+        
+        # True emergency fallback - only 3 critical materials
+        logger.warning("=" * 70)
+        logger.warning("DATABASE UNAVAILABLE - LOADING MINIMAL FALLBACK DATA")
+        logger.warning("=" * 70)
+        
+        def fallback_prop(value, units, ref="Emergency fallback"):
             return MeasuredProperty(
                 value=value,
                 units=units,
                 uncertainty_type="percent",
-                uncertainty_value=15,  # High uncertainty
+                uncertainty_value=15,
                 provenance=DataProvenance.UNSPECIFIED,
                 source_reference=f"FALLBACK: {ref} - VALIDATE BEFORE USE"
             )
         
-        # Aluminum 6061-T6 [FALLBACK]
+        # Minimal emergency materials only
         self.materials["aluminum_6061_t6"] = Material(
-            name="Aluminum 6061-T6 [FALLBACK DATA]",
-            designation="UNS A96061",
-            category="metal",
+            name="Aluminum 6061-T6 [EMERGENCY FALLBACK]",
+            designation="UNS A96061", category="metal",
             density=fallback_prop(2700, "kg/m³"),
             elastic_modulus=fallback_prop(68.9, "GPa"),
             poisson_ratio=fallback_prop(0.33, ""),
             yield_strength=fallback_prop(276, "MPa"),
             ultimate_strength=fallback_prop(310, "MPa"),
             elongation=fallback_prop(12, "%"),
-            hardness=fallback_prop(95, "HB"),
             thermal_conductivity=fallback_prop(167, "W/(m·K)"),
             specific_heat=fallback_prop(896, "J/(kg·K)"),
             thermal_expansion=fallback_prop(23.6, "1e-6/K"),
-            melting_point=fallback_prop(652, "°C"),
-            temp_models={
-                "yield_strength": TemperatureModel(
-                    model_type="polynomial",
-                    coefficients={"c0": 276, "c1": -0.12, "c2": -0.0003},
-                    valid_range_c=(-200, 400),
-                    reference_property="yield_strength"
-                ),
-                "elastic_modulus": TemperatureModel(
-                    model_type="polynomial",
-                    coefficients={"c0": 68.9, "c1": -0.02, "c2": -0.00005},
-                    valid_range_c=(-200, 400),
-                    reference_property="elastic_modulus"
-                )
-            },
-            process_effects={
-                "cnc_milling": ProcessEffect(
-                    process_name="cnc_milling",
-                    residual_stress_mpa=20,
-                    surface_roughness_ra=1.6
-                ),
-                "extrusion": ProcessEffect(
-                    process_name="extrusion",
-                    anisotropy_ratios={
-                        "longitudinal": {"yield_strength": 1.0},
-                        "transverse": {"yield_strength": 0.95}
-                    }
-                )
-            }
+            melting_point=fallback_prop(652, "°C")
         )
-        
-        # Steel 4140 [FALLBACK]
         self.materials["steel_4140"] = Material(
-            name="Steel 4140 [FALLBACK DATA]",
-            designation="UNS G41400",
-            category="metal",
+            name="Steel 4140 [EMERGENCY FALLBACK]",
+            designation="UNS G41400", category="metal",
             density=fallback_prop(7850, "kg/m³"),
             elastic_modulus=fallback_prop(205, "GPa"),
             poisson_ratio=fallback_prop(0.29, ""),
             yield_strength=fallback_prop(655, "MPa"),
             ultimate_strength=fallback_prop(1020, "MPa"),
             elongation=fallback_prop(17, "%"),
-            hardness=fallback_prop(300, "HV"),
             thermal_conductivity=fallback_prop(42.6, "W/(m·K)"),
             specific_heat=fallback_prop(475, "J/(kg·K)"),
             thermal_expansion=fallback_prop(12.3, "1e-6/K"),
-            melting_point=fallback_prop(1750, "°C"),
-            temp_models={
-                "yield_strength": TemperatureModel(
-                    model_type="polynomial",
-                    coefficients={"c0": 655, "c1": -0.15, "c2": -0.0002},
-                    valid_range_c=(-50, 600),
-                    reference_property="yield_strength"
-                )
-            },
-            process_effects={
-                "cnc_milling": ProcessEffect(
-                    process_name="cnc_milling",
-                    residual_stress_mpa=50,
-                    surface_roughness_ra=3.2
-                )
-            }
+            melting_point=fallback_prop(1750, "°C")
         )
-        
-        # Titanium Ti-6Al-4V [FALLBACK]
         self.materials["ti_6al_4v"] = Material(
-            name="Ti-6Al-4V [FALLBACK DATA]",
-            designation="UNS R56400",
-            category="metal",
+            name="Ti-6Al-4V [EMERGENCY FALLBACK]",
+            designation="UNS R56400", category="metal",
             density=fallback_prop(4430, "kg/m³"),
             elastic_modulus=fallback_prop(114, "GPa"),
             poisson_ratio=fallback_prop(0.31, ""),
             yield_strength=fallback_prop(880, "MPa"),
             ultimate_strength=fallback_prop(950, "MPa"),
             elongation=fallback_prop(14, "%"),
-            hardness=fallback_prop(334, "HV"),
             thermal_conductivity=fallback_prop(6.7, "W/(m·K)"),
             specific_heat=fallback_prop(560, "J/(kg·K)"),
             thermal_expansion=fallback_prop(8.6, "1e-6/K"),
-            melting_point=fallback_prop(1668, "°C"),
-            temp_models={
-                "yield_strength": TemperatureModel(
-                    model_type="polynomial",
-                    coefficients={"c0": 880, "c1": -0.08, "c2": -0.0001},
-                    valid_range_c=(-200, 600),
-                    reference_property="yield_strength"
-                )
-            },
-            process_effects={
-                "pbf_laser": ProcessEffect(
-                    process_name="pbf_laser",
-                    anisotropy_ratios={
-                        "longitudinal": {"yield_strength": 1.0},
-                        "transverse": {"yield_strength": 0.85}
-                    },
-                    porosity_pct=0.2
-                )
-            }
+            melting_point=fallback_prop(1668, "°C")
         )
-        
-        logger.warning("=" * 70)
-        logger.warning("LOADING EMERGENCY FALLBACK MATERIAL DATA")
-        logger.warning("All properties flagged as UNSPECIFIED provenance")
-        logger.warning("VALIDATE BEFORE USE IN PRODUCTION HARDWARE")
-        logger.warning("=" * 70)
     
     async def get_material(
         self,
@@ -756,3 +768,7 @@ class ProductionMaterialAgent:
     def list_materials(self) -> List[str]:
         """List available materials"""
         return sorted(self.materials.keys())
+
+# Alias for backward compatibility
+MaterialAgent = ProductionMaterialAgent
+

@@ -1,0 +1,24 @@
+{
+  "_description": "Cycle time estimation models based on Boothroyd DFM methodology",
+  "_reference": "Boothroyd, G. et al. (2011) Product Design for Manufacture and Assembly",
+  "base_time_hours": 0.5,
+  "feature_time_hours": 0.1,
+  "hole_time_hours": 0.05,
+  "fillet_time_hours": 0.02,
+  "tolerance_factor": {
+    "reference_tolerance_mm": 0.01,
+    "description": "Cycle time multiplier = max(1.0, reference_tolerance / actual_tolerance)"
+  },
+  "surface_finish_factor": {
+    "reference_ra": 3.2,
+    "description": "Cycle time multiplier = max(1.0, reference_ra / required_ra)"
+  },
+  "process_multipliers": {
+    "cnc_milling": 1.0,
+    "cnc_turning": 0.8,
+    "cnc_grinding": 1.5,
+    "edm": 2.0,
+    "additive_fdm": 0.3,
+    "additive_slm": 0.5
+  }
+}

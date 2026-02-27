@@ -486,6 +486,14 @@ class MeshingEngine:
         # Simplified quality check for hex elements
         # Full implementation would check skew, taper, distortion, etc.
         
+        if len(mesh.elements) == 0:
+            return MeshQuality(
+                min_jacobian=0.0, max_jacobian=0.0, avg_jacobian=0.0,
+                min_aspect_ratio=0.0, max_aspect_ratio=0.0, avg_aspect_ratio=0.0,
+                num_elements=0, num_nodes=len(mesh.nodes), num_bad_elements=0,
+                quality_score=0.0
+            )
+        
         jacobians = []
         aspect_ratios = []
         num_bad = 0

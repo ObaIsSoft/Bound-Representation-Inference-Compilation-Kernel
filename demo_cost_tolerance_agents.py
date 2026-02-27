@@ -2,19 +2,17 @@
 """
 Demo: CostAgent and ToleranceAgent Production Implementation
 
-This demonstrates the production-ready cost estimation and tolerance
-analysis capabilities of BRICK OS.
+Demonstrates production-ready cost estimation and tolerance analysis.
 """
 
 import asyncio
 import sys
 sys.path.insert(0, '/Users/obafemi/Documents/dev/brick')
 
-from backend.agents.cost_agent_production import (
-    ProductionCostAgent,
-    ManufacturingProcess,
-    quick_cost_estimate
-)
+from unittest.mock import AsyncMock, MagicMock
+from datetime import datetime, timedelta
+
+# ToleranceAgent (works without external services)
 from backend.agents.tolerance_agent_production import (
     ProductionToleranceAgent,
     ToleranceSpec,
@@ -23,97 +21,20 @@ from backend.agents.tolerance_agent_production import (
     analyze_feature_position
 )
 
-
-async def demo_cost_agent():
-    """Demonstrate CostAgent capabilities."""
-    print("=" * 60)
-    print("COST AGENT DEMO")
-    print("=" * 60)
-    
-    agent = ProductionCostAgent(use_ml=False)
-    
-    # Example 1: Aluminum CNC part
-    print("\n1. Aluminum 6061 CNC Milled Part")
-    print("-" * 40)
-    
-    geom = agent.calculate_geometry_complexity(
-        surface_area_mm2=15000,
-        volume_mm3=150000,
-        bounding_box_volume_mm3=200000,
-        n_features=8,
-        n_holes=4,
-        tightest_tolerance_mm=0.05
-    )
-    
-    estimate = await agent.estimate_cost(
-        geometry=geom,
-        material_key="aluminum_6061",
-        process=ManufacturingProcess.CNC_MILLING,
-        quantity=50,
-        region="us"
-    )
-    
-    print(f"Quantity: 50 parts")
-    print(f"Material: Aluminum 6061")
-    print(f"Process: CNC Milling (US rates)")
-    print(f"\nTotal Cost: ${estimate.total_cost:,.2f}")
-    print(f"Cost per part: ${estimate.total_cost/50:.2f}")
-    print(f"\nCost Breakdown:")
-    for component, cost in estimate.breakdown.to_dict().items():
-        if cost > 0:
-            pct = cost / estimate.total_cost * 100
-            print(f"  {component:12s}: ${cost:8,.2f} ({pct:4.1f}%)")
-    
-    print(f"\nConfidence Interval (95%): [${estimate.confidence_interval[0]:.2f}, ${estimate.confidence_interval[1]:.2f}]")
-    print(f"Method: {estimate.method}")
-    if estimate.warnings:
-        print(f"\nWarnings:")
-        for w in estimate.warnings:
-            print(f"  ⚠️  {w}")
-    
-    # Example 2: Quick estimate
-    print("\n\n2. Quick Cost Estimate")
-    print("-" * 40)
-    
-    result = await quick_cost_estimate(
-        volume_cm3=25.0,
-        material="steel_4140",
-        process="cnc_milling",
-        quantity=100
-    )
-    
-    print(f"Volume: 25 cm³, Material: Steel 4140, Qty: 100")
-    print(f"Total Cost: ${result['total_cost_usd']:,.2f}")
-    print(f"Cost per part: ${result['cost_per_part_usd']:.2f}")
-    
-    # Example 3: Quantity scaling
-    print("\n\n3. Quantity Scaling Analysis")
-    print("-" * 40)
-    
-    quantities = [1, 10, 50, 100, 500, 1000]
-    print(f"{'Qty':>6s} {'Total':>12s} {'Per Part':>12s}")
-    print("-" * 32)
-    
-    for qty in quantities:
-        est = await agent.estimate_cost(
-            geometry=geom,
-            material_key="aluminum_6061",
-            process=ManufacturingProcess.CNC_MILLING,
-            quantity=qty
-        )
-        print(f"{qty:>6d} ${est.total_cost:>10,.0f} ${est.total_cost/qty:>10.2f}")
+# CostAgent (requires mocked services for demo)
+from backend.agents.cost_agent_production import ProductionCostAgent, ManufacturingProcess
 
 
 def demo_tolerance_agent():
-    """Demonstrate ToleranceAgent capabilities."""
-    print("\n\n" + "=" * 60)
+    """Demonstrate ToleranceAgent - fully functional without external services."""
+    print("=" * 60)
     print("TOLERANCE AGENT DEMO")
     print("=" * 60)
     
     agent = ProductionToleranceAgent(default_mc_iterations=10000)
     
     # Example 1: Simple RSS stack
-    print("\n1. Simple RSS Tolerance Stack")
+    print("\n1. RSS Tolerance Stack Analysis")
     print("-" * 40)
     
     tolerances = [
@@ -134,7 +55,7 @@ def demo_tolerance_agent():
     print(f"  RSS Tolerance: ±{result.rss.rss_tolerance:.3f} mm")
     print(f"  Upper Limit: {result.rss.upper_limit:.3f} mm")
     print(f"  Lower Limit: {result.rss.lower_limit:.3f} mm")
-    print(f"  Cpk: {result.rss.cpk:.2f}" if result.rss.cpk else "  Cpk: N/A")
+    print(f"  Cpk: {result.rss.cpk:.2f}")
     
     print(f"\nMonte Carlo (10,000 iterations):")
     print(f"  Mean: {result.monte_carlo.mean:.3f} mm")
@@ -145,35 +66,17 @@ def demo_tolerance_agent():
     print(f"\nWorst Case:")
     print(f"  Upper: {result.worst_case.upper_limit:.3f} mm")
     print(f"  Lower: {result.worst_case.lower_limit:.3f} mm")
-    print(f"  Range: ±{result.worst_case.tolerance_range:.3f} mm")
     
     print(f"\nPasses Specification: {'✅ Yes' if result.passes_specification else '❌ No'}")
     
-    # Example 2: Sensitivity analysis
-    print("\n\n2. Tolerance Sensitivity Analysis")
-    print("-" * 40)
-    
-    sens = agent.sensitivity_analysis(
-        tolerances,
-        design_target=(90.0, 0.3),
-        variation_percent=20.0
-    )
-    
-    print(f"{'Tolerance':<15s} {'Current':>10s} {'Impact':>10s} {'Rank':>6s}")
-    print("-" * 45)
-    for s in sens["tolerance_sensitivities"]:
-        print(f"{s['tolerance_name']:<15s} {s['baseline_yield']:>9.1f}% {s['yield_improvement']:+>9.1f}% {s['sensitivity_rank']:>6d}")
-    
-    print(f"\nMost Critical: {sens['most_critical']}")
-    
-    # Example 3: GD&T True Position
-    print("\n\n3. GD&T True Position Analysis (ASME Y14.5)")
+    # Example 2: GD&T True Position
+    print("\n\n2. GD&T True Position Analysis (ASME Y14.5)")
     print("-" * 40)
     
     position = analyze_feature_position(
         x_deviation=0.08,
         y_deviation=0.05,
-        position_tolerance=0.25,  # Diameter
+        position_tolerance=0.25,
         mmc_bonus=0.05
     )
     
@@ -184,35 +87,119 @@ def demo_tolerance_agent():
     print(f"\nWithin Tolerance: {'✅ Yes' if position['within_tolerance'] else '❌ No'}")
     print(f"Utilization: {position['utilization_percent']:.1f}%")
     print(f"Remaining: {position['remaining_tolerance']:.4f} mm")
+
+
+async def demo_cost_agent_mocked():
+    """Demonstrate CostAgent with mocked services (real data unavailable in demo)."""
+    print("\n\n" + "=" * 60)
+    print("COST AGENT DEMO (with mocked services)")
+    print("=" * 60)
     
-    # Example 4: Quick RSS
-    print("\n\n4. Quick RSS Analysis")
+    agent = ProductionCostAgent(use_ml=False)
+    agent._initialized = True
+    
+    # Mock pricing service
+    from backend.services.pricing_service import PricePoint
+    mock_price = PricePoint(
+        price=3.50,
+        currency="USD",
+        unit="kg",
+        source="metals-api",
+        timestamp=datetime.now(),
+        expires_at=datetime.now() + timedelta(hours=24)
+    )
+    agent.pricing_service = AsyncMock()
+    agent.pricing_service.get_material_price = AsyncMock(return_value=mock_price)
+    
+    # Mock supabase
+    agent.supabase = AsyncMock()
+    agent.supabase.get_material = AsyncMock(return_value={
+        "density_kg_m3": 2700,
+        "cost_per_kg_usd": 3.50
+    })
+    agent.supabase.get_manufacturing_rates = AsyncMock(return_value={
+        "machine_hourly_rate_usd": 85.0,
+        "setup_cost_usd": 150.0,
+        "setup_time_hr": 2.0,
+        "data_source": "supplier_quote"
+    })
+    
+    # Example 1: Aluminum CNC part
+    print("\n1. Aluminum 6061 CNC Milled Part")
     print("-" * 40)
     
-    quick = quick_rss_analysis(
-        [("A", 20.0, 0.1), ("B", 15.0, 0.08), ("C", 10.0, 0.05)],
-        target_mm=(45.0, 0.3)
+    estimate = await agent.estimate_cost_abc(
+        volume_mm3=150000,  # 150 cm³
+        material_key="aluminum_6061",
+        process=ManufacturingProcess.CNC_MILLING,
+        quantity=50,
+        n_features=8,
+        n_holes=4,
+        tightest_tolerance_mm=0.05,
+        region="us"
     )
     
-    print(f"Stack: 20 ± 0.1 + 15 ± 0.08 + 10 ± 0.05 = 45 ± 0.3 (target)")
-    print(f"\nRSS: {quick['nominal_stack']:.3f} ± {quick['rss_tolerance']:.3f} mm")
-    print(f"Worst Case: ±{(quick['worst_case_upper'] - quick['worst_case_lower'])/2:.3f} mm")
-    print(f"Predicted Yield: {100 - quick['percent_outside_spec']:.2f}%")
-    print(f"Passes: {'✅ Yes' if quick['passes_spec'] else '❌ No'}")
+    print(f"Quantity: 50 parts")
+    print(f"Volume: 150 cm³")
+    print(f"Material: Aluminum 6061 ($3.50/kg from {estimate.data_sources.get('material_price', 'unknown')})")
+    print(f"Process: CNC Milling (US rates from {estimate.data_sources.get('manufacturing_rate', 'unknown')})")
+    print(f"\nTotal Cost: ${estimate.total_cost:,.2f}")
+    print(f"Cost per part: ${estimate.total_cost/50:.2f}")
+    print(f"Confidence: {estimate.confidence*100:.0f}%")
+    print(f"\nCost Breakdown:")
+    for component, cost in estimate.breakdown.to_dict().items():
+        if cost > 0:
+            pct = cost / estimate.total_cost * 100
+            print(f"  {component:12s}: ${cost:8,.2f} ({pct:4.1f}%)")
     
-    print("\n\nTop Contributors:")
-    for c in quick['contributions'][:3]:
-        print(f"  {c['tolerance']}: {c['contribution_percent']:.1f}%")
+    # Example 2: Quantity scaling
+    print("\n\n2. Quantity Scaling Analysis")
+    print("-" * 40)
+    
+    quantities = [1, 10, 50, 100, 500]
+    print(f"{'Qty':>6s} {'Total':>12s} {'Per Part':>12s}")
+    print("-" * 32)
+    
+    for qty in quantities:
+        est = await agent.estimate_cost_abc(
+            volume_mm3=150000,
+            material_key="aluminum_6061",
+            process=ManufacturingProcess.CNC_MILLING,
+            quantity=qty,
+            n_features=8,
+            n_holes=4
+        )
+        print(f"{qty:>6d} ${est.total_cost:>10,.0f} ${est.total_cost/qty:>10.2f}")
+    
+    print("\n\n3. Fail-Fast Example (missing data)")
+    print("-" * 40)
+    
+    # Show fail-fast behavior
+    agent.pricing_service.get_material_price = AsyncMock(return_value=None)
+    agent.supabase.get_material = AsyncMock(return_value=None)
+    
+    try:
+        await agent.get_material_price("unobtainium_999")
+    except ValueError as e:
+        print(f"Expected error for unknown material:")
+        print(f"  {str(e).split(chr(10))[0]}")
 
 
 async def main():
     """Run all demos."""
-    await demo_cost_agent()
     demo_tolerance_agent()
+    await demo_cost_agent_mocked()
     
     print("\n\n" + "=" * 60)
     print("DEMO COMPLETE")
     print("=" * 60)
+    print("\nKey Features Demonstrated:")
+    print("  ✅ RSS tolerance stack-up (ISO/ASME standard)")
+    print("  ✅ Monte Carlo simulation (10,000 iterations)")
+    print("  ✅ GD&T true position per ASME Y14.5")
+    print("  ✅ Activity-Based Costing with external data")
+    print("  ✅ Fail-fast error handling (no hardcoded fallbacks)")
+    print("  ✅ Data provenance tracking")
 
 
 if __name__ == "__main__":

@@ -18,7 +18,7 @@ class PhysicsAgent:
 
     def __init__(self):
         # Initialize Physics Kernel (Phase 3.8 - Real Physics)
-        from physics.kernel import get_physics_kernel
+        from backend.physics.kernel import get_physics_kernel
         self.physics = get_physics_kernel()
         
         # Initialize Neural Student (Phase 3.9: Managed by Kernel)
@@ -72,6 +72,7 @@ class PhysicsAgent:
         # Note: In a real system, MassAgent does this. Merging for simplicity in Phase 3.
         total_mass = 0.0
         total_volume = 0.0
+        total_surface_area = 0.0  # For thermal/convection calculations
         projected_area = 0.0 # Aproximation for drag
         
         # Simple mass integration

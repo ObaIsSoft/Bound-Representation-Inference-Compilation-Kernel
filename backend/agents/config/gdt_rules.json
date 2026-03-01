@@ -1,0 +1,351 @@
+{
+  "validation_rules": {
+    "position_tolerance": {
+      "min_value": 0.025,
+      "max_value": 2.0,
+      "units": "mm"
+    },
+    "concentricity_tolerance": {
+      "min_value": 0.01,
+      "max_value": 1.0,
+      "units": "mm"
+    },
+    "parallelism_tolerance": {
+      "min_value": 0.01,
+      "max_value": 0.5,
+      "units": "mm"
+    },
+    "perpendicularity_tolerance": {
+      "min_value": 0.01,
+      "max_value": 0.5,
+      "units": "mm"
+    },
+    "flatness_tolerance": {
+      "min_value": 0.005,
+      "max_value": 0.2,
+      "units": "mm"
+    },
+    "straightness_tolerance": {
+      "min_value": 0.005,
+      "max_value": 0.5,
+      "units": "mm"
+    },
+    "circularity_tolerance": {
+      "min_value": 0.005,
+      "max_value": 0.2,
+      "units": "mm"
+    },
+    "cylindricity_tolerance": {
+      "min_value": 0.01,
+      "max_value": 0.5,
+      "units": "mm"
+    },
+    "angularity_tolerance": {
+      "min_value": 0.05,
+      "max_value": 1.0,
+      "units": "degrees"
+    },
+    "runout_tolerance": {
+      "circular_min": 0.01,
+      "circular_max": 0.5,
+      "total_min": 0.02,
+      "total_max": 1.0,
+      "units": "mm"
+    },
+    "profile_tolerance": {
+      "line_min": 0.01,
+      "line_max": 0.5,
+      "surface_min": 0.02,
+      "surface_max": 1.0,
+      "units": "mm"
+    }
+  },
+  "tolerance_types": {
+    "position": {
+      "symbol": "⌖",
+      "category": "location",
+      "datum_required": true,
+      "material_condition": ["RFS", "MMC", "LMC"]
+    },
+    "concentricity": {
+      "symbol": "◎",
+      "category": "location",
+      "datum_required": true,
+      "material_condition": ["RFS"]
+    },
+    "symmetry": {
+      "symbol": "⌯",
+      "category": "location",
+      "datum_required": true,
+      "material_condition": ["RFS"]
+    },
+    "parallelism": {
+      "symbol": "∥",
+      "category": "orientation",
+      "datum_required": true,
+      "material_condition": ["RFS", "MMC", "LMC"]
+    },
+    "perpendicularity": {
+      "symbol": "⟂",
+      "category": "orientation",
+      "datum_required": true,
+      "material_condition": ["RFS", "MMC", "LMC"]
+    },
+    "angularity": {
+      "symbol": "∠",
+      "category": "orientation",
+      "datum_required": true,
+      "material_condition": ["RFS", "MMC", "LMC"]
+    },
+    "flatness": {
+      "symbol": "□",
+      "category": "form",
+      "datum_required": false,
+      "material_condition": ["RFS"]
+    },
+    "straightness": {
+      "symbol": "⎯",
+      "category": "form",
+      "datum_required": false,
+      "material_condition": ["RFS"]
+    },
+    "circularity": {
+      "symbol": "○",
+      "category": "form",
+      "datum_required": false,
+      "material_condition": ["RFS"]
+    },
+    "cylindricity": {
+      "symbol": "⌭",
+      "category": "form",
+      "datum_required": false,
+      "material_condition": ["RFS"]
+    },
+    "circular_runout": {
+      "symbol": "↗",
+      "category": "runout",
+      "datum_required": true,
+      "material_condition": ["RFS"]
+    },
+    "total_runout": {
+      "symbol": "↗↗",
+      "category": "runout",
+      "datum_required": true,
+      "material_condition": ["RFS"]
+    },
+    "line_profile": {
+      "symbol": "⌒",
+      "category": "profile",
+      "datum_required": false,
+      "material_condition": ["RFS"]
+    },
+    "surface_profile": {
+      "symbol": "⌓",
+      "category": "profile",
+      "datum_required": false,
+      "material_condition": ["RFS"]
+    }
+  },
+  "process_capabilities": {
+    "cnc_milling": {
+      "position": 0.025,
+      "concentricity": 0.02,
+      "parallelism": 0.01,
+      "perpendicularity": 0.01,
+      "angularity": 0.05,
+      "flatness": 0.005,
+      "straightness": 0.005,
+      "circularity": 0.005,
+      "cylindricity": 0.01,
+      "circular_runout": 0.01,
+      "total_runout": 0.02,
+      "line_profile": 0.01,
+      "surface_profile": 0.02
+    },
+    "cnc_turning": {
+      "position": 0.02,
+      "concentricity": 0.01,
+      "parallelism": 0.008,
+      "perpendicularity": 0.008,
+      "angularity": 0.05,
+      "flatness": 0.005,
+      "straightness": 0.005,
+      "circularity": 0.003,
+      "cylindricity": 0.005,
+      "circular_runout": 0.008,
+      "total_runout": 0.015,
+      "line_profile": 0.008,
+      "surface_profile": 0.015
+    },
+    "cnc_grinding": {
+      "position": 0.01,
+      "concentricity": 0.005,
+      "parallelism": 0.003,
+      "perpendicularity": 0.003,
+      "angularity": 0.02,
+      "flatness": 0.001,
+      "straightness": 0.001,
+      "circularity": 0.001,
+      "cylindricity": 0.003,
+      "circular_runout": 0.003,
+      "total_runout": 0.005,
+      "line_profile": 0.003,
+      "surface_profile": 0.005
+    },
+    "edm": {
+      "position": 0.005,
+      "concentricity": 0.005,
+      "parallelism": 0.002,
+      "perpendicularity": 0.003,
+      "angularity": 0.02,
+      "flatness": 0.002,
+      "straightness": 0.002,
+      "circularity": 0.002,
+      "cylindricity": 0.005,
+      "circular_runout": 0.005,
+      "total_runout": 0.01,
+      "line_profile": 0.005,
+      "surface_profile": 0.01
+    },
+    "additive_fdm": {
+      "position": 0.2,
+      "concentricity": 0.15,
+      "parallelism": 0.1,
+      "perpendicularity": 0.15,
+      "angularity": 0.5,
+      "flatness": 0.1,
+      "straightness": 0.15,
+      "circularity": 0.15,
+      "cylindricity": 0.2,
+      "circular_runout": 0.2,
+      "total_runout": 0.3,
+      "line_profile": 0.15,
+      "surface_profile": 0.2
+    },
+    "additive_sla": {
+      "position": 0.1,
+      "concentricity": 0.08,
+      "parallelism": 0.05,
+      "perpendicularity": 0.08,
+      "angularity": 0.3,
+      "flatness": 0.03,
+      "straightness": 0.05,
+      "circularity": 0.05,
+      "cylindricity": 0.08,
+      "circular_runout": 0.08,
+      "total_runout": 0.15,
+      "line_profile": 0.05,
+      "surface_profile": 0.1
+    },
+    "additive_sls": {
+      "position": 0.15,
+      "concentricity": 0.1,
+      "parallelism": 0.08,
+      "perpendicularity": 0.1,
+      "angularity": 0.4,
+      "flatness": 0.08,
+      "straightness": 0.1,
+      "circularity": 0.1,
+      "cylindricity": 0.15,
+      "circular_runout": 0.15,
+      "total_runout": 0.25,
+      "line_profile": 0.1,
+      "surface_profile": 0.15
+    },
+    "additive_slm": {
+      "position": 0.08,
+      "concentricity": 0.06,
+      "parallelism": 0.05,
+      "perpendicularity": 0.06,
+      "angularity": 0.2,
+      "flatness": 0.03,
+      "straightness": 0.05,
+      "circularity": 0.04,
+      "cylindricity": 0.06,
+      "circular_runout": 0.06,
+      "total_runout": 0.1,
+      "line_profile": 0.05,
+      "surface_profile": 0.08
+    },
+    "injection_molding": {
+      "position": 0.05,
+      "concentricity": 0.03,
+      "parallelism": 0.02,
+      "perpendicularity": 0.03,
+      "angularity": 0.1,
+      "flatness": 0.01,
+      "straightness": 0.02,
+      "circularity": 0.02,
+      "cylindricity": 0.03,
+      "circular_runout": 0.03,
+      "total_runout": 0.05,
+      "line_profile": 0.03,
+      "surface_profile": 0.05
+    },
+    "die_casting": {
+      "position": 0.1,
+      "concentricity": 0.08,
+      "parallelism": 0.05,
+      "perpendicularity": 0.08,
+      "angularity": 0.2,
+      "flatness": 0.03,
+      "straightness": 0.05,
+      "circularity": 0.05,
+      "cylindricity": 0.08,
+      "circular_runout": 0.08,
+      "total_runout": 0.15,
+      "line_profile": 0.08,
+      "surface_profile": 0.1
+    },
+    "sand_casting": {
+      "position": 0.5,
+      "concentricity": 0.3,
+      "parallelism": 0.2,
+      "perpendicularity": 0.3,
+      "angularity": 0.5,
+      "flatness": 0.15,
+      "straightness": 0.2,
+      "circularity": 0.2,
+      "cylindricity": 0.3,
+      "circular_runout": 0.3,
+      "total_runout": 0.5,
+      "line_profile": 0.25,
+      "surface_profile": 0.4
+    }
+  },
+  "datum_reference_frames": {
+    "primary_datum": {
+      "min_contact": 3,
+      "stability_requirements": [
+        "Sufficient surface area",
+        "Perpendicular to primary manufacturing direction",
+        "Clear of irregular features"
+      ]
+    },
+    "secondary_datum": {
+      "min_contact": 2,
+      "perpendicular_to": "primary"
+    },
+    "tertiary_datum": {
+      "min_contact": 1,
+      "perpendicular_to": ["primary", "secondary"]
+    }
+  },
+  "material_condition_modifiers": {
+    "RFS": {
+      "description": "Regardless of Feature Size",
+      "default": true,
+      "symbol": null
+    },
+    "MMC": {
+      "description": "Maximum Material Condition",
+      "default": false,
+      "symbol": "Ⓜ"
+    },
+    "LMC": {
+      "description": "Least Material Condition",
+      "default": false,
+      "symbol": "Ⓛ"
+    }
+  }
+}

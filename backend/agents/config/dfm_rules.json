@@ -1,0 +1,245 @@
+{
+  "_description": "Design for Manufacturing rules by process",
+  "_reference": "Boothroyd, G. et al. (2011) Product Design for Manufacture and Assembly",
+  "_version": "1.0.0",
+  
+  "processes": {
+    "cnc_milling": {
+      "wall_thickness": {
+        "min_mm": 0.5,
+        "recommended_mm": 1.0,
+        "description": "Minimum wall thickness for CNC milling"
+      },
+      "aspect_ratio": {
+        "max": 4.0,
+        "description": "Max height/width for features"
+      },
+      "hole_depth_ratio": {
+        "max": 3.0,
+        "description": "Max depth/diameter for drilled holes"
+      },
+      "tool_access": {
+        "min_clearance_deg": 30,
+        "description": "Minimum tool approach angle"
+      },
+      "undercuts": {
+        "allowed": false,
+        "description": "Internal undercuts require special tooling"
+      },
+      "sharp_corners": {
+        "min_radius_mm": 0.2,
+        "description": "Minimum internal corner radius"
+      },
+      "surface_finish": {
+        "min_ra_um": 0.8,
+        "max_ra_um": 6.3,
+        "description": "Achievable surface roughness range"
+      },
+      "tolerances": {
+        "standard_mm": 0.05,
+        "tight_mm": 0.01,
+        "description": "Standard achievable tolerances"
+      }
+    },
+    
+    "cnc_turning": {
+      "wall_thickness": {
+        "min_mm": 0.5,
+        "recommended_mm": 1.0
+      },
+      "aspect_ratio": {
+        "max": 8.0,
+        "description": "Max length/diameter ratio"
+      },
+      "undercuts": {
+        "allowed": true,
+        "notes": "Requires special grooving tools"
+      },
+      "sharp_corners": {
+        "min_radius_mm": 0.1
+      }
+    },
+    
+    "additive_fdm": {
+      "wall_thickness": {
+        "min_mm": 0.8,
+        "recommended_mm": 1.2,
+        "nozzle_dependent": true,
+        "description": "Min wall = 2×nozzle diameter typically"
+      },
+      "overhang_angle": {
+        "max_deg": 45,
+        "critical_deg": 60,
+        "description": "Max overhang without support"
+      },
+      "bridge_length": {
+        "max_mm": 10.0,
+        "description": "Max span without support"
+      },
+      "aspect_ratio": {
+        "max": 10.0
+      },
+      "support_removal": {
+        "difficult_areas": ["internal_cavities", "deep_pockets"],
+        "description": "Consider support removal access"
+      },
+      "layer_height": {
+        "typical_mm": 0.2,
+        "min_mm": 0.05,
+        "max_mm": 0.4
+      },
+      "warp_risk": {
+        "high_materials": ["ABS", "PC", "NYLON"],
+        "mitigation": "Brims, rafts, heated bed, enclosure"
+      }
+    },
+    
+    "additive_sla": {
+      "wall_thickness": {
+        "min_mm": 0.5,
+        "recommended_mm": 1.0
+      },
+      "overhang_angle": {
+        "max_deg": 30,
+        "description": "SLA needs more support than FDM"
+      },
+      "bridge_length": {
+        "max_mm": 2.0
+      },
+      "aspect_ratio": {
+        "max": 5.0
+      },
+      "trapped_volumes": {
+        "allowed": false,
+        "description": "SLA resin must drain"
+      }
+    },
+    
+    "additive_slm": {
+      "wall_thickness": {
+        "min_mm": 0.3,
+        "recommended_mm": 0.5,
+        "description": "Metal powder bed fusion"
+      },
+      "overhang_angle": {
+        "max_deg": 45,
+        "critical_deg": 55
+      },
+      "bridge_length": {
+        "max_mm": 2.0
+      },
+      "support_removal": {
+        "difficulty": "high",
+        "notes": "Metal supports must be machined off"
+      },
+      "thermal_stress": {
+        "risk": "high",
+        "mitigation": "Support structures, heat treatment"
+      }
+    },
+    
+    "injection_molding": {
+      "wall_thickness": {
+        "min_mm": 0.5,
+        "max_mm": 4.0,
+        "recommended_mm": "1.5-2.5",
+        "uniformity_critical": true,
+        "description": "Uniform wall thickness critical to avoid sink marks"
+      },
+      "aspect_ratio": {
+        "max": 4.0
+      },
+      "draft_angle": {
+        "min_deg": 0.5,
+        "recommended_deg": 1.0,
+        "per_side": true,
+        "description": "Draft angle per side for ejection",
+        "detection": {
+          "method": "face_normal_analysis",
+          "reference_direction": "pull_direction",
+          "taper_tolerance_deg": 0.1
+        }
+      },
+      "undercuts": {
+        "allowed": true,
+        "requires": "side_actions or lifters",
+        "cost_impact": "high"
+      },
+      "boss_design": {
+        "od_to_id_ratio": "2:1 to 3:1",
+        "description": "Boss wall thickness ratio"
+      },
+      "rib_design": {
+        "thickness_ratio": "0.5-0.6 of wall",
+        "height_ratio": "max 3× wall thickness",
+        "draft_required": true
+      },
+      "gate_location": {
+        "considerations": ["flow_balance", "weld_lines", "aesthetics"]
+      },
+      "sink_marks": {
+        "cause": "thick sections cooling slower",
+        "prevention": "consistent wall thickness, coring"
+      }
+    },
+    
+    "die_casting": {
+      "wall_thickness": {
+        "min_mm": 1.0,
+        "recommended_mm": "2.0-3.0",
+        "uniformity_critical": true
+      },
+      "draft_angle": {
+        "min_deg": 1.0,
+        "recommended_deg": 2.0
+      },
+      "fillet_radius": {
+        "min_mm": 0.8,
+        "description": "Generous fillets reduce stress"
+      },
+      "undercuts": {
+        "allowed": true,
+        "requires": "side cores",
+        "cost_impact": "high"
+      }
+    },
+    
+    "sheet_metal": {
+      "bend_radius": {
+        "min": "1× thickness",
+        "recommended": "2× thickness",
+        "description": "Minimum bend radius"
+      },
+      "hole_to_edge": {
+        "min": "1.5× thickness",
+        "description": "Hole distance from edge"
+      },
+      "hole_spacing": {
+        "min": "2× diameter",
+        "description": "Min distance between holes"
+      },
+      "bend_relief": {
+        "required": true,
+        "description": "Relief cuts at bend intersections"
+      }
+    }
+  },
+  
+  "general_rules": {
+    "minimum_feature_size": {
+      "description": "Smallest feature that can be manufactured",
+      "cnc": 0.1,
+      "am": 0.2,
+      "molding": 0.3
+    },
+    "text_on_parts": {
+      "min_height_mm": 0.5,
+      "description": "Minimum embossed/debossed text height"
+    },
+    "threads": {
+      "external_preferred": true,
+      "min_diameter_mm": 2.0,
+      "description": "External threads easier than internal"
+    }
+  }
+}

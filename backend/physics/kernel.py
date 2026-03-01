@@ -32,30 +32,30 @@ class UnifiedPhysicsKernel:
         self.providers = {}
         
         # Import and initialize all providers directly - fail if missing (strict mode)
-        from physics.providers.fphysics_provider import FPhysicsProvider
+        from backend.physics.providers.fphysics_provider import FPhysicsProvider
         self.providers["constants"] = FPhysicsProvider()
 
-        from physics.providers.physipy_provider import PhysiPyProvider
+        from backend.physics.providers.physipy_provider import PhysiPyProvider
         self.providers["analytical"] = PhysiPyProvider()
 
-        from physics.providers.sympy_provider import SymPyProvider
+        from backend.physics.providers.sympy_provider import SymPyProvider
         self.providers["symbolic"] = SymPyProvider()
 
-        from physics.providers.scipy_provider import SciPyProvider
+        from backend.physics.providers.scipy_provider import SciPyProvider
         self.providers["numerical"] = SciPyProvider()
 
-        from physics.providers.coolprop_provider import CoolPropProvider
+        from backend.physics.providers.coolprop_provider import CoolPropProvider
         self.providers["materials"] = CoolPropProvider()
         
         # Import and initialize domain modules
-        from physics.domains.mechanics import MechanicsDomain
-        from physics.domains.structures import StructuresDomain
-        from physics.domains.fluids import FluidsDomain
-        from physics.domains.thermodynamics import ThermodynamicsDomain
-        from physics.domains.electromagnetism import ElectromagnetismDomain
-        from physics.domains.materials import MaterialsDomain
-        from physics.domains.multiphysics import MultiphysicsDomain
-        from physics.domains.nuclear import NuclearDomain # New
+        from backend.physics.domains.mechanics import MechanicsDomain
+        from backend.physics.domains.structures import StructuresDomain
+        from backend.physics.domains.fluids import FluidsDomain
+        from backend.physics.domains.thermodynamics import ThermodynamicsDomain
+        from backend.physics.domains.electromagnetism import ElectromagnetismDomain
+        from backend.physics.domains.materials import MaterialsDomain
+        from backend.physics.domains.multiphysics import MultiphysicsDomain
+        from backend.physics.domains.nuclear import NuclearDomain # New
         
         # Create domain instances
         mechanics = MechanicsDomain(self.providers)
@@ -80,9 +80,9 @@ class UnifiedPhysicsKernel:
         self.domains["multiphysics"] = MultiphysicsDomain(self.domains)
         
         # Import and initialize validation layer
-        from physics.validation.conservation_laws import ConservationLawsValidator
-        from physics.validation.constraint_checker import ConstraintChecker
-        from physics.validation.feasibility import FeasibilityChecker
+        from backend.physics.validation.conservation_laws import ConservationLawsValidator
+        from backend.physics.validation.constraint_checker import ConstraintChecker
+        from backend.physics.validation.feasibility import FeasibilityChecker
         
         self.validator = {
             "conservation": ConservationLawsValidator(),
@@ -91,10 +91,10 @@ class UnifiedPhysicsKernel:
         }
         
         # Import and initialize intelligence layer
-        from physics.intelligence.equation_retrieval import EquationRetrieval
-        from physics.intelligence.multi_fidelity import MultiFidelityRouter
-        from physics.intelligence.surrogate_manager import SurrogateManager
-        from physics.intelligence.symbolic_deriver import SymbolicDeriver # New
+        from backend.physics.intelligence.equation_retrieval import EquationRetrieval
+        from backend.physics.intelligence.multi_fidelity import MultiFidelityRouter
+        from backend.physics.intelligence.surrogate_manager import SurrogateManager
+        from backend.physics.intelligence.symbolic_deriver import SymbolicDeriver # New
         
         self.intelligence = {
             "equation_retrieval": EquationRetrieval(llm_provider),

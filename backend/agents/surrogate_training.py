@@ -32,12 +32,14 @@ except ImportError:
     logger.warning("PyTorch not available - surrogate training disabled")
 
 
-class SyntheticBeamDataset(Dataset):
+class SyntheticBeamDataset:
     """
     Generate synthetic training data for cantilever beams
     
     Uses analytical beam theory to generate stress fields quickly
     without running expensive FEA for each sample.
+    
+    Note: If PyTorch is available, this inherits from torch.utils.data.Dataset
     """
     
     def __init__(self, n_samples: int = 1000, n_points: int = 100):

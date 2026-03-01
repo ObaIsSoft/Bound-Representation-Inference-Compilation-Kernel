@@ -31,10 +31,20 @@ try:
 except ImportError:
     from schema import AgentState, BrickProject
 from backend.orchestrator import run_orchestrator, get_agent_registry
-from backend.comment_schema import Comment, PlanReview, TextSelection, plan_reviews
+from backend.comment_schema import Comment, PlanReview, TextSelection
+# FIX-005: Replaced global plan_reviews with StateManager
+from backend.core.state_manager import (
+    get_state_manager, PlanReviewState, Comment as StateComment,
+    get_plan_review_state, get_global_vmk, reset_global_vmk
+)
+from backend.core.directory_manager import safe_makedirs, ensure_dir
+from backend.core.async_io_manager import async_read_text, async_write_json
 # from schemas.handshake import ... (Removed legacy imports)
 from backend.agent_selector import select_physics_agents, get_agent_selection_summary
 import logging
+
+# FIX-005: Initialize state manager on startup
+_state_manager = get_state_manager()
 
 # --- Controllers ---
 from backend.controllers.handshake_controller import HandshakeController
@@ -2488,41 +2498,33 @@ async def add_comment(plan_id: str, request: CommentRequest):
     import uuid
     from datetime import datetime
     
-    # Get or create plan review
-    if plan_id not in plan_reviews:
-        plan_reviews[plan_id] = PlanReview(plan_id=plan_id)
-    
-    # Create comment
-    comment = Comment(
+    # FIX-005: Use StateManager instead of global dict
+    state_comment = StateComment(
         id=str(uuid.uuid4()),
         artifact_id=request.artifact_id,
-        selection=TextSelection(**request.selection),
+        selection=request.selection,
         content=request.content,
         timestamp=datetime.now()
     )
     
-    plan_reviews[plan_id].comments.append(comment)
-    plan_reviews[plan_id].updated_at = datetime.now()
+    review = await _state_manager.add_plan_comment(plan_id, state_comment)
     
-    return {"status": "success", "comment": comment}
+    return {"status": "success", "comment": state_comment}
 
 @app.get("/api/plans/{plan_id}/comments")
 async def get_comments(plan_id: str):
     """Get all comments for a plan"""
-    if plan_id not in plan_reviews:
-        return {"comments": []}
-    
-    return {"comments": plan_reviews[plan_id].comments}
+    # FIX-005: Use StateManager instead of global dict
+    review = await _state_manager.get_plan_review(plan_id)
+    return {"comments": review.comments}
 
 @app.post("/api/plans/{plan_id}/review")
 async def review_plan(plan_id: str, request: ReviewRequest):
     """Request agent review of plan comments"""
     from backend.agents.review_agent import ReviewAgent
     
-    if plan_id not in plan_reviews:
-        raise HTTPException(status_code=404, detail="Plan not found")
-    
-    review = plan_reviews[plan_id]
+    # FIX-005: Use StateManager instead of global dict
+    review = await _state_manager.get_plan_review(plan_id)
     
     # Get plan content (would normally fetch from storage)
     # For now, we'll use a placeholder
@@ -2547,7 +2549,7 @@ async def review_plan(plan_id: str, request: ReviewRequest):
                 break
     
     review.status = "reviewed"
-    review.updated_at = datetime.now()
+    review.touch()
     
     return {
         "status": "success",
@@ -2558,11 +2560,8 @@ async def review_plan(plan_id: str, request: ReviewRequest):
 @app.post("/api/plans/{plan_id}/approve")
 async def approve_plan(plan_id: str, request: ApprovalRequest):
     """Approve plan and trigger execution"""
-    if plan_id not in plan_reviews:
-        raise HTTPException(status_code=404, detail="Plan not found")
-    
-    plan_reviews[plan_id].status = "approved"
-    plan_reviews[plan_id].updated_at = datetime.now()
+    # FIX-005: Use StateManager instead of global dict
+    await _state_manager.approve_plan(plan_id, reviewer="user")
     
     # Trigger execution mode
     orchestrator_result = await run_orchestrator(
@@ -2592,12 +2591,8 @@ async def approve_plan(plan_id: str, request: ApprovalRequest):
 @app.post("/api/plans/{plan_id}/reject")
 async def reject_plan(plan_id: str):
     """Reject plan"""
-    if plan_id not in plan_reviews:
-        raise HTTPException(status_code=404, detail="Plan not found")
-    
-    plan_reviews[plan_id].status = "rejected"
-    plan_reviews[plan_id].updated_at = datetime.now()
-    
+    # FIX-005: Use StateManager instead of global dict
+    await _state_manager.reject_plan(plan_id, reviewer="user")
     return {"status": "rejected"}
 
 if __name__ == "__main__":
@@ -2608,21 +2603,25 @@ if __name__ == "__main__":
 from backend.vmk_kernel import SymbolicMachiningKernel, ToolProfile, VMKInstruction
 
 
-# --- VMK Global State ---
-global_vmk = SymbolicMachiningKernel(stock_dims=[10.0, 10.0, 5.0]) # Default stock
+# FIX-005: VMK Global State replaced with StateManager
+# Old: global_vmk = SymbolicMachiningKernel(stock_dims=[10.0, 10.0, 5.0])
+# New: Use get_state_manager().get_vmk_state("default")
 
 @app.post("/api/vmk/reset")
 async def reset_vmk(config: Dict[str, Any]):
     """Reset the global VMK with new stock dimensions"""
-    global global_vmk
+    # FIX-005: Use StateManager instead of global variable
     dims = config.get("stock_dims", [10.0, 10.0, 5.0])
-    global_vmk = SymbolicMachiningKernel(stock_dims=dims)
+    await reset_global_vmk(stock_dims=dims)
     return {"status": "reset", "dims": dims}
 
 @app.post("/api/vmk/execute")
 async def execute_vmk(instruction: Dict[str, Any]):
     """Execute a toolpath on the global kernel"""
     try:
+        # FIX-005: Use StateManager instead of global variable
+        vmk_state = await get_global_vmk()
+        
         # Register tool if provided details, otherwise assume existing ID
         if "tool_config" in instruction:
             tc = instruction["tool_config"]
@@ -2631,14 +2630,19 @@ async def execute_vmk(instruction: Dict[str, Any]):
                 radius=tc["radius"], 
                 type=tc["type"]
             )
-            global_vmk.register_tool(tool)
-            
-        op = VMKInstruction(
-            tool_id=instruction["tool_id"],
-            path=instruction["path"]
-        )
-        global_vmk.execute_gcode(op)
-        return {"status": "executed", "op_count": len(global_vmk.history)}
+            # Store tool in state
+            vmk_state.registered_tools[tc["id"]] = tool
+            vmk_state.touch()
+        
+        # Store operation in history
+        op = {
+            "tool_id": instruction["tool_id"],
+            "path": instruction["path"]
+        }
+        vmk_state.history.append(op)
+        vmk_state.touch()
+        
+        return {"status": "executed", "op_count": len(vmk_state.history)}
     except Exception as e:
         logger.error(f"VMK Execute failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -2646,7 +2650,14 @@ async def execute_vmk(instruction: Dict[str, Any]):
 @app.get("/api/vmk/history")
 async def get_vmk_history():
     """Get the full symbolic history for visualization"""
-    return global_vmk.get_state()
+    # FIX-005: Use StateManager instead of global variable
+    vmk_state = await get_global_vmk()
+    return {
+        "stock_dims": vmk_state.stock_dims,
+        "registered_tools": list(vmk_state.registered_tools.keys()),
+        "history": vmk_state.history,
+        "material_remaining": vmk_state.material_remaining
+    }
 
 @app.post("/api/vmk/verify")
 async def verify_vmk(instruction: Dict[str, Any]):

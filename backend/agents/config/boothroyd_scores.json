@@ -1,0 +1,243 @@
+{
+  "_description": "Boothroyd-Dewhurst Design for Assembly scoring",
+  "_reference": "Boothroyd, G., Dewhurst, P., & Knight, W. (2011). Product Design for Manufacture and Assembly",
+  "_version": "1.0.0",
+  
+  "handling_difficulty": {
+    "_description": "Difficulty of handling parts during assembly (0 = easiest, 100 = impossible)",
+    
+    "size": {
+      "very_small": {
+        "range_mm": "< 6",
+        "score": 80,
+        "reason": "Requires tweezers, easy to drop"
+      },
+      "small": {
+        "range_mm": "6-15",
+        "score": 40,
+        "reason": "Difficult to handle"
+      },
+      "medium": {
+        "range_mm": "15-30",
+        "score": 10,
+        "reason": "Easy to handle"
+      },
+      "large": {
+        "range_mm": "> 30",
+        "score": 20,
+        "reason": "May require two hands"
+      }
+    },
+    
+    "weight": {
+      "very_light": {
+        "range_g": "< 5",
+        "score": 30,
+        "reason": "Can be blown away by air"
+      },
+      "light": {
+        "range_g": "5-50",
+        "score": 5,
+        "reason": "Easy to handle"
+      },
+      "medium": {
+        "range_g": "50-500",
+        "score": 10,
+        "reason": "Easy one-hand"
+      },
+      "heavy": {
+        "range_g": "500-2000",
+        "score": 40,
+        "reason": "Requires two hands"
+      },
+      "very_heavy": {
+        "range_g": "> 2000",
+        "score": 80,
+        "reason": "Requires lifting aids"
+      }
+    },
+    
+    "shape": {
+      "symmetric_easy": {
+        "description": "Symmetric, easy to orient",
+        "examples": ["sphere", "cube"],
+        "score": 0
+      },
+      "symmetric_hard": {
+        "description": "Symmetric but hard to orient",
+        "examples": ["cylinder", "thin_disk"],
+        "score": 20
+      },
+      "asymmetric_easy": {
+        "description": "Asymmetric but obvious orientation",
+        "examples": ["L-bracket"],
+        "score": 30
+      },
+      "asymmetric_hard": {
+        "description": "Asymmetric, difficult orientation",
+        "examples": ["complex_shape"],
+        "score": 60
+      }
+    },
+    
+    "nesting": {
+      "can_nest": {
+        "score": 40,
+        "reason": "Parts can tangle/nest in bulk"
+      },
+      "cannot_nest": {
+        "score": 0,
+        "reason": "No nesting issues"
+      }
+    },
+    
+    "flexibility": {
+      "rigid": {
+        "score": 0,
+        "reason": "Easy to handle"
+      },
+      "semi_rigid": {
+        "score": 20,
+        "reason": "Some flexibility"
+      },
+      "flexible": {
+        "score": 60,
+        "reason": "Difficult to position"
+      }
+    }
+  },
+  
+  "insertion_difficulty": {
+    "_description": "Difficulty of inserting/assembling parts",
+    
+    "alignment": {
+      "self_aligning": {
+        "description": "Chamfers/guides self-align",
+        "score": 0
+      },
+      "easy_alignment": {
+        "description": "Obvious alignment features",
+        "score": 20
+      },
+      "difficult_alignment": {
+        "description": "Precision alignment required",
+        "score": 60
+      },
+      "very_difficult": {
+        "description": "Microscope/vision required",
+        "score": 90
+      }
+    },
+    
+    "access": {
+      "open_access": {
+        "description": "No obstructions",
+        "score": 0
+      },
+      "partial_access": {
+        "description": "Some obstructions",
+        "score": 30
+      },
+      "restricted_access": {
+        "description": "Special tool needed",
+        "score": 70
+      },
+      "blind_access": {
+        "description": "Cannot see insertion point",
+        "score": 80
+      }
+    },
+    
+    "fastening": {
+      "no_fastening": {
+        "description": "Snap fit, no tools",
+        "score": 0
+      },
+      "easy_fastening": {
+        "description": "Simple push/screw",
+        "score": 20
+      },
+      "tool_required": {
+        "description": "Tool needed",
+        "score": 50
+      },
+      "multiple_fasteners": {
+        "description": "Many screws/bolts",
+        "score": 70
+      }
+    }
+  },
+  
+  "machining_difficulty": {
+    "_description": "Boothroyd DFM machining difficulty factors",
+    
+    "feature_accessibility": {
+      "_description": "Can tool reach all features?",
+      "all_accessible": {
+        "score": 0
+      },
+      "most_accessible": {
+        "score": 20
+      },
+      "requires_special_setup": {
+        "score": 50
+      },
+      "requires_special_tool": {
+        "score": 70
+      }
+    },
+    
+    "feature_complexity": {
+      "simple": {
+        "description": "Simple holes, flats",
+        "score": 0
+      },
+      "moderate": {
+        "description": "Pockets, slots",
+        "score": 30
+      },
+      "complex": {
+        "description": "3D surfaces, undercuts",
+        "score": 70
+      }
+    },
+    
+    "tolerance_difficulty": {
+      "loose": {
+        "tolerance_mm": "> 0.5",
+        "score": 0
+      },
+      "standard": {
+        "tolerance_mm": "0.1-0.5",
+        "score": 20
+      },
+      "tight": {
+        "tolerance_mm": "0.01-0.1",
+        "score": 60
+      },
+      "very_tight": {
+        "tolerance_mm": "< 0.01",
+        "score": 90
+      }
+    }
+  },
+  
+  "dfma_guidelines": {
+    "part_count_reduction": {
+      "target": "minimum functional parts",
+      "benefit": "Each part eliminated saves assembly cost"
+    },
+    "modular_design": {
+      "target": "subassemblies for testing",
+      "benefit": "Parallel assembly, easier testing"
+    },
+    "standard_parts": {
+      "target": "use off-the-shelf components",
+      "benefit": "Lower cost, proven reliability"
+    },
+    "error_proofing": {
+      "target": "asymmetric features prevent wrong assembly",
+      "benefit": "Zero defect assembly"
+    }
+  }
+}

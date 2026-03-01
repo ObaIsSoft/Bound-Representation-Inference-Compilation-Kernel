@@ -1,0 +1,365 @@
+{
+  "version": "AP224 Edition 3",
+  "description": "ISO 10303-224: Mechanical product definition for process planning using machining features",
+  "feature_hierarchy": {
+    "manufacturing_feature": {
+      "description": "Base class for all manufacturing features",
+      "subtypes": {
+        "machining_feature": {
+          "description": "Feature requiring material removal",
+          "subtypes": {
+            "round_hole": {
+              "description": "Cylindrical hole with circular cross-section",
+              "parameters": {
+                "diameter": {"type": "positive_length", "required": true},
+                "depth": {"type": "positive_length", "required": false},
+                "bottom_condition": {"type": "bottom_condition_type", "required": false},
+                "taper_angle": {"type": "plane_angle", "required": false}
+              },
+              "subtypes": {
+                "blind_hole": {
+                  "description": "Hole that does not pass through",
+                  "bottom_types": ["flat", "conical", "radius", "chamfer"]
+                },
+                "through_hole": {
+                  "description": "Hole that passes completely through part"
+                },
+                "tapered_hole": {
+                  "description": "Hole with tapered diameter",
+                  "parameters": {
+                    "start_diameter": {"type": "positive_length", "required": true},
+                    "end_diameter": {"type": "positive_length", "required": true},
+                    "taper_angle": {"type": "plane_angle", "required": true}
+                  }
+                },
+                "threaded_hole": {
+                  "description": "Hole with internal threads",
+                  "parameters": {
+                    "thread_specification": {"type": "text", "required": true},
+                    "thread_depth": {"type": "positive_length", "required": false}
+                  }
+                },
+                "counterbored_hole": {
+                  "description": "Hole with counterbore at top",
+                  "parameters": {
+                    "bore_diameter": {"type": "positive_length", "required": true},
+                    "bore_depth": {"type": "positive_length", "required": true}
+                  }
+                },
+                "countersunk_hole": {
+                  "description": "Hole with countersink at top",
+                  "parameters": {
+                    "sink_angle": {"type": "plane_angle", "required": true},
+                    "sink_diameter": {"type": "positive_length", "required": true}
+                  }
+                }
+              }
+            },
+            "slot": {
+              "description": "Elongated depression with defined width and depth",
+              "parameters": {
+                "width": {"type": "positive_length", "required": true},
+                "depth": {"type": "positive_length", "required": true},
+                "length": {"type": "positive_length", "required": true}
+              },
+              "subtypes": {
+                "blind_slot": {
+                  "description": "Slot closed at one end"
+                },
+                "through_slot": {
+                  "description": "Slot passing through material"
+                },
+                "t_slot": {
+                  "description": "T-shaped cross-section slot",
+                  "parameters": {
+                    "top_width": {"type": "positive_length", "required": true},
+                    "bottom_width": {"type": "positive_length", "required": true}
+                  }
+                },
+                "dovetail_slot": {
+                  "description": "Dovetail-shaped cross-section slot",
+                  "parameters": {
+                    "included_angle": {"type": "plane_angle", "required": true}
+                  }
+                }
+              }
+            },
+            "pocket": {
+              "description": "Enclosed depressed area",
+              "parameters": {
+                "depth": {"type": "positive_length", "required": true},
+                "bottom_condition": {"type": "bottom_condition_type", "required": false}
+              },
+              "subtypes": {
+                "closed_pocket": {
+                  "description": "Pocket with closed boundary",
+                  "parameters": {
+                    "corner_radius": {"type": "positive_length", "required": false}
+                  }
+                },
+                "open_pocket": {
+                  "description": "Pocket with open boundary"
+                },
+                "island": {
+                  "description": "Protrusion within pocket"
+                }
+              }
+            },
+            "step": {
+              "description": "Surface discontinuity creating different height levels",
+              "parameters": {
+                "height": {"type": "length", "required": true}
+              },
+              "subtypes": {
+                "external_step": {
+                  "description": "Step on external surface"
+                },
+                "internal_step": {
+                  "description": "Step on internal surface"
+                }
+              }
+            },
+            "boss": {
+              "description": "Protruding cylindrical feature",
+              "parameters": {
+                "diameter": {"type": "positive_length", "required": true},
+                "height": {"type": "positive_length", "required": true}
+              }
+            },
+            "planar_face": {
+              "description": "Flat machined surface",
+              "parameters": {
+                "area": {"type": "area", "required": false},
+                "roughness": {"type": "roughness", "required": false}
+              }
+            },
+            "curved_surface": {
+              "description": "Non-planar machined surface",
+              "parameters": {
+                "surface_type": {"type": "surface_type", "required": true},
+                "curvature": {"type": "curvature", "required": false}
+              },
+              "subtypes": {
+                "cylindrical_surface": {
+                  "description": "Cylindrical surface"
+                },
+                "spherical_surface": {
+                  "description": "Spherical surface"
+                },
+                "conical_surface": {
+                  "description": "Conical surface"
+                },
+                "toroidal_surface": {
+                  "description": "Torus-shaped surface"
+                },
+                "sculptured_surface": {
+                  "description": "Free-form surface"
+                }
+              }
+            },
+            "groove": {
+              "description": "Narrow recessed track",
+              "parameters": {
+                "width": {"type": "positive_length", "required": true},
+                "depth": {"type": "positive_length", "required": true}
+              },
+              "subtypes": {
+                "rectangular_groove": {
+                  "description": "Groove with flat bottom"
+                },
+                "round_groove": {
+                  "description": "Groove with round bottom"
+                },
+                "vee_groove": {
+                  "description": "V-shaped groove",
+                  "parameters": {
+                    "included_angle": {"type": "plane_angle", "required": true}
+                  }
+                }
+              }
+            },
+            "thread": {
+              "description": "Helical ridge",
+              "parameters": {
+                "pitch": {"type": "positive_length", "required": true},
+                "major_diameter": {"type": "positive_length", "required": true},
+                "minor_diameter": {"type": "positive_length", "required": false},
+                "thread_type": {"type": "text", "required": true}
+              },
+              "subtypes": {
+                "external_thread": {
+                  "description": "Thread on external surface"
+                },
+                "internal_thread": {
+                  "description": "Thread on internal surface (hole)"
+                }
+              }
+            },
+            "chamfer": {
+              "description": "Beveled edge",
+              "parameters": {
+                "angle": {"type": "plane_angle", "required": false},
+                "first_offset": {"type": "positive_length", "required": true},
+                "second_offset": {"type": "positive_length", "required": false}
+              }
+            },
+            "edge_round": {
+              "description": "Rounded edge (fillet)",
+              "parameters": {
+                "radius": {"type": "positive_length", "required": true}
+              }
+            },
+            "gear": {
+              "description": "Toothed wheel",
+              "parameters": {
+                "number_of_teeth": {"type": "integer", "required": true},
+                "module": {"type": "positive_length", "required": true},
+                "pressure_angle": {"type": "plane_angle", "required": false}
+              }
+            },
+            "spline": {
+              "description": "Multiple parallel keyways",
+              "parameters": {
+                "number_of_teeth": {"type": "integer", "required": true},
+                "major_diameter": {"type": "positive_length", "required": true},
+                "minor_diameter": {"type": "positive_length", "required": true}
+              }
+            }
+          }
+        },
+        "non_machining_feature": {
+          "description": "Feature not requiring material removal",
+          "subtypes": {
+            "compound_feature": {
+              "description": "Feature composed of multiple features"
+            },
+            "replicate_feature": {
+              "description": "Array of identical features",
+              "parameters": {
+                "pattern_type": {"type": "pattern_type", "required": true},
+                "count": {"type": "integer", "required": true}
+              }
+            }
+          }
+        }
+      }
+    },
+    "feature_attributes": {
+      "material_removal": {
+        "description": "Whether material is removed to create feature",
+        "values": [true, false]
+      },
+      "tolerance_requirement": {
+        "description": "Geometric and dimensional tolerances",
+        "types": ["linear", "angular", "geometric"]
+      },
+      "surface_finish": {
+        "description": "Required surface finish",
+        "parameters": {
+          "ra": {"type": "roughness", "unit": "micrometer"},
+          "rz": {"type": "roughness", "unit": "micrometer"}
+        }
+      }
+    },
+    "approach_directions": {
+      "axial": {
+        "description": "Along primary axis",
+        "angles": [0, 90, 180, 270]
+      },
+      "radial": {
+        "description": "Perpendicular to primary axis",
+        "typical_machines": ["mill_turn", "turning_center"]
+      },
+      "angled": {
+        "description": "At specified angle",
+        "requires": "5_axis_machine"
+      }
+    },
+    "tool_access": {
+      "primary_access": {
+        "description": "Direct tool access from main approach direction"
+      },
+      "secondary_access": {
+        "description": "Access through previously machined features"
+      },
+      "no_access": {
+        "description": "Inaccessible feature - requires design change"
+      }
+    }
+  },
+  "feature_recognition_patterns": {
+    "hole_from_boundary": {
+      "description": "Detect holes from circular boundary loops",
+      "method": "boundary_analysis",
+      "min_vertices": 8,
+      "circularity_threshold": 0.85
+    },
+    "slot_from_edges": {
+      "description": "Detect slots from elongated edge patterns",
+      "method": "edge_analysis",
+      "min_aspect_ratio": 3.0
+    },
+    "pocket_from_depression": {
+      "description": "Detect pockets from concave surface regions",
+      "method": "curvature_analysis"
+    },
+    "step_from_height_change": {
+      "description": "Detect steps from height discontinuities",
+      "method": "z_level_analysis"
+    }
+  },
+  "process_mappings": {
+    "cnc_milling": {
+      "applicable_features": [
+        "round_hole", "slot", "pocket", "step", "planar_face",
+        "chamfer", "edge_round", "groove"
+      ],
+      "preferred_operations": {
+        "round_hole": ["drill", "bore", "ream"],
+        "slot": ["mill", "slot_mill"],
+        "pocket": ["mill", "pocket_mill"]
+      }
+    },
+    "cnc_turning": {
+      "applicable_features": [
+        "round_hole", "external_thread", "internal_thread",
+        "groove", "curved_surface", "chamfer"
+      ],
+      "preferred_operations": {
+        "round_hole": ["drill", "bore"],
+        "external_thread": ["thread_turn", "thread_mill"],
+        "groove": ["part_off", "groove_turn"]
+      }
+    },
+    "additive_manufacturing": {
+      "applicable_features": [
+        "round_hole", "slot", "pocket", "boss", "curved_surface"
+      ],
+      "constraints": [
+        "overhang_angle",
+        "bridge_span",
+        "wall_thickness"
+      ]
+    }
+  },
+  "tolerance_framework": {
+    "dimensional_tolerances": {
+      "linear": {
+        "type": "plus_minus",
+        "values": ["+/-0.1", "+/-0.05", "+/-0.025", "+/-0.01"]
+      },
+      "angular": {
+        "type": "plus_minus",
+        "unit": "degrees"
+      }
+    },
+    "geometric_tolerances": {
+      "reference": "ASME_Y14.5",
+      "supported_types": [
+        "position", "concentricity", "symmetry",
+        "parallelism", "perpendicularity", "angularity",
+        "flatness", "straightness", "circularity", "cylindricity"
+      ]
+    }
+  }
+}

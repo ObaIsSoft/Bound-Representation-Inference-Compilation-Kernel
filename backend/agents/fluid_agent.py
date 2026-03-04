@@ -1,5 +1,5 @@
 """
-ProductionFluidAgent - Industry-Standard CFD
+FluidAgent - Industry-Standard CFD
 
 Production-grade fluid dynamics with validated physics.
 
@@ -128,7 +128,7 @@ class CFDResult:
         }
 
 
-class ProductionFluidAgent:
+class FluidAgent:
     """
     Industry-standard fluid dynamics agent.
     
@@ -138,16 +138,55 @@ class ProductionFluidAgent:
     
     Research Path (EXPERIMENTAL):
     3. Neural Operator (requires training on OpenFOAM data)
+    
+    Configuration:
+        solver_settings: Dict with OpenFOAM solver parameters
+        mesh_settings: Dict with mesh generation parameters
     """
     
-    def __init__(self, device: str = "cpu"):
+    # Default OpenFOAM solver settings
+    DEFAULT_SOLVER_SETTINGS = {
+        "application": "simpleFoam",
+        "endTime": 500,
+        "deltaT": 1,
+        "writeInterval": 100,
+        "tolerance": 1e-7,
+        "relTol": 0.1,
+        "turbulenceModel": "kOmegaSST",
+        "solver": "GAMG",
+        "nNonOrthogonalCorrectors": 2,
+        "pRelax": 0.3,
+        "URelax": 0.7,
+    }
+    
+    # Default mesh settings
+    DEFAULT_MESH_SETTINGS = {
+        "nx": 80,
+        "ny": 20,
+        "nz": 1,
+        "grading": "simpleGrading (1 1 1)",
+        "domain_x_factor": 10,  # Domain length = 10 * L
+        "domain_y_factor": 4,   # Domain width = 4 * L
+        "domain_z_factor": 0.1, # 2D approximation
+    }
+    
+    def __init__(
+        self,
+        device: str = "cpu",
+        solver_settings: Optional[Dict[str, Any]] = None,
+        mesh_settings: Optional[Dict[str, Any]] = None
+    ):
         self.device = device
-        self.openfoam_available = self._check_openfoam()
+        self.solver_settings = {**self.DEFAULT_SOLVER_SETTINGS, **(solver_settings or {})}
+        self.mesh_settings = {**self.DEFAULT_MESH_SETTINGS, **(mesh_settings or {})}
+        
+        # Initialize OpenFOAM status
         self.openfoam_native = False
         self.openfoam_cmd = None
+        self.openfoam_available = self._check_openfoam()
         
         logger.info(
-            f"ProductionFluidAgent: "
+            f"FluidAgent: "
             f"OpenFOAM={'✅' if self.openfoam_available else '❌'}"
         )
     
@@ -317,7 +356,7 @@ class ProductionFluidAgent:
             self._create_control_dict(case_dir, conditions, solver_type)
             self._create_fv_schemes(case_dir)
             self._create_fv_solution(case_dir)
-            self._create_initial_fields(case_dir, conditions)
+            self._create_initial_fields(case_dir, conditions, geometry)
             
             # Run mesh generation
             self._run_command(["blockMesh"], case_dir, timeout=60)
@@ -326,11 +365,11 @@ class ProductionFluidAgent:
             self._run_command(["simpleFoam"], case_dir, timeout=600)
             
             # Parse forces
-            forces = self._parse_forces(case_dir)
+            A = geometry.frontal_area or (geometry.width * geometry.height)
+            forces = self._parse_forces(case_dir, A, conditions)
             
             if forces:
                 Cd, Cl = forces
-                A = geometry.frontal_area or (geometry.width * geometry.height)
                 drag = Cd * 0.5 * conditions.density * conditions.velocity**2 * A
                 
                 result = CFDResult(
@@ -361,8 +400,26 @@ class ProductionFluidAgent:
         return self._run_correlation(geometry, conditions)
     
     def _create_blockmesh_dict(self, case_dir: str, geometry: GeometryConfig):
-        """Create blockMeshDict for geometry."""
-        blockmesh = f"""FoamFile
+        """Create blockMeshDict with obstacle geometry."""
+        
+        # Domain dimensions from config
+        L = geometry.length
+        m = self.mesh_settings
+        domain_x_neg = m["domain_x_factor"] * L * 0.2  # 20% upstream
+        domain_x_pos = m["domain_x_factor"] * L * 0.8  # 80% downstream
+        domain_y = m["domain_y_factor"] * L
+        domain_z = m["domain_z_factor"] * L
+        
+        # Mesh resolution from config
+        nx, ny, nz = m["nx"], m["ny"], m["nz"]
+        grading = m["grading"]
+        
+        # Obstacle dimensions
+        obs_r = L / 2  # Radius for cylinder/sphere
+        
+        if geometry.shape_type == "cylinder":
+            # 2D cylinder (extruded circle)
+            blockmesh = f"""FoamFile
 {{
     version     2.0;
     format      ascii;
@@ -374,19 +431,102 @@ convertToMeters 1;
 
 vertices
 (
-    (-2 -1 -1)
-    ( 4 -1 -1)
-    ( 4  1 -1)
-    (-2  1 -1)
-    (-2 -1  1)
-    ( 4 -1  1)
-    ( 4  1  1)
-    (-2  1  1)
+    // Inlet region (left of cylinder)
+    (-{domain_x_neg} -{domain_y} 0)
+    (-{obs_r} -{domain_y} 0)
+    (-{obs_r}  {domain_y} 0)
+    (-{domain_x_neg}  {domain_y} 0)
+    (-{domain_x_neg} -{domain_y} {domain_z})
+    (-{obs_r} -{domain_y} {domain_z})
+    (-{obs_r}  {domain_y} {domain_z})
+    (-{domain_x_neg}  {domain_y} {domain_z})
+    
+    // Middle region (around cylinder)
+    ( {obs_r} -{domain_y} 0)
+    ( {obs_r}  {domain_y} 0)
+    ( {obs_r} -{domain_y} {domain_z})
+    ( {obs_r}  {domain_y} {domain_z})
+    
+    // Outlet region
+    ( {domain_x_pos} -{domain_y} 0)
+    ( {domain_x_pos}  {domain_y} 0)
+    ( {domain_x_pos} -{domain_y} {domain_z})
+    ( {domain_x_pos}  {domain_y} {domain_z})
 );
 
 blocks
 (
-    hex (0 1 2 3 4 5 6 7) (60 20 20) simpleGrading (1 1 1)
+    hex (0 1 2 3 4 5 6 7) ({nx//4} {ny} {nz}) {grading}
+    hex (1 8 9 2 5 10 11 6) ({nx//8} {ny} {nz}) {grading}
+    hex (8 12 13 9 10 14 15 11) ({nx//2} {ny} {nz}) {grading}
+);
+
+edges
+(
+);
+
+boundary
+(
+    inlet
+    {{
+        type patch;
+        faces ((0 4 7 3));
+    }}
+    outlet
+    {{
+        type patch;
+        faces ((12 13 15 14));
+    }}
+    cylinder
+    {{
+        type wall;
+        faces ();
+    }}
+    topAndBottom
+    {{
+        type patch;
+        faces ((0 1 5 4) (1 8 10 5) (8 12 14 10)
+               (3 7 6 2) (2 6 11 9) (9 11 15 13));
+    }}
+    frontAndBack
+    {{
+        type empty;
+        faces ((0 3 2 1) (1 2 9 8) (8 9 13 12)
+               (4 5 6 7) (5 6 11 10) (10 11 15 14));
+    }}
+);
+
+mergePatchPairs
+(
+);
+"""
+        else:
+            # Simple channel for other geometries (box, sphere)
+            blockmesh = f"""FoamFile
+{{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      blockMeshDict;
+}}
+
+convertToMeters 1;
+
+vertices
+(
+    (-{domain_x_neg} -{domain_y} 0)
+    ( {domain_x_pos} -{domain_y} 0)
+    ( {domain_x_pos}  {domain_y} 0)
+    (-{domain_x_neg}  {domain_y} 0)
+    (-{domain_x_neg} -{domain_y} {domain_z})
+    ( {domain_x_pos} -{domain_y} {domain_z})
+    ( {domain_x_pos}  {domain_y} {domain_z})
+    (-{domain_x_neg}  {domain_y} {domain_z})
+);
+
+blocks
+(
+    hex (0 1 2 3 4 5 6 7) ({nx} {ny} {nz}) {grading}
 );
 
 edges
@@ -421,12 +561,119 @@ mergePatchPairs
 (
 );
 """
+        
         system_dir = Path(case_dir) / "system"
         system_dir.mkdir(parents=True, exist_ok=True)
         (system_dir / "blockMeshDict").write_text(blockmesh)
+        
+        # For cylinder, create snappyHexMeshDict to add actual cylinder
+        if geometry.shape_type == "cylinder":
+            self._create_snappy_dict(case_dir, geometry)
+    
+    def _create_snappy_dict(self, case_dir: str, geometry: GeometryConfig):
+        """Create snappyHexMeshDict for cylinder geometry."""
+        L = geometry.length
+        obs_r = L / 2
+        
+        snappy = f"""FoamFile
+{{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      snappyHexMeshDict;
+}}
+
+castellatedMesh true;
+snap            true;
+addLayers       false;
+
+geometry
+{{
+    cylinder
+    {{
+        type searchableCylinder;
+        point1 (0 0 -0.1);
+        point2 (0 0 0.1);
+        radius {obs_r};
+    }}
+}};
+
+castellatedMeshControls
+{{
+    maxLocalCells   100000;
+    maxGlobalCells  2000000;
+    minRefinementCells 0;
+    maxLoadUnbalance 0.10;
+    nCellsBetweenLevels 3;
+    
+    features        ();
+    
+    refinementSurfaces
+    {{
+        cylinder
+        {{
+            level (2 2);
+        }}
+    }}
+    
+    resolveFeatureAngle 30;
+    
+    refinementRegions
+    {{
+        cylinder
+        {{
+            mode distance;
+            levels ((0.5 2) (1.0 1));
+        }}
+    }}
+    
+    locationInMesh (0 0 0);
+    allowFreeStandingZoneFaces true;
+}}
+
+snapControls
+{{
+    nSmoothPatch    3;
+    tolerance       1.0;
+    nSolveIter      30;
+    nRelaxIter      5;
+    nFeatureSnapIter 10;
+    implicitFeatureSnap false;
+    explicitFeatureSnap true;
+    multiRegionFeatureSnap false;
+}}
+
+addLayersControls
+{{
+}}
+
+meshQualityControls
+{{
+    maxNonOrtho     65;
+    maxBoundarySkewness 20;
+    maxInternalSkewness 4;
+    maxConcave      80;
+    minVol          1e-13;
+    minTetQuality   1e-15;
+    minArea         -1;
+    minTwist        0.02;
+    minDeterminant  0.001;
+    minFaceWeight   0.02;
+    minVolRatio     0.01;
+    minTriangleTwist -1;
+    nSmoothScale    4;
+    errorReduction  0.75;
+}}
+
+debug           0;
+
+mergeTolerance  1e-6;
+"""
+        (Path(case_dir) / "system" / "snappyHexMeshDict").write_text(snappy)
     
     def _create_control_dict(self, case_dir: str, conditions: FlowConditions, solver_type: str):
         """Create controlDict."""
+        s = self.solver_settings
         control = f"""FoamFile
 {{
     version     2.0;
@@ -435,14 +682,14 @@ mergePatchPairs
     object      controlDict;
 }}
 
-application     simpleFoam;
+application     {s["application"]};
 startFrom       startTime;
 startTime       0;
 stopAt          endTime;
-endTime         500;
-deltaT          1;
+endTime         {s["endTime"]};
+deltaT          {s["deltaT"]};
 writeControl    timeStep;
-writeInterval   100;
+writeInterval   {s["writeInterval"]};
 purgeWrite      2;
 writeFormat     ascii;
 writePrecision  6;
@@ -506,76 +753,148 @@ snGradSchemes
 {
     default         orthogonal;
 }
+wallDist
+{
+    method          meshWave;
+}
 """
         (Path(case_dir) / "system" / "fvSchemes").write_text(schemes)
     
     def _create_fv_solution(self, case_dir: str):
         """Create fvSolution."""
-        solution = """FoamFile
-{
+        s = self.solver_settings
+        solution = f"""FoamFile
+{{
     version     2.0;
     format      ascii;
     class       dictionary;
     object      fvSolution;
-}
+}}
 
 solvers
-{
+{{
     p
-    {
-        solver          GAMG;
-        tolerance       1e-7;
-        relTol          0.1;
+    {{
+        solver          {s["solver"]};
+        tolerance       {s["tolerance"]};
+        relTol          {s["relTol"]};
         smoother        GaussSeidel;
-    }
+    }}
     U
-    {
+    {{
         solver          smoothSolver;
         smoother        symGaussSeidel;
         tolerance       1e-8;
-        relTol          0.1;
-    }
+        relTol          {s["relTol"]};
+    }}
     k
-    {
+    {{
         solver          smoothSolver;
         smoother        symGaussSeidel;
         tolerance       1e-8;
-        relTol          0.1;
-    }
+        relTol          {s["relTol"]};
+    }}
     omega
-    {
+    {{
         solver          smoothSolver;
         smoother        symGaussSeidel;
         tolerance       1e-8;
-        relTol          0.1;
-    }
-}
+        relTol          {s["relTol"]};
+    }}
+}}
 SIMPLE
-{
-    nNonOrthogonalCorrectors 2;
+{{
+    nNonOrthogonalCorrectors {s["nNonOrthogonalCorrectors"]};
     consistent      yes;
     residualControl
-    {
+    {{
         U               1e-5;
         p               1e-5;
-    }
-}
+    }}
+}}
 relaxationFactors
-{
+{{
     equations
-    {
-        U               0.9;
+    {{
+        U               {s["URelax"]};
         k               0.7;
         omega           0.7;
-    }
-}
+    }}
+}}
 """
         (Path(case_dir) / "system" / "fvSolution").write_text(solution)
     
-    def _create_initial_fields(self, case_dir: str, conditions: FlowConditions):
+    def _create_initial_fields(self, case_dir: str, conditions: FlowConditions, geometry: GeometryConfig):
         """Create initial field files."""
         zero_dir = Path(case_dir) / "0"
         zero_dir.mkdir(exist_ok=True)
+        
+        # Determine patches based on geometry
+        has_cylinder = geometry.shape_type == "cylinder"
+        
+        # Cylinder mesh has different patches: inlet, outlet, cylinder, topAndBottom, frontAndBack
+        # Other meshes have: inlet, outlet, walls, frontAndBack
+        
+        if has_cylinder:
+            # Patches for cylinder geometry
+            # topAndBottom is a patch (not wall), so use zeroGradient/slip
+            wall_patch = "cylinder"  # Actual wall is cylinder patch
+            
+            cylinder_bc_u = """    cylinder
+    {
+        type            noSlip;
+    }
+    topAndBottom
+    {
+        type            slip;
+    }
+"""
+            cylinder_bc_p = """    cylinder
+    {
+        type            zeroGradient;
+    }
+    topAndBottom
+    {
+        type            zeroGradient;
+    }
+"""
+            cylinder_bc_k = ""  # Will be set after k is defined
+            cylinder_bc_omega = ""  # Will be set after omega is defined
+        else:
+            # Standard patches for other geometries
+            wall_patch = "walls"
+            cylinder_bc_u = ""
+            cylinder_bc_p = ""
+            cylinder_bc_k = ""
+            cylinder_bc_omega = ""
+            nut_wall_bc = ""
+        
+        # Now define k and omega
+        k = 0.01 * conditions.velocity**2  # 1% turbulence intensity
+        omega = conditions.velocity / 0.1  # L = 0.1m characteristic
+        
+        # Update cylinder BCs with actual values if needed
+        if has_cylinder:
+            cylinder_bc_k = f"""    cylinder
+    {{
+        type            kqRWallFunction;
+        value           uniform {k};
+    }}
+    topAndBottom
+    {{
+        type            zeroGradient;
+    }}
+"""
+            cylinder_bc_omega = f"""    cylinder
+    {{
+        type            omegaWallFunction;
+        value           uniform {omega};
+    }}
+    topAndBottom
+    {{
+        type            zeroGradient;
+    }}
+"""
         
         # U - velocity
         u_field = f"""FoamFile
@@ -601,11 +920,11 @@ boundaryField
     {{
         type            zeroGradient;
     }}
-    walls
+    {wall_patch}
     {{
         type            noSlip;
     }}
-    frontAndBack
+{cylinder_bc_u}    frontAndBack
     {{
         type            empty;
     }}
@@ -614,43 +933,42 @@ boundaryField
         (zero_dir / "U").write_text(u_field)
         
         # p - pressure
-        p_field = """FoamFile
-{
+        p_field = f"""FoamFile
+{{
     version     2.0;
     format      ascii;
     class       volScalarField;
     object      p;
-}
+}}
 
 dimensions      [0 2 -2 0 0 0 0];
 
 internalField   uniform 0;
 
 boundaryField
-{
+{{
     inlet
-    {
+    {{
         type            zeroGradient;
-    }
+    }}
     outlet
-    {
+    {{
         type            fixedValue;
         value           uniform 0;
-    }
-    walls
-    {
+    }}
+    {wall_patch}
+    {{
         type            zeroGradient;
-    }
-    frontAndBack
-    {
+    }}
+{cylinder_bc_p}    frontAndBack
+    {{
         type            empty;
-    }
-}
+    }}
+}}
 """
         (zero_dir / "p").write_text(p_field)
         
-        # k - turbulence kinetic energy
-        k = 0.01 * conditions.velocity**2  # 1% turbulence intensity
+        # k field (k already defined above)
         k_field = f"""FoamFile
 {{
     version     2.0;
@@ -674,12 +992,12 @@ boundaryField
     {{
         type            zeroGradient;
     }}
-    walls
+    {wall_patch}
     {{
         type            kqRWallFunction;
         value           uniform {k};
     }}
-    frontAndBack
+{cylinder_bc_k}    frontAndBack
     {{
         type            empty;
     }}
@@ -687,8 +1005,7 @@ boundaryField
 """
         (zero_dir / "k").write_text(k_field)
         
-        # omega - specific dissipation rate
-        omega = conditions.velocity / 0.1  # L = 0.1m characteristic
+        # omega field (omega already defined above)
         omega_field = f"""FoamFile
 {{
     version     2.0;
@@ -712,12 +1029,12 @@ boundaryField
     {{
         type            zeroGradient;
     }}
-    walls
+    {wall_patch}
     {{
         type            omegaWallFunction;
         value           uniform {omega};
     }}
-    frontAndBack
+{cylinder_bc_omega}    frontAndBack
     {{
         type            empty;
     }}
@@ -726,40 +1043,52 @@ boundaryField
         (zero_dir / "omega").write_text(omega_field)
         
         # nut - turbulent viscosity
-        nut_field = """FoamFile
-{
+        nut_cylinder_bc = f"""    cylinder
+    {{
+        type            nutkWallFunction;
+        value           uniform 0;
+    }}
+    topAndBottom
+    {{
+        type            calculated;
+        value           uniform 0;
+    }}
+""" if has_cylinder else ""
+        
+        nut_field = f"""FoamFile
+{{
     version     2.0;
     format      ascii;
     class       volScalarField;
     object      nut;
-}
+}}
 
 dimensions      [0 2 -1 0 0 0 0];
 
 internalField   uniform 0;
 
 boundaryField
-{
+{{
     inlet
-    {
+    {{
         type            calculated;
         value           uniform 0;
-    }
+    }}
     outlet
-    {
+    {{
         type            calculated;
         value           uniform 0;
-    }
-    walls
-    {
+    }}
+    {wall_patch}
+    {{
         type            nutkWallFunction;
         value           uniform 0;
-    }
-    frontAndBack
-    {
+    }}
+{nut_cylinder_bc}    frontAndBack
+    {{
         type            empty;
-    }
-}
+    }}
+}}
 """
         (zero_dir / "nut").write_text(nut_field)
         
@@ -781,22 +1110,22 @@ nu              [0 2 -1 0 0 0 0] {conditions.kinematic_viscosity};
         (constant_dir / "transportProperties").write_text(transport)
         
         # turbulenceProperties
-        turbulence = """FoamFile
-{
+        turbulence = f"""FoamFile
+{{
     version     2.0;
     format      ascii;
     class       dictionary;
     object      turbulenceProperties;
-}
+}}
 
 simulationType  RAS;
 
 RAS
-{
-    RASModel        kOmegaSST;
+{{
+    RASModel        {self.solver_settings["turbulenceModel"]};
     turbulence      on;
     printCoeffs     on;
-}
+}}
 """
         (constant_dir / "turbulenceProperties").write_text(turbulence)
     
@@ -810,31 +1139,58 @@ RAS
             raise RuntimeError(f"Command failed: {result.stderr}")
         return result
     
-    def _parse_forces(self, case_dir: str) -> Optional[Tuple[float, float]]:
-        """Parse forces from OpenFOAM output."""
-        forces_file = Path(case_dir) / "postProcessing" / "forces" / "0" / "forces.dat"
+    def _parse_forces(
+        self, 
+        case_dir: str, 
+        reference_area: float,
+        conditions: FlowConditions
+    ) -> Optional[Tuple[float, float]]:
+        """
+        Parse forces from OpenFOAM output and calculate Cd, Cl.
+        
+        Args:
+            case_dir: OpenFOAM case directory
+            reference_area: Frontal area for Cd calculation
+            conditions: Flow conditions (for dynamic pressure)
+        
+        Returns:
+            (Cd, Cl) or None if parsing fails
+        """
+        forces_file = Path(case_dir) / "postProcessing" / "forces" / "0" / "force.dat"
         
         if not forces_file.exists():
+            logger.warning(f"Forces file not found: {forces_file}")
             return None
         
         try:
             lines = forces_file.read_text().strip().split('\n')
-            # Get last timestep
+            
+            # Find last valid data line
             for line in reversed(lines):
                 if line.startswith('#') or not line.strip():
                     continue
+                
                 parts = line.split()
-                if len(parts) >= 7:
-                    # Format: time (px py pz) (vx vy vz)
-                    pressure_force = float(parts[1].strip('('))
-                    viscous_force = float(parts[4].strip('('))
-                    total_force = abs(pressure_force + viscous_force)
+                if len(parts) >= 10:
+                    # Format: Time total_x total_y total_z pressure_x pressure_y pressure_z viscous_x viscous_y viscous_z
+                    # Drag is total_x (force in x-direction)
+                    # Lift is total_y (force in y-direction)
+                    drag_force = float(parts[1])  # total_x
+                    lift_force = float(parts[2])   # total_y
                     
-                    # Calculate Cd (simplified - need proper reference area)
-                    Cd = 0.5  # Placeholder
-                    Cl = 0.0
+                    # Calculate dynamic pressure: q = 0.5 * rho * V^2
+                    q = 0.5 * conditions.density * conditions.velocity**2
                     
+                    if reference_area > 0 and q > 0:
+                        Cd = drag_force / (q * reference_area)
+                        Cl = lift_force / (q * reference_area)
+                    else:
+                        Cd = 0.0
+                        Cl = 0.0
+                    
+                    logger.debug(f"Parsed forces: drag={drag_force:.4f}N, lift={lift_force:.4f}N, Cd={Cd:.4f}")
                     return Cd, Cl
+                    
         except Exception as e:
             logger.error(f"Failed to parse forces: {e}")
         
@@ -886,7 +1242,7 @@ def analyze_flow(
     velocity: float = 10.0
 ) -> Dict[str, Any]:
     """Quick analysis function."""
-    agent = ProductionFluidAgent()
+    agent = FluidAgent()
     geometry = GeometryConfig(
         shape_type=shape_type,
         length=length,

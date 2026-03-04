@@ -2669,3 +2669,818 @@ Total: 26/26 tests passing
 
 **START NOW:** Task 1.2 - Material Database Expansion
 
+
+
+---
+
+## 🆕 COMPREHENSIVE STUB AGENT IMPLEMENTATION TASKS (2026-03-04)
+
+### Summary of Research Findings
+
+Based on comprehensive analysis of all 76 agents:
+- **Production Ready:** 3 agents (thermal_solver_3d, fluid_agent correlation mode, manifold_agent)
+- **Stub Agents Needing Implementation:** 25 agents
+- **Framework Only:** 16 agents (architecture exists, no trained models)
+- **Broken/Non-functional:** 8 agents
+
+---
+
+## PHASE STUB-1: PURE STUB REPLACEMENT (7 Agents)
+
+### STUB-101: DELETE generic_agent.py
+**Status:** Not Started  
+**Priority:** P0  
+**Effort:** 1 hour
+
+**Task:**
+- [ ] Remove backend/agents/generic_agent.py
+- [ ] Update any imports referencing it
+- [ ] Replace usage with proper agent factory pattern
+
+**Rationale:** Pure placeholder with no production value
+
+---
+
+### STUB-102: REWRITE performance_agent.py
+**Status:** Not Started  
+**Priority:** P0  
+**Effort:** 3 weeks
+
+**Current Issues:**
+- Hardcoded efficiency=0.85
+- No actual performance calculation
+- No FEA integration
+
+**Implementation Tasks:**
+- [ ] Create CalculiX interface class
+- [ ] Implement mesh loading from file/URL
+- [ ] Add FEA stress analysis pipeline
+- [ ] Create benchmark library (industry standards)
+- [ ] Implement strength-to-weight calculation
+- [ ] Add safety factor computation
+- [ ] Create efficiency scoring algorithm
+- [ ] Build comparison reports
+- [ ] Add API endpoint: POST /api/agents/performance/analyze
+- [ ] Create frontend PerformanceDashboard component
+
+**Dependencies:**
+- calculix (FEA solver)
+- meshio
+- numpy, scipy
+
+**API Endpoint:**
+```python
+@app.post("/api/agents/performance/analyze")
+async def analyze_performance(params: PerformanceRequest):
+    agent = PerformanceAgent()
+    return await agent.run(params.dict())
+```
+
+**Frontend Component:**
+- File: frontend/src/components/performance/PerformanceDashboard.tsx
+- Features: Gauge charts, benchmark comparison, PDF export
+
+---
+
+### STUB-103: REWRITE doctor_agent.py
+**Status:** Not Started  
+**Priority:** P1  
+**Effort:** 2 weeks
+
+**Current Issues:**
+- Random health status (random.random() > 0.01)
+- No real health checks
+
+**Implementation Tasks:**
+- [ ] Implement agent health check endpoints for all agents
+- [ ] Create ping mechanism with timeout
+- [ ] Add response time tracking
+- [ ] Implement system metrics collection (CPU, memory, disk)
+- [ ] Create alerting system for degraded agents
+- [ ] Add health history tracking
+- [ ] Build health dashboard
+- [ ] Add WebSocket for real-time health updates
+- [ ] Implement automatic recovery attempts
+
+**Dependencies:**
+- psutil
+- aiohttp
+- redis (for history)
+
+**API Endpoints:**
+```python
+@app.get("/api/agents/health")
+async def get_all_agents_health()
+
+@app.get("/api/agents/{agent_name}/health")
+async def get_agent_health(agent_name: str)
+
+@websocket("/ws/agents/health")
+async def health_websocket(websocket: WebSocket)
+```
+
+---
+
+### STUB-104: REWRITE pvc_agent.py
+**Status:** Not Started  
+**Priority:** P1  
+**Effort:** 2 weeks
+
+**Current Issues:**
+- No actual git operations
+- Returns success without doing anything
+
+**Implementation Tasks:**
+- [ ] Integrate gitpython library
+- [ ] Implement git repository initialization
+- [ ] Add branch creation and switching
+- [ ] Create commit with metadata
+- [ ] Implement diff visualization
+- [ ] Add merge conflict detection
+- [ ] Create version tagging
+- [ ] Build branch management UI
+- [ ] Add history visualization
+- [ ] Implement rollback functionality
+
+**Dependencies:**
+- gitpython
+
+**API Endpoints:**
+```python
+@app.post("/api/projects/{id}/version/init")
+@app.post("/api/projects/{id}/version/commit")
+@app.post("/api/projects/{id}/version/branch")
+@app.get("/api/projects/{id}/version/log")
+@app.get("/api/projects/{id}/version/diff")
+```
+
+---
+
+### STUB-105: REWRITE user_agent.py
+**Status:** Not Started  
+**Priority:** P1  
+**Effort:** 2 weeks
+
+**Current Issues:**
+- File-based storage (not scalable)
+- No authentication
+- No permission system
+
+**Implementation Tasks:**
+- [ ] Integrate Supabase Auth
+- [ ] Implement user signup/login/logout
+- [ ] Add OAuth providers (Google, GitHub)
+- [ ] Create profile management
+- [ ] Implement role-based permissions
+- [ ] Add team/organization support
+- [ ] Create activity tracking
+- [ ] Build user admin panel
+- [ ] Add session management
+
+**Dependencies:**
+- supabase-py
+- gotrue
+
+**API Endpoints:**
+```python
+@app.post("/api/auth/signup")
+@app.post("/api/auth/login")
+@app.post("/api/auth/logout")
+@app.get("/api/user/profile")
+@app.put("/api/user/profile")
+@app.get("/api/user/activity")
+```
+
+---
+
+### STUB-106: REWRITE remote_agent.py
+**Status:** Not Started  
+**Priority:** P2  
+**Effort:** 4 weeks
+
+**Current Issues:**
+- No real session persistence
+- No real-time collaboration
+
+**Implementation Tasks:**
+- [ ] Implement WebSocket server
+- [ ] Create session management with Redis
+- [ ] Add user authentication for sessions
+- [ ] Implement cursor tracking
+- [ ] Create change synchronization
+- [ ] Add conflict resolution
+- [ ] Build presence indicators
+- [ ] Create session persistence
+- [ ] Add screen sharing capability
+- [ ] Implement chat within sessions
+
+**Dependencies:**
+- fastapi.WebSocket
+- redis
+- jwt
+
+**API Endpoints:**
+```python
+@app.post("/api/sessions")
+@app.get("/api/sessions/{session_id}")
+@websocket("/ws/sessions/{session_id}")
+```
+
+---
+
+### STUB-107: REWRITE asset_sourcing_agent.py
+**Status:** Not Started  
+**Priority:** P2  
+**Effort:** 4 weeks
+
+**Current Issues:**
+- Empty mock_assets = []
+- No real API integrations
+
+**Implementation Tasks:**
+- [ ] Sign up for NASA 3D Resources API
+- [ ] Implement NASA API client
+- [ ] Sign up for GrabCAD API
+- [ ] Implement GrabCAD client
+- [ ] Research McMaster-Carr API (or implement scraping)
+- [ ] Add Thingiverse API integration
+- [ ] Implement search ranking algorithm
+- [ ] Create asset caching system
+- [ ] Build asset browser UI
+- [ ] Add download and import functionality
+- [ ] Implement asset preview
+
+**Dependencies:**
+- aiohttp
+- API keys for each service
+
+**API Endpoints:**
+```python
+@app.get("/api/components/catalog")
+@app.get("/api/components/search")
+@app.post("/api/components/import")
+```
+
+---
+
+## PHASE STUB-2: ML FRAMEWORK AGENTS (5 Agents)
+
+### STUB-201: TRAIN control_agent.py RL Policy
+**Status:** Not Started  
+**Priority:** P0  
+**Effort:** 4 weeks
+
+**Current Issues:**
+- RL policy loader exists but no trained weights
+- Mock disturbance estimation
+- Falls back to LQR
+
+**Research Required:**
+- Arroyo et al. (2022) "RL-MPC for Building Energy Management"
+- Amos et al. (2018) "Differentiable MPC"
+- Lin et al. (2024) "TD3-based RL-MPC"
+
+**Implementation Tasks:**
+
+**Week 1: Environment Setup**
+- [ ] Create BrickControlEnv gym environment
+- [ ] Implement hover dynamics physics
+- [ ] Define state space (12D: pos, vel, orientation, angular vel)
+- [ ] Define action space (4D: throttle, roll, pitch, yaw)
+- [ ] Implement reward function
+- [ ] Create training scenarios
+
+**Week 2: Training**
+- [ ] Set up PPO training pipeline
+- [ ] Train for 1M timesteps
+- [ ] Monitor convergence
+- [ ] Save checkpoints every 100k steps
+
+**Week 3: Validation**
+- [ ] Test on unseen scenarios
+- [ ] Compare against LQR baseline
+- [ ] Measure performance improvement
+- [ ] Tune hyperparameters if needed
+
+**Week 4: Integration**
+- [ ] Load trained policy in ControlAgent
+- [ ] Implement RL-MPC hybrid
+- [ ] Add real-time inference
+- [ ] Create performance metrics
+
+**Training Requirements:**
+- GPU: NVIDIA V100 or better
+- Time: ~8 hours
+- Episodes: 1M+ timesteps
+
+**Code:**
+```python
+def train_control_policy():
+    env = make_vec_env(BrickControlEnv, n_envs=8)
+    model = PPO("MlpPolicy", env, verbose=1)
+    model.learn(total_timesteps=1_000_000)
+    model.save("models/control_policy_ppo.zip")
+```
+
+---
+
+### STUB-202: TRAIN diagnostic_agent.py
+**Status:** Not Started  
+**Priority:** P1  
+**Effort:** 3 weeks
+
+**Current Issues:**
+- Surrogate not trained
+- Regex fallback only
+
+**Implementation Tasks:**
+
+**Week 1: Data Collection**
+- [ ] Collect system logs with labeled issues
+- [ ] Create dataset of (log, diagnosis) pairs
+- [ ] Augment with synthetic error logs
+- [ ] Target: 100k+ labeled samples
+
+**Week 2: Model Training**
+- [ ] Fine-tune CodeBERT/BERT on logs
+- [ ] Train classification model
+- [ ] Validate on test set
+- [ ] Target: >85% accuracy
+
+**Week 3: Integration**
+- [ ] Load model in DiagnosticAgent
+- [ ] Implement inference pipeline
+- [ ] Add confidence scoring
+- [ ] Create action recommendation system
+
+**Dependencies:**
+- transformers
+- torch
+- datasets
+
+**Training:**
+```python
+from transformers import AutoModelForSequenceClassification, AutoTokenizer
+
+model = AutoModelForSequenceClassification.from_pretrained(
+    "microsoft/codebert-base",
+    num_labels=5  # Network, Memory, Config, Logic, Security
+)
+
+# Fine-tune on log dataset
+```
+
+---
+
+### STUB-203: TRAIN template_design_agent.py
+**Status:** Not Started  
+**Priority:** P2  
+**Effort:** 2 weeks
+
+**Current Issues:**
+- Untrained surrogate
+- No quality prediction
+
+**Implementation Tasks:**
+- [ ] Generate training data (template variations)
+- [ ] Label with manufacturability scores
+- [ ] Label with performance scores
+- [ ] Train MLP surrogate
+- [ ] Integrate into agent
+- [ ] Add quality prediction
+
+**Training:**
+```python
+class TemplateSurrogate(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(10, 64),
+            nn.ReLU(),
+            nn.Linear(64, 32),
+            nn.ReLU(),
+            nn.Linear(32, 2),  # [manufacturability, performance]
+            nn.Sigmoid()
+        )
+```
+
+---
+
+### STUB-204: IMPLEMENT stt_agent.py
+**Status:** Not Started  
+**Priority:** P2  
+**Effort:** 1 week
+
+**Current Issues:**
+- Placeholder only
+
+**Implementation Tasks:**
+- [ ] Install OpenAI Whisper
+- [ ] Implement audio preprocessing
+- [ ] Create transcription pipeline
+- [ ] Add language detection
+- [ ] Implement real-time streaming (optional)
+
+**Dependencies:**
+- openai-whisper
+- ffmpeg
+
+**Code:**
+```python
+import whisper
+
+class STTAgent:
+    def __init__(self):
+        self.model = whisper.load_model("base")
+    
+    async def run(self, params):
+        result = self.model.transcribe(params["audio_data"])
+        return {
+            "text": result["text"],
+            "language": result.get("language", "en")
+        }
+```
+
+---
+
+### STUB-205: REWRITE vhil_agent.py
+**Status:** Not Started  
+**Priority:** P2  
+**Effort:** 3 weeks
+
+**Current Issues:**
+- Random sensor noise (not realistic)
+- Simplified physics
+
+**Implementation Tasks:**
+- [ ] Implement accurate IMU model (noise, bias, drift)
+- [ ] Create GPS model (HDOP, satellite count)
+- [ ] Add LIDAR simulation (range, resolution)
+- [ ] Implement camera emulation (FPS, exposure)
+- [ ] Integrate real physics simulation
+- [ ] Add timing-accurate simulation
+- [ ] Create hardware failure simulation
+- [ ] Build sensor fusion validation
+
+**Code:**
+```python
+class IMUModel:
+    def __init__(self, noise_density=0.01):
+        self.noise_density = noise_density
+        self.bias = np.random.randn(3) * 0.001
+    
+    def read(self, state):
+        true_accel = state.get("acceleration")
+        noise = np.random.randn(3) * self.noise_density
+        return true_accel + self.bias + noise
+```
+
+---
+
+## PHASE STUB-3: PARTIAL IMPLEMENTATION (10 Agents)
+
+### STUB-301: COMPLETE visual_validator_agent.py
+**Status:** Not Started  
+**Priority:** P1  
+**Effort:** 1 week
+
+**Current:** Basic trimesh checks
+**Missing:** Render quality, scene composition, lighting
+
+**Tasks:**
+- [ ] Add render quality assessment
+- [ ] Implement scene composition analysis
+- [ ] Add lighting validation
+- [ ] Create texture resolution check
+- [ ] Build visual quality scoring
+
+---
+
+### STUB-302: COMPLETE network_agent.py
+**Status:** Not Started  
+**Priority:** P2  
+**Effort:** 3 weeks
+
+**Current:** Simple latency formula
+**Missing:** GNN, real topology analysis
+
+**Tasks:**
+- [ ] Implement graph neural network
+- [ ] Train on network topology data
+- [ ] Add real traffic simulation
+- [ ] Create bandwidth estimation
+- [ ] Implement bottleneck identification
+
+---
+
+### STUB-303: COMPLETE sustainability_agent.py
+**Status:** Not Started  
+**Priority:** P2  
+**Effort:** 3 weeks
+
+**Current:** Simple carbon factor lookup
+**Missing:** Full LCA, Ecoinvent integration
+
+**Tasks:**
+- [ ] Research Ecoinvent database access
+- [ ] Implement full LCA calculation
+- [ ] Add material extraction impacts
+- [ ] Create manufacturing energy model
+- [ ] Add transportation emissions
+- [ ] Implement end-of-life scenarios
+
+---
+
+### STUB-304: COMPLETE verification_agent.py
+**Status:** Not Started  
+**Priority:** P2  
+**Effort:** 3 weeks
+
+**Current:** Checks if "fail" in requirement text
+**Missing:** Real requirement verification
+
+**Tasks:**
+- [ ] Implement requirement parsing
+- [ ] Create test case generation
+- [ ] Add automated test execution
+- [ ] Build traceability matrix
+- [ ] Implement coverage analysis
+
+---
+
+### STUB-305: COMPLETE lattice_synthesis_agent.py
+**Status:** Not Started  
+**Priority:** P2  
+**Effort:** 4 weeks
+
+**Current:** Basic TPMS SDF generation
+**Missing:** GNoME integration, optimization
+
+**Research:** GNoME (Google DeepMind materials)
+
+**Tasks:**
+- [ ] Research GNoME database access
+- [ ] Implement lattice property prediction
+- [ ] Add optimization algorithms
+- [ ] Create manufacturing constraint checking
+- [ ] Build TPMS variation library
+
+---
+
+### STUB-306: COMPLETE standards_agent.py
+**Status:** Not Started  
+**Priority:** P1  
+**Effort:** 3 weeks
+
+**Current:** RAG with mock fallback
+**Missing:** Real standards database
+
+**Tasks:**
+- [ ] Collect ISO, ASTM, ASME, NASA standards
+- [ ] Create vector database of standards
+- [ ] Implement semantic search
+- [ ] Add compliance checking algorithms
+- [ ] Build standards browser UI
+- [ ] Implement version tracking
+
+**Data Sources:**
+- ISO standards (purchase/subscription)
+- ASTM standards
+- NASA Technical Standards
+- MIL-STD documents
+
+---
+
+### STUB-307: COMPLETE slicer_agent.py
+**Status:** Not Started  
+**Priority:** P1  
+**Effort:** 2 weeks
+
+**Current:** Simple time heuristic
+**Missing:** Real G-code generation
+
+**Tasks:**
+- [ ] Install CuraEngine or PrusaSlicer
+- [ ] Create slicing profile library
+- [ ] Implement G-code generation
+- [ ] Add support structure calculation
+- [ ] Create time/weight estimation
+- [ ] Build cost calculation
+
+**Dependencies:**
+- CuraEngine or PrusaSlicer
+- Slicing profiles
+
+---
+
+### STUB-308: COMPLETE explainable_agent.py
+**Status:** Not Started  
+**Priority:** P3  
+**Effort:** 2 weeks
+
+**Current:** Basic thought injection
+**Missing:** LIME/SHAP, attention viz
+
+**Tasks:**
+- [ ] Integrate SHAP for model explanations
+- [ ] Add LIME for local explanations
+- [ ] Implement attention visualization
+- [ ] Create decision tree extraction
+- [ ] Add counterfactual explanations
+- [ ] Build explanation dashboard
+
+**Dependencies:**
+- shap
+- lime
+
+---
+
+### STUB-309: RESEARCH replicator_mixin.py
+**Status:** Not Started  
+**Priority:** P4 (Research)  
+**Effort:** 4 weeks
+
+**Concept:** Von Neumann probe simulation
+
+**Tasks:**
+- [ ] Research resource harvesting simulation
+- [ ] Implement manufacturing capability assessment
+- [ ] Create child probe generation logic
+- [ ] Add evolution/mutation mechanisms
+
+**Note:** This is a research project, not immediately required
+
+---
+
+### STUB-310: RESEARCH von_neumann_agent.py
+**Status:** Not Started  
+**Priority:** P4 (Research)  
+**Effort:** 4 weeks
+
+**Concept:** Self-replication simulation
+
+**Tasks:**
+- [ ] Implement environment modeling
+- [ ] Add resource detection
+- [ ] Create manufacturing planning
+- [ ] Build child probe deployment
+
+**Note:** This is a research project, not immediately required
+
+---
+
+## PHASE STUB-4: FRONTEND INTEGRATION
+
+### STUB-401: Create Universal Agent API
+**Status:** Not Started  
+**Priority:** P0  
+**Effort:** 2 weeks
+
+**Tasks:**
+- [ ] Create POST /api/agents/{name}/run endpoint
+- [ ] Add GET /api/agents/{name}/status endpoint
+- [ ] Implement WebSocket /ws/agents/{name}
+- [ ] Add progress tracking middleware
+- [ ] Create standardized error responses
+- [ ] Build API documentation
+
+**Code:**
+```python
+@app.post("/api/agents/{agent_name}/run")
+async def run_agent(agent_name: str, params: Dict):
+    agent = get_agent_registry().get(agent_name)
+    if not agent:
+        raise HTTPException(404, f"Agent {agent_name} not found")
+    return await agent.run(params)
+```
+
+---
+
+### STUB-402: Build Agent Execution Panel
+**Status:** Not Started  
+**Priority:** P0  
+**Effort:** 2 weeks
+
+**Tasks:**
+- [ ] Create AgentExecutionPanel.tsx component
+- [ ] Add parameter input forms
+- [ ] Implement progress indicators
+- [ ] Create results viewer
+- [ ] Add error handling UI
+- [ ] Build WebSocket integration
+
+**Component:**
+```typescript
+interface AgentExecutionPanelProps {
+    agentName: string;
+    parameters: ParameterSchema;
+    onResult?: (result: any) => void;
+    onProgress?: (progress: number) => void;
+}
+```
+
+---
+
+### STUB-403: Build Agent Monitor Dashboard
+**Status:** Not Started  
+**Priority:** P1  
+**Effort:** 2 weeks
+
+**Tasks:**
+- [ ] Create AgentMonitor.tsx component
+- [ ] Add status indicators for all agents
+- [ ] Implement real-time updates via WebSocket
+- [ ] Create health history charts
+- [ ] Add alerting UI
+- [ ] Build agent control buttons (start/stop/restart)
+
+---
+
+### STUB-404: Build Results Visualization
+**Status:** Not Started  
+**Priority:** P1  
+**Effort:** 2 weeks
+
+**Tasks:**
+- [ ] Create ResultsViewer.tsx component
+- [ ] Add chart types (line, bar, gauge, scatter)
+- [ ] Implement 3D geometry viewer
+- [ ] Create data table component
+- [ ] Add export functionality (CSV, PDF)
+- [ ] Build comparison views
+
+---
+
+## IMPLEMENTATION TIMELINE
+
+### Month 1: Foundation
+- Week 1-2: Delete generic_agent, rewrite performance_agent
+- Week 3-4: Rewrite doctor_agent, pvc_agent
+
+### Month 2: Core Infrastructure
+- Week 5-6: Rewrite user_agent, remote_agent
+- Week 7-8: Train control_agent RL policy
+
+### Month 3: ML Training
+- Week 9-10: Train diagnostic_agent, template_agent
+- Week 11-12: Implement stt_agent, vhil_agent
+
+### Month 4: Partial Implementations
+- Week 13-14: Complete visual_validator, network_agent
+- Week 15-16: Complete sustainability, verification
+
+### Month 5: Advanced Agents
+- Week 17-18: Complete lattice, standards
+- Week 19-20: Complete slicer, explainable
+
+### Month 6: Frontend Integration
+- Week 21-22: Build API endpoints
+- Week 23-24: Build frontend components
+
+---
+
+## RESOURCE ALLOCATION
+
+| Resource | Count | Duration | Cost |
+|----------|-------|----------|------|
+| ML Engineer | 2 | 6 months | $120,000 |
+| Backend Engineer | 2 | 6 months | $120,000 |
+| Frontend Engineer | 1 | 3 months | $37,500 |
+| DevOps Engineer | 1 | 2 months | $12,500 |
+| GPU Compute | - | 6 months | $8,000 |
+| API Services | - | 6 months | $3,000 |
+| **TOTAL** | | | **$301,000** |
+
+---
+
+## SUCCESS METRICS
+
+### Agent Completion
+- [ ] 25 stub agents fully implemented
+- [ ] All agents have API endpoints
+- [ ] All agents have frontend components
+- [ ] 80%+ test coverage
+
+### ML Models
+- [ ] Control policy trained and validated
+- [ ] Diagnostic model >85% accuracy
+- [ ] Template surrogate trained
+- [ ] All models have inference endpoints
+
+### Frontend
+- [ ] All agents accessible via UI
+- [ ] Real-time updates working
+- [ ] Progress indicators for all long operations
+- [ ] Error handling standardized
+
+### Documentation
+- [ ] API documentation complete
+- [ ] Agent guides written
+- [ ] Frontend component docs
+- [ ] Deployment guide
+
+---
+
+*Tasks added: 2026-03-04*  
+*Total new tasks: 40+*  
+*Estimated completion: 6 months with 6 developers*

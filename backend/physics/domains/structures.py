@@ -2,11 +2,12 @@
 Structures Domain - Beams, Trusses, Shells, FEA
 
 Handles structural mechanics calculations.
+Integrates with ProductionStructuralAgent for proper FEA.
 """
 
 import logging
 import numpy as np
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Tuple, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +15,9 @@ logger = logging.getLogger(__name__)
 class StructuresDomain:
     """
     Structural mechanics calculations for beams, trusses, shells.
+    
+    Provides both analytical calculations and FEA integration through
+    ProductionStructuralAgent.
     """
     
     def __init__(self, providers: Dict):
@@ -24,6 +28,111 @@ class StructuresDomain:
             providers: Dictionary of physics providers
         """
         self.providers = providers
+        self._structural_agent = None
+    
+    def _get_structural_agent(self):
+        """Lazy load ProductionStructuralAgent"""
+        if self._structural_agent is None:
+            try:
+                from backend.agents.structural_agent_fixed import ProductionStructuralAgent
+                self._structural_agent = ProductionStructuralAgent()
+                logger.info("ProductionStructuralAgent loaded for FEA")
+            except Exception as e:
+                logger.warning(f"Could not load ProductionStructuralAgent: {e}")
+                self._structural_agent = False
+        return self._structural_agent if self._structural_agent is not False else None
+    
+    async def analyze_geometry(
+        self,
+        geometry_model: Dict[str, Any],
+        material: Dict[str, float],
+        loads: Dict[str, Any],
+        constraints: Dict[str, Any],
+        fidelity: str = "analytical"
+    ) -> Dict[str, Any]:
+        """
+        Perform structural analysis on geometry
+        
+        Args:
+            geometry_model: Geometry analysis model from GeometryPhysicsBridge
+            material: Material properties (E, nu, yield_strength)
+            loads: Applied loads (forces, pressures)
+            constraints: Boundary conditions
+            fidelity: Analysis fidelity ("analytical" or "FEA")
+            
+        Returns:
+            Analysis results with stress, displacement, safety factors
+        """
+        agent = self._get_structural_agent()
+        
+        if agent is None or fidelity == "analytical":
+            # Use analytical beam theory
+            return self._analyze_analytical(geometry_model, material, loads)
+        
+        # Use ProductionStructuralAgent for FEA
+        try:
+            from backend.agents.structural_agent_fixed import FidelityLevel
+            
+            fid = FidelityLevel.FEA if fidelity == "FEA" else FidelityLevel.ANALYTICAL
+            
+            result = await agent.analyze(
+                geometry=geometry_model,
+                material=material,
+                loads=loads,
+                constraints=constraints,
+                fidelity=fid
+            )
+            
+            return {
+                "max_stress": result.max_stress if hasattr(result, 'max_stress') else 0,
+                "max_displacement": result.max_displacement if hasattr(result, 'max_displacement') else 0,
+                "von_mises": result.von_mises if hasattr(result, 'von_mises') else None,
+                "safety_factor": result.safety_factor if hasattr(result, 'safety_factor') else None,
+                "fidelity": "FEA" if fid == FidelityLevel.FEA else "analytical",
+                "status": "success"
+            }
+        except Exception as e:
+            logger.error(f"FEA analysis failed: {e}")
+            return self._analyze_analytical(geometry_model, material, loads)
+    
+    def _analyze_analytical(
+        self,
+        geometry_model: Dict[str, Any],
+        material: Dict[str, float],
+        loads: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Perform analytical beam theory analysis"""
+        # Extract geometry properties
+        volume = geometry_model.get("volume", 0.001)
+        cross_section = geometry_model.get("cross_section", {})
+        area = cross_section.get("area", 0.0001)
+        I = cross_section.get("moment_of_inertia_x", 8.33e-6)
+        length = geometry_model.get("bounding_box", [0, 0, 0, 1, 1, 1])[3]  # xmax
+        
+        # Material properties
+        E = material.get("E", 200e9)  # Young's modulus (Pa)
+        yield_strength = material.get("yield_strength", 250e6)  # Pa
+        
+        # Loads
+        force = loads.get("force", 1000.0)  # N
+        
+        # Calculate stress
+        sigma = self.calculate_stress(force, area)
+        
+        # Calculate deflection (cantilever assumption)
+        delta = self.calculate_beam_deflection(force, length, E, I, "cantilever")
+        
+        # Safety factor
+        fos = self.calculate_safety_factor(yield_strength, sigma)
+        
+        return {
+            "max_stress": sigma,
+            "max_displacement": delta,
+            "von_mises": sigma,  # Simplified
+            "safety_factor": fos,
+            "fidelity": "analytical",
+            "status": "success"
+        }
     
     def calculate_stress(self, force: float, area: float) -> float:
         """

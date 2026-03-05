@@ -6,11 +6,18 @@ Removes hardcoded "magic numbers" and provides:
 2. Safety factor standards
 3. Mesh quality thresholds
 4. Physics correlation coefficients
+
+All values can be overridden via environment variables.
 """
 
+import os
 from typing import Dict, Any
 from dataclasses import dataclass
 
+
+# =============================================================================
+# SAFETY FACTORS
+# =============================================================================
 
 @dataclass
 class SafetyFactors:
@@ -37,6 +44,10 @@ class SafetyFactors:
         return factors.get(application, instance.general_mechanical)
 
 
+# =============================================================================
+# MESH QUALITY THRESHOLDS
+# =============================================================================
+
 @dataclass  
 class MeshQualityThresholds:
     """Mesh quality acceptance criteria"""
@@ -46,6 +57,23 @@ class MeshQualityThresholds:
     min_edge_angle: float = 15.0  # degrees
     max_edge_angle: float = 120.0
 
+
+# =============================================================================
+# CONVERGENCE CRITERIA
+# =============================================================================
+
+@dataclass
+class ConvergenceCriteria:
+    """Solver convergence criteria"""
+    stress_relative_tolerance: float = 0.01  # 1%
+    displacement_relative_tolerance: float = 0.001  # 0.1%
+    temperature_tolerance: float = 0.1  # K
+    max_iterations: int = 100
+
+
+# =============================================================================
+# NUSSELT CORRELATIONS
+# =============================================================================
 
 @dataclass
 class NusseltCorrelations:
@@ -66,17 +94,50 @@ class NusseltCorrelations:
     gnielinski_exp_pr: float = 0.4
 
 
-@dataclass
-class ConvergenceCriteria:
-    """Solver convergence criteria"""
-    stress_relative_tolerance: float = 0.01  # 1%
-    displacement_relative_tolerance: float = 0.001  # 0.1%
-    temperature_tolerance: float = 0.1  # K
-    max_iterations: int = 100
+# =============================================================================
+# MATERIAL DEFAULTS (Environment Variable Configurable)
+# =============================================================================
+
+STEEL = {
+    "name": "Steel",
+    "density": float(os.getenv("BRICK_STEEL_DENSITY", "7850.0")),  # kg/m³
+    "elastic_modulus": float(os.getenv("BRICK_STEEL_E", "210.0")),  # GPa
+    "poisson_ratio": float(os.getenv("BRICK_STEEL_NU", "0.3")),
+    "yield_strength": float(os.getenv("BRICK_STEEL_YIELD", "250.0")),  # MPa
+    "thermal_expansion": float(os.getenv("BRICK_STEEL_ALPHA", "12e-6")),  # 1/K
+}
+
+ALUMINUM = {
+    "name": "Aluminum",
+    "density": float(os.getenv("BRICK_AL_DENSITY", "2700.0")),  # kg/m³
+    "elastic_modulus": float(os.getenv("BRICK_AL_E", "70.0")),  # GPa
+    "poisson_ratio": float(os.getenv("BRICK_AL_NU", "0.33")),
+    "yield_strength": float(os.getenv("BRICK_AL_YIELD", "275.0")),  # MPa
+    "thermal_expansion": float(os.getenv("BRICK_AL_ALPHA", "23e-6")),  # 1/K
+}
+
+TITANIUM = {
+    "name": "Titanium",
+    "density": float(os.getenv("BRICK_TI_DENSITY", "4500.0")),  # kg/m³
+    "elastic_modulus": float(os.getenv("BRICK_TI_E", "116.0")),  # GPa
+    "poisson_ratio": float(os.getenv("BRICK_TI_NU", "0.342")),
+    "yield_strength": float(os.getenv("BRICK_TI_YIELD", "880.0")),  # MPa
+}
+
+# Default material (can be overridden via env)
+DEFAULT_MATERIAL_NAME = os.getenv("BRICK_DEFAULT_MATERIAL", "STEEL")
+DEFAULT_MATERIAL = {
+    "STEEL": STEEL,
+    "ALUMINUM": ALUMINUM,
+    "TITANIUM": TITANIUM,
+}.get(DEFAULT_MATERIAL_NAME.upper(), STEEL)
 
 
-# Material property database with temperature-dependent coefficients
+# =============================================================================
+# COMPREHENSIVE MATERIAL DATABASE
 # Sources: NIST IR 8388, MIL-HDBK-5J, ASM Handbook
+# =============================================================================
+
 MATERIAL_DATABASE: Dict[str, Dict[str, Any]] = {
     "steel_304": {
         "youngs_modulus": 200e9,
@@ -88,16 +149,14 @@ MATERIAL_DATABASE: Dict[str, Dict[str, Any]] = {
         "specific_heat": 500,
         "thermal_expansion": 17.3e-6,
         "melting_point": 1670,
-        # Polynomial coefficients for yield strength vs temperature
-        # σ_y(T) = c0 + c1*T + c2*T² + c3*T³ [MPa, T in °C]
         "yield_strength_temp_coeff": {
             "valid_range_c": [-200, 800],
-            "coefficients": [215, -0.08, -0.0001, 0],  # Slight decrease with temp
+            "coefficients": [215, -0.08, -0.0001, 0],
             "reference": "NIST IR 8388"
         },
         "elastic_modulus_temp_coeff": {
             "valid_range_c": [-200, 800],
-            "coefficients": [200, -0.05, -0.00005, 0],  # E decreases with temp
+            "coefficients": [200, -0.05, -0.00005, 0],
             "reference": "NIST IR 8388"
         }
     },
@@ -182,7 +241,7 @@ MATERIAL_DATABASE: Dict[str, Dict[str, Any]] = {
         "melting_point": 175,
         "yield_strength_temp_coeff": {
             "valid_range_c": [0, 60],
-            "coefficients": [50, -0.5, -0.01, 0],  # Sharp drop near Tg
+            "coefficients": [50, -0.5, -0.01, 0],
             "reference": "Material Datasheet"
         }
     },
@@ -222,8 +281,100 @@ MATERIAL_DATABASE: Dict[str, Dict[str, Any]] = {
 }
 
 
+# =============================================================================
+# FLUID PROPERTIES
+# =============================================================================
+
+AIR = {
+    "density": float(os.getenv("BRICK_AIR_DENSITY", "1.225")),  # kg/m³ at sea level, 15°C
+    "viscosity": float(os.getenv("BRICK_AIR_VISCOSITY", "1.81e-5")),  # Pa·s (dynamic)
+    "specific_heat": float(os.getenv("BRICK_AIR_CP", "1005.0")),  # J/(kg·K)
+    "thermal_conductivity": float(os.getenv("BRICK_AIR_K", "0.026")),  # W/(m·K)
+    "gas_constant": 287.058,  # J/(kg·K)
+    "prandtl_number": 0.71,
+}
+
+WATER = {
+    "density": float(os.getenv("BRICK_WATER_DENSITY", "998.0")),  # kg/m³ at 20°C
+    "viscosity": float(os.getenv("BRICK_WATER_VISCOSITY", "1.0e-3")),  # Pa·s
+    "specific_heat": 4186.0,  # J/(kg·K)
+    "thermal_conductivity": 0.598,  # W/(m·K)
+    "prandtl_number": 7.0,
+}
+
+
+# =============================================================================
+# PHYSICAL CONSTANTS
+# =============================================================================
+
+GRAVITY = float(os.getenv("BRICK_GRAVITY", "9.80665"))  # m/s² (standard)
+STANDARD_TEMPERATURE = float(os.getenv("BRICK_STD_TEMP", "288.15"))  # K (15°C)
+STANDARD_PRESSURE = float(os.getenv("BRICK_STD_PRESSURE", "101325.0"))  # Pa
+
+
+# =============================================================================
+# MESH/GEOMETRY DEFAULTS
+# =============================================================================
+
+MESH_DEFAULTS = {
+    "tolerance": float(os.getenv("BRICK_MESH_TOLERANCE", "0.01")),  # tessellation tolerance
+    "max_element_size": float(os.getenv("BRICK_MESH_MAX_SIZE", "0.1")),
+    "min_element_size": float(os.getenv("BRICK_MESH_MIN_SIZE", "0.001")),
+    "quality_threshold": float(os.getenv("BRICK_MESH_QUALITY", "0.1")),
+}
+
+
+# =============================================================================
+# CFD/OPENFOAM DEFAULTS
+# =============================================================================
+
+CFD_DEFAULTS = {
+    "reynolds_min": float(os.getenv("BRICK_CFD_RE_MIN", "10.0")),
+    "reynolds_max": float(os.getenv("BRICK_CFD_RE_MAX", "1e6")),
+    "aspect_ratio_min": float(os.getenv("BRICK_CFD_AR_MIN", "1.0")),
+    "aspect_ratio_max": float(os.getenv("BRICK_CFD_AR_MAX", "10.0")),
+    "porosity_max": float(os.getenv("BRICK_CFD_POROSITY_MAX", "0.5")),
+    "n_training_samples": int(os.getenv("BRICK_CFD_N_SAMPLES", "1000")),
+}
+
+OPENFOAM_DEFAULTS = {
+    "domain_factor": float(os.getenv("BRICK_OF_DOMAIN_FACTOR", "20.0")),  # domain size = factor * L
+    "mesh_divisions": int(os.getenv("BRICK_OF_MESH_DIV", "50")),
+    "end_time": float(os.getenv("BRICK_OF_END_TIME", "1000.0")),
+    "write_interval": int(os.getenv("BRICK_OF_WRITE_INTERVAL", "100")),
+}
+
+
+# =============================================================================
+# STRUCTURAL ANALYSIS DEFAULTS
+# =============================================================================
+
+STRUCTURAL_DEFAULTS = {
+    "n_points": int(os.getenv("BRICK_STRUCT_N_POINTS", "100")),  # beam discretization
+    "default_load": float(os.getenv("BRICK_STRUCT_DEFAULT_LOAD", "1000.0")),  # N
+    "tolerance": float(os.getenv("BRICK_STRUCT_TOLERANCE", "1e-6")),
+}
+
+
+# =============================================================================
+# CONVENIENCE FUNCTIONS
+# =============================================================================
+
+def get_material(name: str = None) -> Dict[str, Any]:
+    """Get material properties by name"""
+    materials = {
+        "STEEL": STEEL,
+        "ALUMINUM": ALUMINUM,
+        "ALUMINIUM": ALUMINUM,  # UK spelling
+        "TITANIUM": TITANIUM,
+    }
+    if name is None:
+        return DEFAULT_MATERIAL
+    return materials.get(name.upper(), DEFAULT_MATERIAL)
+
+
 def get_material_properties(material_name: str) -> Dict[str, float]:
-    """Get material properties from database"""
+    """Get detailed material properties from database"""
     if material_name.lower() not in MATERIAL_DATABASE:
         raise ValueError(f"Unknown material: {material_name}")
     return MATERIAL_DATABASE[material_name.lower()].copy()
@@ -232,3 +383,38 @@ def get_material_properties(material_name: str) -> Dict[str, float]:
 def list_available_materials() -> list:
     """List available materials in database"""
     return list(MATERIAL_DATABASE.keys())
+
+
+def get_fluid(name: str = "AIR") -> Dict[str, Any]:
+    """Get fluid properties by name"""
+    fluids = {
+        "AIR": AIR,
+        "WATER": WATER,
+    }
+    return fluids.get(name.upper(), AIR)
+
+
+def get_constant(name: str) -> float:
+    """Get physical constant"""
+    constants = {
+        "gravity": GRAVITY,
+        "g": GRAVITY,
+        "standard_temperature": STANDARD_TEMPERATURE,
+        "standard_pressure": STANDARD_PRESSURE,
+    }
+    return constants.get(name.lower(), 0.0)
+
+
+def get_safety_factor(application: str) -> float:
+    """Get safety factor for application type"""
+    return SafetyFactors.get_for_application(application)
+
+
+def get_mesh_thresholds() -> MeshQualityThresholds:
+    """Get mesh quality thresholds"""
+    return MeshQualityThresholds()
+
+
+def get_convergence_criteria() -> ConvergenceCriteria:
+    """Get solver convergence criteria"""
+    return ConvergenceCriteria()

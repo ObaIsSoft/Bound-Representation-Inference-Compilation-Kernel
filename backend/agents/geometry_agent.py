@@ -56,7 +56,7 @@ try:
     from OCP.Bnd import Bnd_Box
     from OCP.BRepBndLib import BRepBndLib
     from OCP.gp import gp_Vec, gp_Ax1, gp_Pnt, gp_Dir
-    from OCP.TopoDS import TopoDS_Shape
+    from OCP.TopoDS import TopoDS_Shape, TopoDS
     HAS_OPENCASCADE = True
     logger.info("OpenCASCADE available via OCP (cadquery-ocp)")
 except ImportError:
@@ -206,58 +206,58 @@ class ManifoldKernel(CADKernelInterface):
             raise RuntimeError("Manifold3D not available")
         self.name = "Manifold3D"
     
-    def create_box(self, length: float, width: float, height: float) -> m3d.Manifold:
+    def create_box(self, length: float, width: float, height: float) -> Any:
         """Create a box using Manifold3D"""
         # Manifold3D uses half-extents
         return m3d.Manifold.cube([length, width, height], True)
     
-    def create_cylinder(self, radius: float, height: float) -> m3d.Manifold:
+    def create_cylinder(self, radius: float, height: float) -> Any:
         """Create a cylinder"""
         return m3d.Manifold.cylinder(height, radius)
     
-    def create_sphere(self, radius: float) -> m3d.Manifold:
+    def create_sphere(self, radius: float) -> Any:
         """Create a sphere"""
         return m3d.Manifold.sphere(radius, 100)
     
-    def boolean_union(self, shape1: m3d.Manifold, shape2: m3d.Manifold) -> m3d.Manifold:
+    def boolean_union(self, shape1: Any, shape2: Any) -> Any:
         """Boolean union"""
         return shape1 + shape2
     
-    def boolean_difference(self, shape1: m3d.Manifold, shape2: m3d.Manifold) -> m3d.Manifold:
+    def boolean_difference(self, shape1: Any, shape2: Any) -> Any:
         """Boolean difference"""
         return shape1 - shape2
     
-    def boolean_intersection(self, shape1: m3d.Manifold, shape2: m3d.Manifold) -> m3d.Manifold:
+    def boolean_intersection(self, shape1: Any, shape2: Any) -> Any:
         """Boolean intersection"""
         return shape1 ^ shape2
     
-    def fillet(self, shape: m3d.Manifold, radius: float, edges: List[int]) -> m3d.Manifold:
+    def fillet(self, shape: Any, radius: float, edges: List[int]) -> Any:
         """Apply fillet (not directly supported in Manifold3D)"""
         logger.warning("Fillet not supported in Manifold3D - returning original shape")
         return shape
     
-    def chamfer(self, shape: m3d.Manifold, distance: float, edges: List[int]) -> m3d.Manifold:
+    def chamfer(self, shape: Any, distance: float, edges: List[int]) -> Any:
         """Apply chamfer (not directly supported)"""
         logger.warning("Chamfer not supported in Manifold3D - returning original shape")
         return shape
     
-    def export_step(self, shape: m3d.Manifold, filepath: str) -> bool:
+    def export_step(self, shape: Any, filepath: str) -> bool:
         """Export to STEP (not supported by Manifold3D - use mesh export)"""
         logger.warning("STEP export not supported by Manifold3D - use export_mesh")
         return False
     
-    def import_step(self, filepath: str) -> m3d.Manifold:
+    def import_step(self, filepath: str) -> Any:
         """Import from STEP (not supported)"""
         raise NotImplementedError("STEP import not supported by Manifold3D")
     
-    def tessellate(self, shape: m3d.Manifold, tolerance: float = 0.01) -> Tuple[np.ndarray, np.ndarray]:
+    def tessellate(self, shape: Any, tolerance: float = 0.01) -> Tuple[np.ndarray, np.ndarray]:
         """Tessellate to triangle mesh"""
         mesh = shape.to_mesh()
         vertices = np.array(mesh.vert_properties, dtype=np.float32)
         faces = np.array(mesh.tri_verts, dtype=np.int32)
         return vertices, faces
     
-    def export_mesh(self, shape: m3d.Manifold, filepath: str) -> bool:
+    def export_mesh(self, shape: Any, filepath: str) -> bool:
         """Export to mesh file"""
         try:
             import trimesh
@@ -343,6 +343,9 @@ class OpenCASCADEKernel(CADKernelInterface):
     def tessellate(self, shape: Any, tolerance: float = 0.01) -> Tuple[np.ndarray, np.ndarray]:
         """Tessellate to triangle mesh"""
         # Use BRepMesh for tessellation
+        from OCP.BRep import BRep_Tool
+        from OCP.TopLoc import TopLoc_Location
+        
         BRepMesh_IncrementalMesh(shape, tolerance)
         
         vertices = []
@@ -353,29 +356,43 @@ class OpenCASCADEKernel(CADKernelInterface):
         # Traverse faces using OCP imports (already imported at module level)
         exp = TopExp_Explorer(shape, TopAbs_FACE)
         while exp.More():
-            face = exp.Current()
+            face = TopoDS.Face_s(exp.Current())  # Cast to Face
             loc = TopLoc_Location()
-            triangulation = BRep_Tool.Triangulation_s(face, loc)
+            
+            try:
+                # Try new API first
+                triangulation = BRep_Tool.Triangulation(face, loc)
+            except (TypeError, AttributeError):
+                try:
+                    # Fall back to static method
+                    triangulation = BRep_Tool.Triangulation_s(face, loc)
+                except:
+                    triangulation = None
             
             if triangulation is not None:
                 # Get nodes and triangles
-                for i in range(1, triangulation.NbTriangles() + 1):
+                nb_triangles = triangulation.NbTriangles()
+                for i in range(1, nb_triangles + 1):
                     tri = triangulation.Triangle(i)
                     # Get vertex indices (1-based in OCP)
                     n1, n2, n3 = tri.Get()
                     
+                    # Create unique key for this face's vertices
+                    key_base = f"{vertex_count}_"
+                    
                     # Get vertex coordinates
                     for n in [n1, n2, n3]:
-                        if n not in vertex_map:
+                        key = key_base + str(n)
+                        if key not in vertex_map:
                             pnt = triangulation.Node(n).Transformed(loc.Transformation())
                             vertices.append([pnt.X(), pnt.Y(), pnt.Z()])
-                            vertex_map[n] = vertex_count
+                            vertex_map[key] = vertex_count
                             vertex_count += 1
                     
                     faces.append([
-                        vertex_map[n1],
-                        vertex_map[n2],
-                        vertex_map[n3]
+                        vertex_map[key_base + str(n1)],
+                        vertex_map[key_base + str(n2)],
+                        vertex_map[key_base + str(n3)]
                     ])
             
             exp.Next()
@@ -1244,8 +1261,79 @@ class ProductionGeometryAgent:
             "has_step_import": self.kernel_name == "opencascade",
             "has_parametric": True,
             "has_meshing": HAS_GMSH,
+            "has_physics_bridge": True,
+            "has_fea_export": True,
             "feature_types": [ft.value for ft in FeatureType]
         }
+    
+    def get_physics_model(self) -> Optional[Dict[str, Any]]:
+        """
+        Generate physics-ready analysis model from current geometry
+        
+        Returns:
+            Dictionary with analysis model, properties, and FEA preparation data
+        """
+        try:
+            from backend.agents.geometry_physics_bridge import GeometryPhysicsBridge, prepare_for_fea
+            
+            mesh = self._tessellate_kernel()
+            if mesh is None:
+                return None
+            
+            return prepare_for_fea(
+                mesh_vertices=mesh.vertices,
+                mesh_faces=mesh.faces
+            )
+        except Exception as e:
+            logger.error(f"Failed to generate physics model: {e}")
+            return None
+    
+    def get_mass_properties(self, density: float = 7850.0) -> Dict[str, float]:
+        """
+        Calculate mass properties from current geometry
+        
+        Args:
+            density: Material density in kg/m³ (default: steel)
+            
+        Returns:
+            Dictionary with volume, mass, surface_area, centroid
+        """
+        try:
+            from backend.agents.geometry_physics_bridge import calculate_mass_properties
+            
+            mesh = self._tessellate_kernel()
+            if mesh is None:
+                return {"error": "No mesh available"}
+            
+            return calculate_mass_properties(mesh.vertices, mesh.faces, density)
+        except Exception as e:
+            logger.error(f"Failed to calculate mass properties: {e}")
+            return {"error": str(e)}
+    
+    def export_for_fea(self, filepath: str) -> bool:
+        """
+        Export current geometry for FEA analysis
+        
+        Args:
+            filepath: Output file path (.inp for CalculiX)
+            
+        Returns:
+            True if successful
+        """
+        try:
+            from backend.agents.geometry_physics_bridge import GeometryPhysicsBridge
+            
+            mesh = self._tessellate_kernel()
+            if mesh is None:
+                return False
+            
+            bridge = GeometryPhysicsBridge()
+            model = bridge.create_analysis_model(mesh.vertices, mesh.faces)
+            
+            return bridge.export_to_calculix(model, filepath)
+        except Exception as e:
+            logger.error(f"Failed to export for FEA: {e}")
+            return False
     
     async def run(
         self,
@@ -1287,7 +1375,16 @@ class ProductionGeometryAgent:
         # Tessellate for visualization
         mesh = self._tessellate_kernel()
         
-        return {
+        # Generate physics model if requested
+        physics_model = None
+        mass_props = None
+        if params.get("include_physics", False):
+            physics_model = self.get_physics_model()
+            mass_props = self.get_mass_properties(
+                density=params.get("density", 7850.0)
+            )
+        
+        result = {
             "kernel": self.kernel_name,
             "capabilities": self.get_capabilities(),
             "mesh_vertices": mesh.vertices.tolist() if mesh else [],
@@ -1295,6 +1392,21 @@ class ProductionGeometryAgent:
             "feature_count": len(self.feature_tree.features),
             "status": "success"
         }
+        
+        if physics_model:
+            result["physics_model"] = {
+                "volume": physics_model["properties"]["volume"],
+                "surface_area": physics_model["properties"]["surface_area"],
+                "centroid": physics_model["properties"]["centroid"],
+                "mesh_quality": physics_model["properties"]["mesh_quality"],
+            }
+            if physics_model["properties"].get("cross_section"):
+                result["physics_model"]["cross_section"] = physics_model["properties"]["cross_section"]
+        
+        if mass_props:
+            result["mass_properties"] = mass_props
+        
+        return result
 
 
 # Convenience functions

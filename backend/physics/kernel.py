@@ -159,7 +159,13 @@ class UnifiedPhysicsKernel:
         # Route through multi-fidelity system
         return self.intelligence["multi_fidelity"].route(equation, params, fidelity)
     
-    def validate_geometry(self, geometry: Dict, material: str, loading: str = "self_weight") -> Dict[str, Any]:
+    async def validate_geometry(
+        self,
+        geometry: Dict,
+        material: str,
+        loading: str = "self_weight",
+        fidelity: str = "analytical"
+    ) -> Dict[str, Any]:
         """
         Check if a geometry is physically valid.
         
@@ -167,6 +173,7 @@ class UnifiedPhysicsKernel:
             geometry: Geometry specification (must include 'volume')
             material: Material name
             loading: Loading condition (default: "self_weight")
+            fidelity: Analysis fidelity ("analytical" or "FEA")
         
         Returns:
             Validation result with feasibility, FOS, suggestions
@@ -175,42 +182,74 @@ class UnifiedPhysicsKernel:
         structures = self.domains["structures"]
         materials_domain = self.domains["materials"]
         
+        # Get material properties
+        density = materials_domain.get_property(material, "density")
+        yield_strength = materials_domain.get_property(material, "yield_strength")
+        youngs_modulus = materials_domain.get_property(material, "youngs_modulus")
+        
         # Calculate self-weight
         volume = geometry.get("volume", 0.001)  # m^3
-        density = materials_domain.get_property(material, "density")
         weight = volume * density * self.get_constant("g")
         
-        # Calculate stress
-        area = geometry.get("cross_section_area", 0.0001)  # m^2
-        stress = structures.calculate_stress(weight, area)
-        
-        # Get material yield strength
-        yield_strength = materials_domain.get_property(material, "yield_strength")
-        
-        # Calculate factor of safety
-        fos = structures.calculate_safety_factor(yield_strength, stress)
-        
-        # Calculate deflection (if beam geometry available)
-        deflection = 0.0
-        if "length" in geometry:
-            youngs_modulus = materials_domain.get_property(material, "youngs_modulus")
-            moi = structures.calculate_moment_of_inertia_rectangle(
-                geometry.get("width", 0.1),
-                geometry.get("height", 0.1)
-            )
-            deflection = structures.calculate_beam_deflection(
-                weight, geometry["length"], youngs_modulus, moi
-            )
-        
-        return {
-            "feasible": fos > 1.0,
-            "reason": "Geometry will collapse under self-weight" if fos < 1.0 else "OK",
-            "fix_suggestion": "Increase cross-section or use stronger material" if fos < 1.0 else None,
-            "self_weight": weight,
-            "stress": stress,
-            "deflection": deflection,
-            "fos": fos
+        # Prepare analysis inputs
+        geometry_model = {
+            "volume": volume,
+            "cross_section": {
+                "area": geometry.get("cross_section_area", 0.0001),
+                "moment_of_inertia_x": geometry.get("moment_of_inertia", 8.33e-6)
+            },
+            "bounding_box": geometry.get("bounding_box", [0, 0, 0, 1, 1, 1])
         }
+        
+        material_props = {
+            "E": youngs_modulus,
+            "nu": 0.3,  # Default Poisson's ratio
+            "yield_strength": yield_strength
+        }
+        
+        loads = {"force": weight}
+        constraints = {"fixed_nodes": []}
+        
+        # Run analysis through StructuresDomain
+        try:
+            result = await structures.analyze_geometry(
+                geometry_model=geometry_model,
+                material=material_props,
+                loads=loads,
+                constraints=constraints,
+                fidelity=fidelity
+            )
+            
+            fos = result.get("safety_factor", float('inf'))
+            
+            return {
+                "feasible": fos > 1.0,
+                "reason": "Geometry will collapse under self-weight" if fos < 1.0 else "OK",
+                "fix_suggestion": "Increase cross-section or use stronger material" if fos < 1.0 else None,
+                "self_weight": weight,
+                "stress": result.get("max_stress", 0),
+                "deflection": result.get("max_displacement", 0),
+                "von_mises": result.get("von_mises"),
+                "fos": fos,
+                "fidelity": result.get("fidelity", "analytical"),
+                "status": result.get("status", "unknown")
+            }
+        except Exception as e:
+            logger.error(f"Geometry validation failed: {e}")
+            # Fallback to simple calculation
+            area = geometry.get("cross_section_area", 0.0001)
+            stress = weight / area if area > 0 else float('inf')
+            fos = yield_strength / stress if stress > 0 else float('inf')
+            
+            return {
+                "feasible": fos > 1.0,
+                "reason": f"Validation error: {e}",
+                "self_weight": weight,
+                "stress": stress,
+                "fos": fos,
+                "fidelity": "fallback",
+                "status": "error"
+            }
     
     def validate_state(self, state: Dict) -> bool:
         """

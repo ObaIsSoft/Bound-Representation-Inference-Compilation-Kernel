@@ -460,17 +460,17 @@ await aiofiles.open(temp_path, "wb")
 
 ### Phase 0: Critical Fixes (Week 1)
 
-- [ ] **FIX-001**: Fix Manifold3D API (`vert_properties` → `vert_pos`) ✅ DONE
-- [ ] **FIX-002**: Remove duplicate `_estimate_geometry_tree` ✅ DONE
-- [ ] **FIX-003**: Clean git hygiene ✅ DONE
+- [x] **FIX-001**: Fix Manifold3D API (`vert_properties` → `vert_pos`) ✅ DONE
+- [x] **FIX-002**: Remove duplicate `_estimate_geometry_tree` ✅ DONE
+- [x] **FIX-003**: Clean git hygiene ✅ DONE
 - [ ] **FIX-004**: Add directory creation safeguards
 - [ ] **FIX-005**: Fix global mutable state (`global_vmk`, `plan_reviews`)
 - [ ] **FIX-006**: Convert blocking I/O to async
 
 ### Phase 1: Physics Foundation (Weeks 2-4)
 
-- [ ] **FIX-101**: Implement proper drag coefficient calculation (Cd vs Re)
-- [ ] **FIX-102**: Add Reynolds number effects to all fluid calculations
+- [x] **FIX-101**: Implement proper drag coefficient calculation (Cd vs Re)
+- [x] **FIX-102**: Add Reynolds number effects to all fluid calculations
 - [ ] **FIX-103**: Implement stress concentration factors (Kt)
 - [ ] **FIX-104**: Add failure criteria (Von Mises, Tresca)
 - [ ] **FIX-105**: Implement safety factors
@@ -482,35 +482,35 @@ await aiofiles.open(temp_path, "wb")
 
 ### Phase 2: FEA Integration (Weeks 5-8)
 
-- [ ] **FIX-201**: Integrate CalculiX solver
-- [ ] **FIX-202**: Implement mesh generation (Gmsh)
-- [ ] **FIX-203**: Add mesh quality metrics
-- [ ] **FIX-204**: Implement boundary condition handling
-- [ ] **FIX-205**: Add convergence monitoring
-- [ ] **FIX-206**: Create FEA input file generators
-- [ ] **FIX-207**: Implement result parsing
-- [ ] **FIX-208**: Add mesh convergence studies
+- [x] **FIX-201**: Integrate CalculiX solver
+- [x] **FIX-202**: Implement mesh generation (Gmsh)
+- [x] **FIX-203**: Add mesh quality metrics
+- [x] **FIX-204**: Implement boundary condition handling
+- [x] **FIX-205**: Add convergence monitoring
+- [x] **FIX-206**: Create FEA input file generators
+- [x] **FIX-207**: Implement result parsing
+- [x] **FIX-208**: Add mesh convergence studies
 
 ### Phase 3: Validation Framework (Weeks 9-10)
 
-- [ ] **FIX-301**: Create benchmark cases (analytical solutions)
-- [ ] **FIX-302**: Implement ASME V&V 20 framework
+- [x] **FIX-301**: Create benchmark cases (analytical solutions)
+- [x] **FIX-302**: Implement ASME V&V 20 framework
 - [ ] **FIX-303**: Add uncertainty quantification
 - [ ] **FIX-304**: Create experimental data correlation
 - [ ] **FIX-305**: Implement validation reports
-- [ ] **FIX-306**: Add unit test suite (pytest)
-- [ ] **FIX-307**: Create integration tests
+- [x] **FIX-306**: Add unit test suite (pytest)
+- [x] **FIX-307**: Create integration tests
 
 ### Phase 4: Agent Implementation (Weeks 11-30)
 
 #### Tier 1: Foundation (Weeks 11-14)
-- [ ] **FIX-401**: Production GeometryAgent
-- [ ] **FIX-402**: Production StructuralAgent
+- [x] **FIX-401**: Production GeometryAgent
+- [x] **FIX-402**: Production StructuralAgent
 - [ ] **FIX-403**: Production MaterialAgent
 - [ ] **FIX-404**: Simplified Orchestrator (5-core)
 
 #### Tier 2: Physics (Weeks 15-20)
-- [ ] **FIX-405**: Production ThermalAgent
+- [x] **FIX-405**: Production ThermalAgent
 - [ ] **FIX-406**: Production ManifoldAgent
 - [ ] **FIX-407**: Production PhysicsEngineAgent
 - [ ] **FIX-408**: Implement FidelityRouter

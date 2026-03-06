@@ -17,7 +17,7 @@ try:
 except ImportError:
     HAS_TRIMESH = False
 
-from backend.agents.dfm_agent_production import (
+from backend.agents.dfm_agent import (
     ProductionDfmAgent,
     ManufacturingFeature,
     DfmIssue,
@@ -53,6 +53,20 @@ def thin_wall_part():
     if not HAS_TRIMESH:
         pytest.skip("trimesh not installed")
     return trimesh.creation.box(extents=[20, 20, 0.5])
+
+
+
+# Check if rtree is available (required for mesh ray tracing)
+try:
+    import rtree
+    HAS_RTREE = True
+except ImportError:
+    HAS_RTREE = False
+    
+requires_rtree = pytest.mark.skipif(
+    not HAS_RTREE,
+    reason="rtree not available - install with: brew install spatialindex && pip install rtree"
+)
 
 
 class TestProductionDfmAgent:

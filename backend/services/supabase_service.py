@@ -373,7 +373,7 @@ class SupabaseService:
         # Query Supabase
         result = self.client.table("manufacturing_rates")\
             .select("*")\
-            .eq("process", process_type)\
+            .eq("process_type", process_type)\
             .eq("region", region)\
             .single()\
             .execute()

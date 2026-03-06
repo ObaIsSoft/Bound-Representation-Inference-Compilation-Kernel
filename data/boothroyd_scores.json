@@ -1,0 +1,155 @@
+{
+  "handling_scores": {
+    "description": "Boothroyd-Dewhurst handling difficulty (0 = easiest, 6 = most difficult)",
+    "scores": {
+      "alpha_symmetry": {
+        "description": "Symmetry about axis perpendicular to insertion axis",
+        "A": 0,
+        "B": 0.5,
+        "C": 1.0,
+        "D": 1.5
+      },
+      "beta_symmetry": {
+        "description": "Symmetry about insertion axis",
+        "A": 0,
+        "B": 0.5,
+        "C": 1.0,
+        "D": 1.5
+      },
+      "size_score": {
+        "description": "Size handling difficulty",
+        "large_easy_grasp": 0.5,
+        "medium": 1.0,
+        "small": 1.5,
+        "very_small": 2.0,
+        "extremely_small": 2.5
+      },
+      "weight_score": {
+        "description": "Weight handling difficulty",
+        "light": 0,
+        "medium": 0.5,
+        "heavy": 1.0,
+        "very_heavy": 1.5
+      },
+      "nesting_tangling": {
+        "description": "Nesting or tangling tendency",
+        "none": 0,
+        "slight": 0.5,
+        "moderate": 1.0,
+        "severe": 1.5
+      },
+      "fragility": {
+        "description": "Fragility factor",
+        "robust": 0,
+        "slight_care": 0.5,
+        "fragile": 1.0,
+        "very_fragile": 1.5
+      },
+      "flexibility": {
+        "description": "Flexibility factor",
+        "rigid": 0,
+        "semi_rigid": 0.5,
+        "flexible": 1.0,
+        "very_flexible": 1.5
+      }
+    },
+    "total_score_ranges": {
+      "excellent": {"max": 1.5, "handling": "Manual or automatic feeding"},
+      "good": {"max": 2.5, "handling": "Manual or automatic feeding"},
+      "fair": {"max": 3.5, "handling": "Manual feeding or special tooling"},
+      "poor": {"max": 5.0, "handling": "Manual only, special tooling required"},
+      "very_poor": {"max": 6.0, "handling": "Redesign recommended"}
+    }
+  },
+  "insertion_scores": {
+    "description": "Boothroyd-Dewhurst insertion difficulty",
+    "scores": {
+      "insertion_resistance": {
+        "none": 0,
+        "slight": 0.5,
+        "moderate": 1.0,
+        "significant": 1.5,
+        "high": 2.0
+      },
+      "vision_required": {
+        "description": "Visual obstruction during insertion",
+        "none": 0,
+        "partial": 0.5,
+        "significant": 1.0,
+        "complete": 1.5
+      },
+      "access_difficulty": {
+        "description": "Access constraints",
+        "unrestricted": 0,
+        "slight_obstruction": 0.5,
+        "moderate_obstruction": 1.0,
+        "severe_obstruction": 1.5,
+        "blind_access": 2.0
+      },
+      "alignment_required": {
+        "description": "Precision alignment needed",
+        "self_aligning": 0,
+        "coarse": 0.5,
+        "fine": 1.0,
+        "precision": 1.5
+      },
+      "fastening_required": {
+        "description": "Additional fastening operations",
+        "none": 0,
+        "snap_fit": 0.5,
+        "threaded_fastener": 1.5,
+        "multiple_fasteners": 2.5
+      },
+      "holding_required": {
+        "description": "Need to hold part during insertion",
+        "none": 0,
+        "one_hand": 0.5,
+        "tooling_required": 1.0,
+        "complex_fixturing": 1.5
+      }
+    },
+    "total_score_ranges": {
+      "excellent": {"max": 1.5, "time_seconds": 1.5},
+      "good": {"max": 2.5, "time_seconds": 2.5},
+      "fair": {"max": 4.0, "time_seconds": 4.0},
+      "poor": {"max": 6.0, "time_seconds": 6.0},
+      "very_poor": {"max": 8.0, "time_seconds": 8.0}
+    }
+  },
+  "dfm_guidelines": {
+    "part_count": {
+      "target": "minimum functional parts",
+      "ideal": 1,
+      "good": "< 10",
+      "review": "> 20"
+    },
+    "assembly_direction": {
+      "ideal": "single direction (top-down)",
+      "good": "two directions",
+      "review": "> 3 directions"
+    },
+    "fasteners": {
+      "target": "minimize or eliminate",
+      "ideal": 0,
+      "good": "snap fits instead of screws",
+      "review": "> 10 threaded fasteners"
+    },
+    "standard_parts": {
+      "target": "use standard components",
+      "ideal": "100% standard",
+      "good": "> 80% standard",
+      "review": "< 50% standard"
+    },
+    "modular_design": {
+      "target": "subassemblies for testing",
+      "ideal": "functional modules",
+      "good": "testable subassemblies"
+    }
+  },
+  "design_efficiency_formula": {
+    "description": "DFA Design Efficiency Score",
+    "formula": "(3 × theoretical_minimum_parts) / total_assembly_time_seconds",
+    "target_score": 0.6,
+    "excellent_score": 0.85
+  }
+}

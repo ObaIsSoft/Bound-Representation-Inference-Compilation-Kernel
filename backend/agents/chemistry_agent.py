@@ -106,20 +106,128 @@ class ChemistryAgent:
 
     def _check_environment_compatibility(self, data: Dict, env_type: str, issues: List[str], name: str):
         """
-        Data-driven compatibility check. 
-        In strict mode, looks for 'corrosion_resistance_{env}' property.
-        Falls back to element heuristics if properties not found.
+        Data-driven compatibility check using corrosion_resistance.json.
+        Falls back to element heuristics if material not found.
         """
         elements = data.get("elements", [])
+        category = data.get("category", "").lower()
+        material_name = data.get("name", "").lower()
         
-        # TODO: Add 'corrosion_resistance' table to DB/Supabase for explicit lookups.
+        # Load corrosion resistance database
+        corrosion_data = self._load_corrosion_database()
+        env_key = env_type.upper()
         
+        # Try to match material to database entry
+        material_key = self._match_material_to_key(data, corrosion_data)
+        
+        if material_key and material_key in corrosion_data.get("materials", {}):
+            # Use explicit corrosion data
+            mat_data = corrosion_data["materials"][material_key]
+            resistance = mat_data.get("resistance", {}).get(env_key, {})
+            
+            rating = resistance.get("rating", "unknown")
+            rate = resistance.get("corrosion_rate_mm_year", 0)
+            mechanism = resistance.get("mechanism", "unknown")
+            notes = resistance.get("notes", "")
+            
+            # Convert rating to severity
+            rating_scale = corrosion_data.get("rating_scale", {})
+            rating_info = rating_scale.get(rating, {"score": 0.5})
+            score = rating_info.get("score", 0.5)
+            
+            if score < 0.3:
+                issues.append(f"CRITICAL: Material '{name}' ({mat_data['name']}) has {rating} corrosion resistance in {env_type}. "
+                            f"Rate: {rate} mm/year. Mechanism: {mechanism}. {notes}")
+            elif score < 0.5:
+                issues.append(f"WARNING: Material '{name}' ({mat_data['name']}) has {rating} corrosion resistance in {env_type}. "
+                            f"Rate: {rate} mm/year. {notes}")
+            elif score < 0.7:
+                issues.append(f"NOTE: Material '{name}' ({mat_data['name']}) has {rating} corrosion resistance in {env_type}. "
+                            f"Monitoring recommended. {notes}")
+        else:
+            # Fallback to element heuristics
+            self._check_element_heuristics(elements, env_type, issues, name)
+    
+    def _load_corrosion_database(self) -> Dict:
+        """Load corrosion resistance database."""
+        import json
+        import os
+        
+        paths = [
+            "data/corrosion_resistance.json",
+            "backend/data/corrosion_resistance.json",
+        ]
+        
+        for path in paths:
+            if os.path.exists(path):
+                try:
+                    with open(path, 'r') as f:
+                        return json.load(f)
+                except Exception as e:
+                    logger.warning(f"Failed to load corrosion DB from {path}: {e}")
+        
+        return {}
+    
+    def _match_material_to_key(self, data: Dict, corrosion_data: Dict) -> Optional[str]:
+        """Match material data to corrosion database key."""
+        category = data.get("category", "").lower()
+        name = data.get("name", "").lower()
+        formula = data.get("formula", "").lower()
+        
+        materials = corrosion_data.get("materials", {})
+        
+        # Direct match by name
+        for key, mat in materials.items():
+            db_name = mat.get("name", "").lower()
+            db_formula = mat.get("formula", "").lower()
+            
+            if name in db_name or db_name in name:
+                return key
+            if formula and formula == db_formula:
+                return key
+        
+        # Category-based matching
+        category_map = {
+            "aluminum": "aluminum_6061",
+            "titanium": "titanium_grade2",
+            "steel": "steel_carbon",
+            "stainless steel": "steel_stainless_304",
+            "copper": "copper",
+            "nickel": "nickel",
+            "magnesium": "magnesium",
+            "zinc": "zinc",
+            "gold": "gold",
+            "platinum": "platinum"
+        }
+        
+        for cat_key, db_key in category_map.items():
+            if cat_key in category or cat_key in name:
+                return db_key
+        
+        return None
+    
+    def _check_element_heuristics(self, elements: List[str], env_type: str, issues: List[str], name: str):
+        """Fallback element-based heuristics."""
         if env_type == "MARINE":
-            # Heuristics (Temporary until DB has explicit flags)
             if "Fe" in elements and "Cr" not in elements: 
-                issues.append(f"HAZARD: Ferrous material '{name}' (Iron) is highly susceptible to rust in MARINE environment.")
+                issues.append(f"HAZARD: Ferrous material '{name}' (Iron) is highly susceptible to rust in MARINE environment. "
+                            f"Consider stainless steel or protective coating.")
             if "Mg" in elements:
-                issues.append(f"HAZARD: Magnesium '{name}' dissolves rapidly in salt water.")
+                issues.append(f"HAZARD: Magnesium '{name}' dissolves rapidly in salt water. Avoid or use heavy coating.")
+            if "Cu" in elements and "Ni" not in elements:
+                issues.append(f"WARNING: Copper '{name}' may suffer erosion-corrosion in high-velocity marine flows.")
+        
+        elif env_type == "ACIDIC":
+            if "Al" in elements:
+                issues.append(f"WARNING: Aluminum '{name}' is attacked by both acids and strong bases (amphoteric).")
+            if "Fe" in elements:
+                issues.append(f"WARNING: Iron '{name}' corrodes rapidly in acidic environments.")
+        
+        elif env_type == "HIGH_TEMP":
+            if "Al" in elements:
+                issues.append(f"WARNING: Aluminum '{name}' loses strength above 150°C. Consider titanium or nickel alloy.")
+            if "Fe" in elements and "Cr" not in elements:
+                issues.append(f"WARNING: Carbon steel '{name}' oxidizes rapidly at high temperatures. Use stainless or coating.")
 
     def step(self, state: Dict[str, float], inputs: Dict[str, float], dt: float = 0.1) -> Dict[str, Any]:
         """

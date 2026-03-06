@@ -1,0 +1,200 @@
+{
+  "asme_y14_5_2018": {
+    "description": "ASME Y14.5-2018 Geometric Dimensioning and Tolerancing Rules",
+    "tolerance_types": {
+      "form": {
+        "flatness": {
+          "symbol": "⌓",
+          "description": "Tolerance zone between two parallel planes",
+          "applies_to": "single planar surface",
+          "datum_required": false,
+          "default_tolerance_ratio": 0.001
+        },
+        "straightness": {
+          "symbol": "─",
+          "description": "Tolerance zone between two parallel lines",
+          "applies_to": "linear element or axis",
+          "datum_required": false,
+          "default_tolerance_ratio": 0.001
+        },
+        "circularity": {
+          "symbol": "○",
+          "description": "Tolerance zone between two concentric circles",
+          "applies_to": "circular cross-section",
+          "datum_required": false,
+          "default_tolerance_ratio": 0.0005
+        },
+        "cylindricity": {
+          "symbol": "⌭",
+          "description": "Tolerance zone between two coaxial cylinders",
+          "applies_to": "cylindrical surface",
+          "datum_required": false,
+          "default_tolerance_ratio": 0.0005
+        }
+      },
+      "profile": {
+        "profile_of_line": {
+          "symbol": "⌒",
+          "description": "Tolerance zone between two curves",
+          "datum_required": "optional",
+          "default_tolerance_ratio": 0.001
+        },
+        "profile_of_surface": {
+          "symbol": "⌓",
+          "description": "Tolerance zone between two surfaces",
+          "datum_required": "optional",
+          "default_tolerance_ratio": 0.001
+        }
+      },
+      "orientation": {
+        "perpendicularity": {
+          "symbol": "⊥",
+          "description": "Tolerance zone between two parallel planes perpendicular to datum",
+          "datum_required": true,
+          "default_tolerance_ratio": 0.001
+        },
+        "parallelism": {
+          "symbol": "∥",
+          "description": "Tolerance zone between two parallel planes parallel to datum",
+          "datum_required": true,
+          "default_tolerance_ratio": 0.001
+        },
+        "angularity": {
+          "symbol": "∠",
+          "description": "Tolerance zone between two parallel planes at specified angle",
+          "datum_required": true,
+          "default_tolerance_ratio": 0.001
+        }
+      },
+      "location": {
+        "position": {
+          "symbol": "⌖",
+          "description": "Cylindrical tolerance zone for axis or point location",
+          "datum_required": true,
+          "default_tolerance_ratio": 0.002,
+          "bonus_tolerance": true,
+          "mmc_lmc_applicable": true
+        },
+        "concentricity": {
+          "symbol": "◎",
+          "description": "Tolerance zone is a cylinder about datum axis",
+          "datum_required": true,
+          "default_tolerance_ratio": 0.002
+        },
+        "symmetry": {
+          "symbol": "⏀",
+          "description": "Tolerance zone between two parallel planes about datum",
+          "datum_required": true,
+          "default_tolerance_ratio": 0.002
+        }
+      },
+      "runout": {
+        "circular_runout": {
+          "symbol": "↗",
+          "description": "Tolerance zone between two concentric circles per section",
+          "datum_required": true,
+          "default_tolerance_ratio": 0.001
+        },
+        "total_runout": {
+          "symbol": "↗↗",
+          "description": "Tolerance zone between two coaxial cylinders",
+          "datum_required": true,
+          "default_tolerance_ratio": 0.002
+        }
+      }
+    },
+    "modifiers": {
+      "maximum_material_condition": {
+        "symbol": "Ⓜ",
+        "description": "Tolerance applies at MMC",
+        "bonus_tolerance": true
+      },
+      "least_material_condition": {
+        "symbol": "Ⓛ",
+        "description": "Tolerance applies at LMC",
+        "bonus_tolerance": true
+      },
+      "regardless_of_feature_size": {
+        "symbol": "Ⓢ",
+        "description": "Tolerance applies regardless of feature size",
+        "bonus_tolerance": false
+      },
+      "projected_tolerance_zone": {
+        "symbol": "Ⓟ",
+        "description": "Tolerance zone projected above surface"
+      },
+      "free_state": {
+        "symbol": "Ⓕ",
+        "description": "Applies to non-rigid parts in free state"
+      },
+      "tangent_plane": {
+        "symbol": "Ⓣ",
+        "description": "Tolerance applies to tangent plane only"
+      },
+      "unequally_disposed": {
+        "symbol": "Ⓤ",
+        "description": "Unequally disposed tolerance zone"
+      },
+      "continuous_feature": {
+        "symbol": "Ⓒ",
+        "description": "Treat separate features as single feature"
+      },
+      "statistical_tolerance": {
+        "symbol": "ⓈⓉ",
+        "description": "Statistical tolerance application"
+      }
+    },
+    "datum_rules": {
+      "primary": {
+        "description": "Primary datum - establishes part orientation",
+        "degrees_of_freedom": 3,
+        "contact_points": 3
+      },
+      "secondary": {
+        "description": "Secondary datum - establishes part rotation",
+        "degrees_of_freedom": 2,
+        "contact_points": 2
+      },
+      "tertiary": {
+        "description": "Tertiary datum - establishes final position",
+        "degrees_of_freedom": 1,
+        "contact_points": 1
+      }
+    }
+  },
+  "inspection_levels": {
+    "general_tolerance": {
+      "coarse": {
+        "linear_mm": "±0.5",
+        "angular_deg": "±1°",
+        "applies_to": "non-critical features"
+      },
+      "medium": {
+        "linear_mm": "±0.2",
+        "angular_deg": "±0.5°",
+        "applies_to": "general features"
+      },
+      "fine": {
+        "linear_mm": "±0.05",
+        "angular_deg": "±0.2°",
+        "applies_to": "precision features"
+      }
+    }
+  },
+  "surface_finish": {
+    "roughness_grade": {
+      "N1": {"ra_max_um": 0.025, "application": "gage blocks"},
+      "N2": {"ra_max_um": 0.05, "application": "precision bearings"},
+      "N3": {"ra_max_um": 0.1, "application": "ball bearings"},
+      "N4": {"ra_max_um": 0.2, "application": "hydraulic parts"},
+      "N5": {"ra_max_um": 0.4, "application": "machine tools"},
+      "N6": {"ra_max_um": 0.8, "application": "general machining"},
+      "N7": {"ra_max_um": 1.6, "application": "rough machining"},
+      "N8": {"ra_max_um": 3.2, "application": "rough castings"},
+      "N9": {"ra_max_um": 6.3, "application": "rough forgings"},
+      "N10": {"ra_max_um": 12.5, "application": "sand castings"},
+      "N11": {"ra_max_um": 25, "application": "rough castings"},
+      "N12": {"ra_max_um": 50, "application": "very rough"}
+    }
+  }
+}

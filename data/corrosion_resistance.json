@@ -1,0 +1,344 @@
+{
+  "description": "Corrosion resistance data for materials in various environments",
+  "version": "1.0.0",
+  "environments": {
+    "MARINE": {
+      "description": "Salt water / Marine environment with high chloride concentration",
+      "ph_range": [7.5, 8.5],
+      "salinity_ppt": 35,
+      "typical_contaminants": ["Cl-", "Na+", "Mg2+", "SO4^2-"]
+    },
+    "INDUSTRIAL": {
+      "description": "Industrial atmosphere with SO2, NOx, particulates",
+      "ph_range": [4.0, 6.0],
+      "pollutants": ["SO2", "NOx", "CO2", "particulates"]
+    },
+    "ACIDIC": {
+      "description": "Acidic environment (pH < 7)",
+      "ph_range": [1.0, 6.9],
+      "common_acids": ["H2SO4", "HCl", "HNO3", "acetic"]
+    },
+    "ALKALINE": {
+      "description": "Alkaline environment (pH > 7)",
+      "ph_range": [7.1, 14.0],
+      "common_bases": ["NaOH", "KOH", "Ca(OH)2", "NH3"]
+    },
+    "HIGH_TEMP": {
+      "description": "High temperature oxidation environment",
+      "temperature_c": [300, 1200],
+      "mechanism": "oxidation"
+    },
+    "NUCLEAR": {
+      "description": "Nuclear/radiation environment",
+      "radiation_types": ["gamma", "neutron"],
+      "concerns": ["embrittlement", "activation", "swelling"]
+    }
+  },
+  "materials": {
+    "steel_carbon": {
+      "name": "Carbon Steel",
+      "formula": "Fe-C",
+      "resistance": {
+        "MARINE": {
+          "rating": "poor",
+          "corrosion_rate_mm_year": 0.1,
+          "mechanism": "uniform_corrosion",
+          "notes": "Highly susceptible to rust. Requires coating or cathodic protection."
+        },
+        "INDUSTRIAL": {
+          "rating": "poor",
+          "corrosion_rate_mm_year": 0.08,
+          "mechanism": "uniform_corrosion"
+        },
+        "ACIDIC": {
+          "rating": "poor",
+          "corrosion_rate_mm_year": 1.0,
+          "mechanism": "uniform_corrosion",
+          "notes": "Rapid dissolution in mineral acids"
+        },
+        "ALKALINE": {
+          "rating": "good",
+          "corrosion_rate_mm_year": 0.02,
+          "mechanism": "passive_film",
+          "notes": "Forms protective film in alkaline conditions"
+        }
+      }
+    },
+    "steel_stainless_304": {
+      "name": "Stainless Steel 304",
+      "formula": "Fe-Cr18-Ni8",
+      "resistance": {
+        "MARINE": {
+          "rating": "fair",
+          "corrosion_rate_mm_year": 0.02,
+          "mechanism": "pitting",
+          "notes": "Susceptible to chloride pitting. Use 316 for better resistance."
+        },
+        "INDUSTRIAL": {
+          "rating": "good",
+          "corrosion_rate_mm_year": 0.005,
+          "mechanism": "passive_film"
+        },
+        "ACIDIC": {
+          "rating": "fair",
+          "corrosion_rate_mm_year": 0.1,
+          "mechanism": "general_corrosion",
+          "notes": "Attacked by strong mineral acids"
+        },
+        "ALKALINE": {
+          "rating": "excellent",
+          "corrosion_rate_mm_year": 0.001,
+          "mechanism": "passive_film"
+        }
+      }
+    },
+    "steel_stainless_316": {
+      "name": "Stainless Steel 316",
+      "formula": "Fe-Cr16-Ni10-Mo2",
+      "resistance": {
+        "MARINE": {
+          "rating": "excellent",
+          "corrosion_rate_mm_year": 0.005,
+          "mechanism": "passive_film",
+          "notes": "Molybdenum addition provides excellent chloride resistance"
+        },
+        "INDUSTRIAL": {
+          "rating": "excellent",
+          "corrosion_rate_mm_year": 0.002,
+          "mechanism": "passive_film"
+        },
+        "ACIDIC": {
+          "rating": "good",
+          "corrosion_rate_mm_year": 0.05,
+          "mechanism": "general_corrosion"
+        }
+      }
+    },
+    "aluminum_6061": {
+      "name": "Aluminum 6061",
+      "formula": "Al-Mg-Si",
+      "resistance": {
+        "MARINE": {
+          "rating": "good",
+          "corrosion_rate_mm_year": 0.02,
+          "mechanism": "pitting",
+          "notes": "Good resistance due to protective oxide film"
+        },
+        "INDUSTRIAL": {
+          "rating": "excellent",
+          "corrosion_rate_mm_year": 0.001,
+          "mechanism": "passive_film"
+        },
+        "ACIDIC": {
+          "rating": "poor",
+          "corrosion_rate_mm_year": 2.0,
+          "mechanism": "dissolution",
+          "notes": "Amphoteric - attacked by both acids and strong bases"
+        },
+        "ALKALINE": {
+          "rating": "poor",
+          "corrosion_rate_mm_year": 1.5,
+          "mechanism": "dissolution",
+          "notes": "Attacked by strong alkalis (pH > 9)"
+        }
+      }
+    },
+    "titanium_grade2": {
+      "name": "Titanium Grade 2",
+      "formula": "Ti",
+      "resistance": {
+        "MARINE": {
+          "rating": "excellent",
+          "corrosion_rate_mm_year": 0.0001,
+          "mechanism": "passive_film",
+          "notes": "Exceptional marine corrosion resistance"
+        },
+        "INDUSTRIAL": {
+          "rating": "excellent",
+          "corrosion_rate_mm_year": 0.0001,
+          "mechanism": "passive_film"
+        },
+        "ACIDIC": {
+          "rating": "good",
+          "corrosion_rate_mm_year": 0.01,
+          "mechanism": "general_corrosion",
+          "notes": "Resistant to most acids except HF and hot concentrated H2SO4"
+        },
+        "ALKALINE": {
+          "rating": "excellent",
+          "corrosion_rate_mm_year": 0.0005,
+          "mechanism": "passive_film"
+        }
+      }
+    },
+    "copper": {
+      "name": "Copper",
+      "formula": "Cu",
+      "resistance": {
+        "MARINE": {
+          "rating": "fair",
+          "corrosion_rate_mm_year": 0.05,
+          "mechanism": "general_corrosion",
+          "notes": "Forms protective patina, but susceptible to erosion-corrosion"
+        },
+        "INDUSTRIAL": {
+          "rating": "good",
+          "corrosion_rate_mm_year": 0.02,
+          "mechanism": "general_corrosion"
+        },
+        "ACIDIC": {
+          "rating": "poor",
+          "corrosion_rate_mm_year": 0.5,
+          "mechanism": "general_corrosion",
+          "notes": "Attacked by oxidizing acids"
+        }
+      }
+    },
+    "nickel": {
+      "name": "Nickel",
+      "formula": "Ni",
+      "resistance": {
+        "MARINE": {
+          "rating": "good",
+          "corrosion_rate_mm_year": 0.01,
+          "mechanism": "general_corrosion"
+        },
+        "ALKALINE": {
+          "rating": "excellent",
+          "corrosion_rate_mm_year": 0.001,
+          "mechanism": "passive_film",
+          "notes": "Excellent alkali resistance"
+        }
+      }
+    },
+    "magnesium": {
+      "name": "Magnesium",
+      "formula": "Mg",
+      "resistance": {
+        "MARINE": {
+          "rating": "very_poor",
+          "corrosion_rate_mm_year": 5.0,
+          "mechanism": "dissolution",
+          "notes": "Rapid dissolution in salt water. Requires coating."
+        },
+        "INDUSTRIAL": {
+          "rating": "poor",
+          "corrosion_rate_mm_year": 0.5,
+          "mechanism": "general_corrosion"
+        }
+      }
+    },
+    "zinc": {
+      "name": "Zinc",
+      "formula": "Zn",
+      "resistance": {
+        "MARINE": {
+          "rating": "fair",
+          "corrosion_rate_mm_year": 0.03,
+          "mechanism": "general_corrosion",
+          "notes": "Used as sacrificial anode"
+        },
+        "INDUSTRIAL": {
+          "rating": "fair",
+          "corrosion_rate_mm_year": 0.02,
+          "mechanism": "general_corrosion"
+        }
+      }
+    },
+    "inconel_718": {
+      "name": "Inconel 718",
+      "formula": "Ni-Cr-Fe-Nb-Mo",
+      "resistance": {
+        "MARINE": {
+          "rating": "excellent",
+          "corrosion_rate_mm_year": 0.001,
+          "mechanism": "passive_film"
+        },
+        "HIGH_TEMP": {
+          "rating": "excellent",
+          "corrosion_rate_mm_year": 0.01,
+          "mechanism": "oxidation",
+          "notes": "Excellent high temperature oxidation resistance up to 700C"
+        },
+        "NUCLEAR": {
+          "rating": "good",
+          "corrosion_rate_mm_year": 0.005,
+          "notes": "Good radiation resistance"
+        }
+      }
+    },
+    "gold": {
+      "name": "Gold",
+      "formula": "Au",
+      "resistance": {
+        "MARINE": {
+          "rating": "perfect",
+          "corrosion_rate_mm_year": 0.0,
+          "mechanism": "none",
+          "notes": "Noble metal, effectively immune to corrosion"
+        },
+        "ACIDIC": {
+          "rating": "perfect",
+          "corrosion_rate_mm_year": 0.0,
+          "mechanism": "none",
+          "notes": "Only attacked by aqua regia"
+        }
+      }
+    },
+    "platinum": {
+      "name": "Platinum",
+      "formula": "Pt",
+      "resistance": {
+        "MARINE": {
+          "rating": "perfect",
+          "corrosion_rate_mm_year": 0.0,
+          "mechanism": "none",
+          "notes": "Noble metal with exceptional corrosion resistance"
+        }
+      }
+    }
+  },
+  "protective_measures": {
+    "coatings": {
+      "epoxy": {
+        "resistance_factor": 0.1,
+        "lifespan_years": 5,
+        "application": "immersion_service"
+      },
+      "galvanized_zinc": {
+        "resistance_factor": 0.05,
+        "lifespan_years": 20,
+        "application": "atmospheric"
+      },
+      "anodized_aluminum": {
+        "resistance_factor": 0.02,
+        "lifespan_years": 10,
+        "application": "general"
+      },
+      "powder_coat": {
+        "resistance_factor": 0.1,
+        "lifespan_years": 15,
+        "application": "general"
+      }
+    },
+    "cathodic_protection": {
+      "sacrificial_anode": {
+        "materials": ["zinc", "aluminum", "magnesium"],
+        "effectiveness": "high",
+        "maintenance": "replace_anodes"
+      },
+      "impressed_current": {
+        "effectiveness": "very_high",
+        "maintenance": "power_supply"
+      }
+    }
+  },
+  "rating_scale": {
+    "perfect": {"score": 1.0, "description": "Effectively immune"},
+    "excellent": {"score": 0.9, "description": "Negligible corrosion"},
+    "good": {"score": 0.7, "description": "Slight corrosion, acceptable"},
+    "fair": {"score": 0.5, "description": "Moderate corrosion, monitoring needed"},
+    "poor": {"score": 0.3, "description": "Significant corrosion, protection required"},
+    "very_poor": {"score": 0.1, "description": "Severe corrosion, avoid use"}
+  }
+}

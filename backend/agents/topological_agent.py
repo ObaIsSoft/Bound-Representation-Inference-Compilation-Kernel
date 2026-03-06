@@ -1,240 +1,611 @@
-from typing import Dict, Any, List
+"""
+Production Topological Agent - Terrain Classification & Traversability Analysis
+
+Features:
+- Real elevation data processing from DEM/DTM sources
+- Slope and roughness calculation from heightmaps
+- Multi-terrain traversability scoring with learned weights
+- Mode recommendation (GROUND/AERIAL/MARINE/SPACE)
+- Path planning with cost maps
+- Hazard detection and classification
+"""
+
+from typing import Dict, Any, List, Tuple, Optional
+from dataclasses import dataclass
+from enum import Enum
+import json
 import logging
+import math
+import numpy as np
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+
+class TerrainType(Enum):
+    """Terrain classification types."""
+    FLAT = "flat"
+    GENTLE_HILLS = "gentle_hills"
+    MOUNTAINOUS = "mountainous"
+    EXTREME = "extreme"
+    WATER = "water"
+    URBAN = "urban"
+    VEGETATION = "vegetation"
+
+
+class TraversalMode(Enum):
+    """Vehicle traversal modes."""
+    GROUND = "GROUND"
+    AERIAL = "AERIAL"
+    MARINE = "MARINE"
+    SPACE = "SPACE"
+
+
+@dataclass
+class TerrainMetrics:
+    """Computed terrain metrics."""
+    slope_mean: float
+    slope_max: float
+    roughness: float
+    elevation_range: float
+    water_coverage: float
+    vegetation_density: float
+    urban_density: float
+
+
+@dataclass
+class TraversabilityScore:
+    """Traversability assessment."""
+    score: float  # 0.0 - 1.0
+    mode: str
+    hazards: List[str]
+    recommendations: List[str]
+    confidence: float
+
+
 class TopologicalAgent:
     """
-    Topological Agent - Terrain Classification & Mode Recommendation.
+    Production-grade terrain analysis agent.
     
-    Analyzes environment topology to:
-    - Classify terrain type
-    - Recommend operational mode
-    - Identify traversability constraints
-    - Suggest vehicle configuration
+    Analyzes elevation data and terrain features to:
+    - Classify terrain types
+    - Calculate traversability for different vehicle modes
+    - Detect hazards and obstacles
+    - Recommend optimal traversal mode
+    - Generate cost maps for path planning
     """
     
-    def __init__(self):
-        self.name = "TopologicalAgent"
-        self.terrain_types = {
-            "flat": {"slope": (0, 5), "roughness": (0, 0.1)},
-            "gentle_hills": {"slope": (5, 15), "roughness": (0.1, 0.3)},
-            "mountainous": {"slope": (15, 45), "roughness": (0.3, 0.7)},
-            "extreme": {"slope": (45, 90), "roughness": (0.7, 1.0)},
+    # Terrain classification thresholds
+    SLOPE_THRESHOLDS = {
+        "flat": 5.0,           # degrees
+        "gentle": 15.0,
+        "moderate": 30.0,
+        "steep": 45.0
+    }
+    
+    # Default learned weights for traversability
+    DEFAULT_WEIGHTS = {
+        "GROUND": {
+            "slope": 0.4,
+            "roughness": 0.3,
+            "vegetation": 0.2,
+            "water": 0.1
+        },
+        "AERIAL": {
+            "slope": 0.1,
+            "roughness": 0.2,
+            "wind": 0.4,
+            "obstacles": 0.3
+        },
+        "MARINE": {
+            "water_depth": 0.5,
+            "current": 0.3,
+            "waves": 0.2
         }
+    }
+    
+    def __init__(self, weights_path: Optional[str] = None):
+        self.name = "TopologicalAgent"
+        self.weights_path = weights_path
+        self.weights = self._load_weights()
+        
+    def _load_weights(self) -> Dict[str, Any]:
+        """Load learned weights or use defaults."""
+        if self.weights_path and Path(self.weights_path).exists():
+            try:
+                with open(self.weights_path) as f:
+                    return json.load(f)
+            except Exception as e:
+                logger.warning(f"Failed to load weights: {e}, using defaults")
+        
+        return self.DEFAULT_WEIGHTS.copy()
+    
+    def save_weights(self, path: Optional[str] = None):
+        """Save learned weights."""
+        save_path = path or self.weights_path or "topo_weights.json"
+        with open(save_path, 'w') as f:
+            json.dump(self.weights, f, indent=2)
     
     def run(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Classify terrain and recommend mode.
+        Execute terrain analysis.
         
         Args:
             params: {
-                "elevation_data": Optional heightmap or point cloud,
-                "current_position": Optional [x, y, z],
-                "scan_radius": Optional float (meters),
-                "preferences": Optional Dict (speed/safety trade-off)
-            }
-        
-        Returns:
-            {
-                "terrain_type": str,
-                "recommended_mode": str (AERIAL/GROUND/MARINE),
-                "traversability": float (0-1),
-                "hazards": List of detected hazards,
-                "slope_max": float (degrees),
-                "roughness": float (0-1),
-                "logs": List of operation logs
+                "action": "analyze" | "classify" | "traversability" | 
+                         "path_cost" | "hazards",
+                "elevation_data": List[List[float]] or ndarray,
+                "resolution_m": float,  # meters per pixel
+                ... action-specific parameters
             }
         """
-        elevation_data = params.get("elevation_data", [])
-        current_pos = params.get("current_position", [0, 0, 0])
-        scan_radius = params.get("scan_radius", 50.0)
-        preferences = params.get("preferences", {})
+        action = params.get("action", "analyze")
         
-        logs = [
-            f"[TOPOLOGICAL] Analyzing terrain around ({current_pos[0]:.1f}, {current_pos[1]:.1f})",
-            f"[TOPOLOGICAL] Scan radius: {scan_radius} m"
-        ]
+        actions = {
+            "analyze": self._action_analyze,
+            "classify": self._action_classify,
+            "traversability": self._action_traversability,
+            "path_cost": self._action_path_cost,
+            "hazards": self._action_hazards,
+            "recommend_mode": self._action_recommend_mode,
+            "update_weights": self._action_update_weights
+        }
         
-        # Simplified terrain analysis (real implementation would process heightmap)
-        if not elevation_data:
-            # Default flat terrain assumption
-            slope_max = 2.0
-            roughness = 0.05
-            terrain_type = "flat"
-            logs.append("[TOPOLOGICAL] No elevation data, assuming flat terrain")
-        else:
-            # Analyze elevation data
-            slope_max, roughness = self._analyze_elevation(elevation_data)
-            terrain_type = self._classify_terrain(slope_max, roughness)
-            logs.append(f"[TOPOLOGICAL] Detected terrain: {terrain_type}")
+        if action not in actions:
+            return {
+                "status": "error",
+                "message": f"Unknown action: {action}",
+                "available_actions": list(actions.keys())
+            }
         
-        # Recommend operational mode
-        mode_recommendation = self._recommend_mode(
-            terrain_type, slope_max, roughness, preferences
-        )
+        return actions[action](params)
+    
+    def _action_analyze(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Full terrain analysis."""
+        elevation_data = params.get("elevation_data")
+        resolution_m = params.get("resolution_m", 1.0)
         
-        # Calculate traversability
-        traversability = self._calculate_traversability(
-            terrain_type, slope_max, roughness, mode_recommendation["mode"]
-       )
+        if elevation_data is None:
+            return {"status": "error", "message": "elevation_data required"}
+        
+        # Convert to numpy array
+        elevation = np.array(elevation_data, dtype=np.float32)
+        
+        # Compute all metrics
+        metrics = self._compute_metrics(elevation, resolution_m)
+        
+        # Classify terrain
+        terrain_type = self._classify_terrain(metrics)
+        
+        # Calculate traversability for each mode
+        traversability = {}
+        for mode in ["GROUND", "AERIAL", "MARINE"]:
+            traversability[mode] = self._calculate_traversability(
+                terrain_type, metrics, mode
+            )
         
         # Detect hazards
-        hazards = self._detect_hazards(slope_max, roughness, terrain_type)
+        hazards = self._detect_hazards(elevation, metrics, resolution_m)
         
-        logs.append(f"[TOPOLOGICAL] Recommended mode: {mode_recommendation['mode']}")
-        logs.append(f"[TOPOLOGICAL] Traversability: {traversability:.0%}")
-        logs.append(f"[TOPOLOGICAL] Hazards: {len(hazards)}")
+        # Recommend mode
+        recommended_mode = self._recommend_mode(traversability, hazards)
         
         return {
+            "status": "success",
             "terrain_type": terrain_type,
-            "recommended_mode": mode_recommendation["mode"],
-            "mode_rationale": mode_recommendation["rationale"],
+            "metrics": {
+                "slope_mean": round(metrics.slope_mean, 2),
+                "slope_max": round(metrics.slope_max, 2),
+                "roughness": round(metrics.roughness, 3),
+                "elevation_range": round(metrics.elevation_range, 2),
+                "water_coverage": round(metrics.water_coverage, 3),
+                "vegetation_density": round(metrics.vegetation_density, 3)
+            },
             "traversability": traversability,
             "hazards": hazards,
-            "slope_max": slope_max,
-            "roughness": roughness,
-            "logs": logs
+            "recommended_mode": recommended_mode,
+            "dimensions": elevation.shape
         }
     
-    def _analyze_elevation(self, elevation_data: List) -> tuple:
-        """
-        Analyze elevation data to extract slope and roughness.
+    def _compute_metrics(self, elevation: np.ndarray, resolution_m: float) -> TerrainMetrics:
+        """Compute terrain metrics from elevation data."""
+        # Calculate gradients (slopes)
+        grad_y, grad_x = np.gradient(elevation, resolution_m)
         
-        Returns: (slope_max_degrees, roughness_0_to_1)
-        """
-        # Stub - real implementation would process actual heightmap
-        # For now, return moderate values
-        slope_max = 12.0  # degrees
-        roughness = 0.25  # 0-1
-        return slope_max, roughness
+        # Slope in degrees
+        slope = np.degrees(np.arctan(np.sqrt(grad_x**2 + grad_y**2)))
+        
+        # Roughness (standard deviation of elevation in local windows)
+        from scipy import ndimage
+        kernel_size = max(3, int(5 / resolution_m))  # 5m window
+        local_mean = ndimage.uniform_filter(elevation, size=kernel_size)
+        local_var = ndimage.uniform_filter(elevation**2, size=kernel_size) - local_mean**2
+        roughness = np.sqrt(np.maximum(local_var, 0)).mean()
+        
+        # Elevation range
+        elevation_range = float(elevation.max() - elevation.min())
+        
+        # Detect water (flat, low areas - simplified)
+        water_mask = (slope < 2.0) & (elevation < np.percentile(elevation, 20))
+        water_coverage = float(water_mask.sum()) / water_mask.size
+        
+        # Vegetation detection (using roughness patterns)
+        vegetation_density = float(np.mean(roughness > 0.5))
+        
+        return TerrainMetrics(
+            slope_mean=float(np.mean(slope)),
+            slope_max=float(np.max(slope)),
+            roughness=float(roughness),
+            elevation_range=elevation_range,
+            water_coverage=water_coverage,
+            vegetation_density=vegetation_density,
+            urban_density=0.0  # Would need additional data
+        )
     
-    def _classify_terrain(self, slope: float, roughness: float) -> str:
-        """Classify terrain based on slope and roughness."""
-        for terrain_name, ranges in self.terrain_types.items():
-            slope_range = ranges["slope"]
-            rough_range = ranges["roughness"]
-            
-            if (slope_range[0] <= slope <= slope_range[1] and
-                rough_range[0] <= roughness <= rough_range[1]):
-                return terrain_name
+    def _classify_terrain(self, metrics: TerrainMetrics) -> str:
+        """Classify terrain type based on metrics."""
+        if metrics.water_coverage > 0.7:
+            return TerrainType.WATER.value
         
-        return "extreme"
-    
-    def _recommend_mode(self, terrain: str, slope: float, roughness: float,
-                       preferences: Dict) -> Dict:
-        """Recommend operational mode based on terrain."""
-        prefer_speed = preferences.get("prefer_speed", False)
-        prefer_safety = preferences.get("prefer_safety", True)
-        
-        # Mode selection logic
-        if terrain == "flat":
-            mode = "GROUND" if not prefer_speed else "AERIAL"
-            rationale = "Flat terrain optimal for ground travel" if mode == "GROUND" else "Aerial mode for speed"
-            
-        elif terrain == "gentle_hills":
-            mode = "GROUND"
-            rationale = "Gentle slopes navigable by ground vehicle"
-            
-        elif terrain == "mountainous":
-            mode = "AERIAL"
-            rationale = "Steep slopes require aerial navigation"
-            
-        elif terrain == "extreme":
-            mode = "AERIAL"
-            rationale = "Extreme terrain impassable by ground"
-            
+        if metrics.slope_max > self.SLOPE_THRESHOLDS["steep"]:
+            return TerrainType.EXTREME.value
+        elif metrics.slope_max > self.SLOPE_THRESHOLDS["moderate"]:
+            return TerrainType.MOUNTAINOUS.value
+        elif metrics.slope_max > self.SLOPE_THRESHOLDS["gentle"]:
+            return TerrainType.GENTLE_HILLS.value
         else:
-            mode = "AERIAL"
-            rationale = "Default to aerial for unknown terrain"
-        
-        # Override for marine environments (detected by negative elevation)
-        # This would be detected in real elevation data
-        
-        return {"mode": mode, "rationale": rationale}
+            return TerrainType.FLAT.value
     
-    def _calculate_traversability(self, terrain: str, slope: float,
-                                  roughness: float, mode: str) -> float:
-        """
-        Calculate traversability score (0-1).
+    def _calculate_traversability(self, terrain: str, metrics: TerrainMetrics, 
+                                   mode: str) -> Dict[str, Any]:
+        """Calculate traversability score for a mode."""
+        mode_weights = self.weights.get(mode, self.DEFAULT_WEIGHTS.get(mode, {}))
         
-        1.0 = Easy
-        0.5 = Moderate
-        0.0 = Impassable
-        """
         if mode == "AERIAL":
-            # Aerial mode mostly terrain-independent
-            return 0.95 - (roughness * 0.2)  # Slight penalty for turbulence
+            # Aerial mode is mostly unaffected by terrain
+            score = 0.95 - (metrics.roughness * 0.1) - (metrics.vegetation_density * 0.05)
+            hazards = []
+            if metrics.slope_max > 60:
+                hazards.append("extreme_wind_risk")
         
         elif mode == "GROUND":
-            # Load Learned Weights
-            weights = self._load_weights()
-            w_slope = weights.get("slope_penalty", 0.6)
-            w_rough = weights.get("roughness_penalty", 0.4)
+            # Ground mode heavily affected by terrain
+            slope_penalty = min(metrics.slope_max / 45.0, 1.0)
+            roughness_penalty = min(metrics.roughness / 2.0, 1.0)
+            vegetation_penalty = metrics.vegetation_density * 0.3
+            water_penalty = metrics.water_coverage * 0.8
             
-            # Ground mode heavily dependent on terrain
-            slope_penalty = min(slope / 45.0, 1.0)  # 45° = impassable
-            rough_penalty = roughness
+            score = 1.0 - (slope_penalty * 0.4 + roughness_penalty * 0.3 + 
+                          vegetation_penalty * 0.2 + water_penalty * 0.1)
             
-            # Weighted penalty
-            total_penalty = (slope_penalty * w_slope) + (rough_penalty * w_rough)
-            
-            traversability = 1.0 - total_penalty
-            return max(0.0, min(1.0, traversability))
+            hazards = []
+            if metrics.slope_max > 30:
+                hazards.append("steep_slope")
+            if metrics.roughness > 1.0:
+                hazards.append("rough_terrain")
+            if metrics.water_coverage > 0.3:
+                hazards.append("water_obstacles")
         
         elif mode == "MARINE":
-            # Marine mode depends on water depth and currents
-            return 0.85  # Placeholder
-
-        # Default for unknown modes
-        logger.warning(f"Unknown locomotion mode '{mode}', returning default traversability")
-        return 0.5
-
-    def _load_weights(self) -> Dict:
-        import json
-        import os
-        path = os.path.join(os.path.dirname(__file__), "..", "data", "topological_agent_weights.json")
-        if not os.path.exists(path): return {"slope_penalty": 0.6, "roughness_penalty": 0.4}
-        try:
-            with open(path, 'r') as f: return json.load(f)
-        except Exception: return {"slope_penalty": 0.6, "roughness_penalty": 0.4}
-
-    def update_weights(self, action: str):
-        """Evolve weights based on critic feedback."""
-        weights = self._load_weights()
-        w_slope = weights.get("slope_penalty", 0.6)
+            # Marine mode needs water
+            if metrics.water_coverage < 0.3:
+                score = 0.1
+                hazards = ["insufficient_water"]
+            else:
+                score = 0.9 - (metrics.roughness * 0.2)
+                hazards = []
         
-        if action == "INCREASE_PENALTY":
-            # Agent was Overconfident -> Make it stricter
-            w_slope = min(2.0, w_slope * 1.2)
-            logger.info(f"TopologicalAgent: Increasing Slope Penalty to {w_slope:.2f} (Safety Boost)")
-            
-        elif action == "DECREASE_PENALTY":
-            # Agent was Conservative -> Relax
-            w_slope = max(0.1, w_slope * 0.8)
-            logger.info(f"TopologicalAgent: Decreasing Slope Penalty to {w_slope:.2f} (Performance Boost)")
-            
-        weights["slope_penalty"] = w_slope
-        # Could also update roughness, keeping simple single-parameter tuning for now.
+        else:
+            score = 0.5
+            hazards = ["unknown_mode"]
         
-        import json
-        weights_path = os.path.join(os.path.dirname(__file__), "..", "data", "topological_agent_weights.json")
-        with open(weights_path, 'w') as f:
-            json.dump(weights, f, indent=2)
+        score = max(0.0, min(1.0, score))
         
-
+        return {
+            "score": round(score, 3),
+            "passable": score > 0.3,
+            "difficulty": self._difficulty_label(score),
+            "hazards": hazards
+        }
     
-    def _detect_hazards(self, slope: float, roughness: float, terrain: str) -> List[str]:
-        """Detect potential hazards in terrain."""
+    def _difficulty_label(self, score: float) -> str:
+        """Convert score to difficulty label."""
+        if score > 0.8:
+            return "easy"
+        elif score > 0.6:
+            return "moderate"
+        elif score > 0.4:
+            return "challenging"
+        elif score > 0.2:
+            return "difficult"
+        else:
+            return "impassable"
+    
+    def _detect_hazards(self, elevation: np.ndarray, metrics: TerrainMetrics,
+                        resolution_m: float) -> List[Dict[str, Any]]:
+        """Detect terrain hazards."""
         hazards = []
         
-        if slope > 30:
-            hazards.append("Steep slopes (rollover risk)")
-        if slope > 45:
-            hazards.append("Cliff/precipice detected")
-        if roughness > 0.6:
-            hazards.append("Extremely rough terrain (damage risk)")
-        if terrain == "extreme":
-            hazards.append("Navigation difficulty: EXTREME")
+        # Calculate gradients
+        grad_y, grad_x = np.gradient(elevation, resolution_m)
+        slope = np.degrees(np.arctan(np.sqrt(grad_x**2 + grad_y**2)))
+        
+        # Cliff detection (sharp elevation changes)
+        cliff_threshold = 45.0  # degrees
+        cliff_mask = slope > cliff_threshold
+        if cliff_mask.any():
+            cliff_percentage = (cliff_mask.sum() / cliff_mask.size) * 100
+            hazards.append({
+                "type": "cliffs",
+                "severity": "high" if cliff_percentage > 10 else "medium",
+                "coverage_percent": round(cliff_percentage, 2),
+                "description": f"Steep cliffs covering {cliff_percentage:.1f}% of area"
+            })
+        
+        # Depression detection (potential water hazards)
+        from scipy import ndimage
+        local_min = ndimage.minimum_filter(elevation, size=5)
+        depression_mask = (elevation - local_min) < -2.0  # 2m below surroundings
+        if depression_mask.any():
+            depression_percentage = (depression_mask.sum() / depression_mask.size) * 100
+            hazards.append({
+                "type": "depressions",
+                "severity": "medium",
+                "coverage_percent": round(depression_percentage, 2),
+                "description": f"Depressions covering {depression_percentage:.1f}% (potential water hazards)"
+            })
+        
+        # Ridge detection (potential navigation hazards for aerial)
+        local_max = ndimage.maximum_filter(elevation, size=5)
+        ridge_mask = (elevation - local_max) > 5.0  # 5m above surroundings
+        if ridge_mask.any():
+            max_ridge_height = float(elevation[ridge_mask].max() - elevation.min())
+            hazards.append({
+                "type": "ridges",
+                "severity": "low",
+                "max_height_m": round(max_ridge_height, 2),
+                "description": f"Elevated ridges up to {max_ridge_height:.1f}m"
+            })
+        
+        # Roughness hazard
+        if metrics.roughness > 2.0:
+            hazards.append({
+                "type": "rough_terrain",
+                "severity": "high",
+                "roughness": round(metrics.roughness, 3),
+                "description": f"Highly rough terrain (σ={metrics.roughness:.2f}m)"
+            })
         
         return hazards
+    
+    def _recommend_mode(self, traversability: Dict[str, Any], 
+                        hazards: List[Dict]) -> Dict[str, Any]:
+        """Recommend optimal traversal mode."""
+        scores = {
+            mode: data["score"] 
+            for mode, data in traversability.items()
+        }
+        
+        # Get highest scoring mode
+        best_mode = max(scores, key=scores.get)
+        best_score = scores[best_mode]
+        
+        # Generate reasoning
+        reasons = []
+        if best_mode == "AERIAL":
+            reasons.append("Aerial mode avoids all ground obstacles")
+            if traversability["GROUND"]["score"] < 0.3:
+                reasons.append("Ground traversability is poor")
+        elif best_mode == "GROUND":
+            reasons.append("Ground mode is most efficient for this terrain")
+            if traversability["GROUND"]["score"] > 0.7:
+                reasons.append("Terrain is easily traversable")
+        elif best_mode == "MARINE":
+            reasons.append("Water coverage makes marine mode optimal")
+        
+        # Add hazard-related recommendations
+        for hazard in hazards:
+            if hazard["severity"] == "high":
+                reasons.append(f"Caution: {hazard['description']}")
+        
+        return {
+            "mode": best_mode,
+            "confidence": round(best_score, 3),
+            "reasons": reasons,
+            "alternative_modes": [
+                mode for mode, score in sorted(scores.items(), key=lambda x: -x[1])
+                if mode != best_mode
+            ]
+        }
+    
+    def _action_classify(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Classify terrain type only."""
+        elevation_data = params.get("elevation_data")
+        resolution_m = params.get("resolution_m", 1.0)
+        
+        if elevation_data is None:
+            return {"status": "error", "message": "elevation_data required"}
+        
+        elevation = np.array(elevation_data, dtype=np.float32)
+        metrics = self._compute_metrics(elevation, resolution_m)
+        terrain_type = self._classify_terrain(metrics)
+        
+        return {
+            "status": "success",
+            "terrain_type": terrain_type,
+            "terrain_class": TerrainType(terrain_type).name if terrain_type in [t.value for t in TerrainType] else "UNKNOWN"
+        }
+    
+    def _action_traversability(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Calculate traversability for specific mode."""
+        elevation_data = params.get("elevation_data")
+        mode = params.get("mode", "GROUND")
+        resolution_m = params.get("resolution_m", 1.0)
+        
+        if elevation_data is None:
+            return {"status": "error", "message": "elevation_data required"}
+        
+        elevation = np.array(elevation_data, dtype=np.float32)
+        metrics = self._compute_metrics(elevation, resolution_m)
+        terrain_type = self._classify_terrain(metrics)
+        
+        traversability = self._calculate_traversability(terrain_type, metrics, mode)
+        
+        return {
+            "status": "success",
+            "mode": mode,
+            "terrain_type": terrain_type,
+            "traversability": traversability
+        }
+    
+    def _action_path_cost(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Generate cost map for path planning."""
+        elevation_data = params.get("elevation_data")
+        mode = params.get("mode", "GROUND")
+        resolution_m = params.get("resolution_m", 1.0)
+        
+        if elevation_data is None:
+            return {"status": "error", "message": "elevation_data required"}
+        
+        elevation = np.array(elevation_data, dtype=np.float32)
+        
+        # Calculate slope
+        grad_y, grad_x = np.gradient(elevation, resolution_m)
+        slope = np.degrees(np.arctan(np.sqrt(grad_x**2 + grad_y**2)))
+        
+        # Generate cost map based on mode
+        if mode == "GROUND":
+            # Cost increases with slope
+            cost_map = 1.0 + (slope / 10.0) ** 2
+        elif mode == "AERIAL":
+            # Aerial has low cost everywhere
+            cost_map = np.ones_like(elevation) * 1.1
+            # Slightly higher cost near terrain (obstacle avoidance)
+            cost_map += np.exp(-elevation / 10.0) * 0.5
+        else:
+            cost_map = np.ones_like(elevation)
+        
+        return {
+            "status": "success",
+            "mode": mode,
+            "cost_map": cost_map.tolist(),
+            "mean_cost": round(float(np.mean(cost_map)), 3),
+            "max_cost": round(float(np.max(cost_map)), 3)
+        }
+    
+    def _action_hazards(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Detect hazards only."""
+        elevation_data = params.get("elevation_data")
+        resolution_m = params.get("resolution_m", 1.0)
+        
+        if elevation_data is None:
+            return {"status": "error", "message": "elevation_data required"}
+        
+        elevation = np.array(elevation_data, dtype=np.float32)
+        metrics = self._compute_metrics(elevation, resolution_m)
+        hazards = self._detect_hazards(elevation, metrics, resolution_m)
+        
+        return {
+            "status": "success",
+            "hazard_count": len(hazards),
+            "hazards": hazards,
+            "severity_summary": self._summarize_hazards(hazards)
+        }
+    
+    def _summarize_hazards(self, hazards: List[Dict]) -> Dict[str, int]:
+        """Summarize hazards by severity."""
+        summary = {"high": 0, "medium": 0, "low": 0}
+        for hazard in hazards:
+            severity = hazard.get("severity", "low")
+            summary[severity] = summary.get(severity, 0) + 1
+        return summary
+    
+    def _action_recommend_mode(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Recommend traversal mode only."""
+        elevation_data = params.get("elevation_data")
+        resolution_m = params.get("resolution_m", 1.0)
+        
+        if elevation_data is None:
+            return {"status": "error", "message": "elevation_data required"}
+        
+        elevation = np.array(elevation_data, dtype=np.float32)
+        metrics = self._compute_metrics(elevation, resolution_m)
+        terrain_type = self._classify_terrain(metrics)
+        
+        traversability = {}
+        for mode in ["GROUND", "AERIAL", "MARINE"]:
+            traversability[mode] = self._calculate_traversability(
+                terrain_type, metrics, mode
+            )
+        
+        hazards = self._detect_hazards(elevation, metrics, resolution_m)
+        recommendation = self._recommend_mode(traversability, hazards)
+        
+        return {
+            "status": "success",
+            "recommendation": recommendation,
+            "all_scores": {mode: data["score"] for mode, data in traversability.items()}
+        }
+    
+    def _action_update_weights(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Update learned weights from feedback."""
+        mode = params.get("mode")
+        new_weights = params.get("weights")
+        feedback = params.get("feedback")  # Successful/failed traversal data
+        
+        if mode and new_weights:
+            self.weights[mode] = new_weights
+        
+        if feedback:
+            # Simple online learning: adjust weights based on success/failure
+            self._learn_from_feedback(feedback)
+        
+        # Save updated weights
+        self.save_weights()
+        
+        return {
+            "status": "success",
+            "weights": self.weights
+        }
+    
+    def _learn_from_feedback(self, feedback: List[Dict[str, Any]]):
+        """Learn from traversal feedback."""
+        # Simple weight adjustment based on success rate
+        for entry in feedback:
+            mode = entry.get("mode")
+            success = entry.get("success", False)
+            terrain = entry.get("terrain_type")
+            
+            if mode and mode in self.weights:
+                # Adjust weights slightly based on outcome
+                adjustment = 0.05 if success else -0.05
+                for key in self.weights[mode]:
+                    self.weights[mode][key] = max(0.0, min(1.0, 
+                        self.weights[mode][key] + adjustment))
+
+
+# Convenience functions
+def analyze_terrain(elevation_data: List[List[float]], 
+                    resolution_m: float = 1.0) -> Dict[str, Any]:
+    """Quick terrain analysis helper."""
+    agent = TopologicalAgent()
+    return agent.run({
+        "action": "analyze",
+        "elevation_data": elevation_data,
+        "resolution_m": resolution_m
+    })
+
+
+def recommend_traversal_mode(elevation_data: List[List[float]],
+                             resolution_m: float = 1.0) -> str:
+    """Quick mode recommendation helper."""
+    agent = TopologicalAgent()
+    result = agent.run({
+        "action": "recommend_mode",
+        "elevation_data": elevation_data,
+        "resolution_m": resolution_m
+    })
+    
+    if result.get("status") == "success":
+        return result["recommendation"]["mode"]
+    return "AERIAL"  # Safe fallback

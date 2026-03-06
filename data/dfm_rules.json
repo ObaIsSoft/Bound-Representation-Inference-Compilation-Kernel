@@ -1,0 +1,166 @@
+{
+  "processes": {
+    "CNC_MILLING": {
+      "min_wall_thickness_mm": 0.5,
+      "max_depth_to_width_ratio": 4.0,
+      "min_internal_corner_radius_mm": 1.0,
+      "max_aspect_ratio": 10.0,
+      "recommended_tolerance_mm": 0.05,
+      "surface_roughness_ra_um": 3.2,
+      "setup_time_minutes": 30,
+      "tool_change_time_seconds": 15
+    },
+    "CNC_TURNING": {
+      "min_wall_thickness_mm": 0.3,
+      "max_length_to_diameter_ratio": 8.0,
+      "min_internal_corner_radius_mm": 0.2,
+      "surface_roughness_ra_um": 1.6,
+      "setup_time_minutes": 20,
+      "max_part_diameter_mm": 500
+    },
+    "SHEET_METAL": {
+      "min_bend_radius_factor": 1.0,
+      "max_bend_angle_degrees": 165,
+      "min_hole_to_edge_distance_mm": 1.5,
+      "min_hole_spacing_mm": 2.0,
+      "max_sheet_thickness_mm": 6.0,
+      "k_factor": 0.44
+    },
+    "INJECTION_MOLDING": {
+      "min_wall_thickness_mm": 0.5,
+      "max_wall_thickness_mm": 6.0,
+      "recommended_wall_thickness_mm": 2.0,
+      "min_draft_angle_degrees": 0.5,
+      "recommended_draft_angle_degrees": 1.0,
+      "max_aspect_ratio": 100,
+      "min_cooling_time_seconds": 10,
+      "shrinkage_factor": 0.005
+    },
+    "DIE_CASTING": {
+      "min_wall_thickness_mm": 1.0,
+      "max_wall_thickness_mm": 8.0,
+      "min_draft_angle_degrees": 0.5,
+      "max_part_size_kg": 50,
+      "shrinkage_factor": 0.006
+    },
+    "SAND_CASTING": {
+      "min_wall_thickness_mm": 3.0,
+      "min_feature_size_mm": 6.0,
+      "max_part_weight_kg": 1000,
+      "surface_roughness_ra_um": 25,
+      "shrinkage_factor": 0.02
+    },
+    "INVESTMENT_CASTING": {
+      "min_wall_thickness_mm": 0.5,
+      "max_part_weight_kg": 100,
+      "surface_roughness_ra_um": 6.3,
+      "min_hole_diameter_mm": 1.5,
+      "shrinkage_factor": 0.015
+    },
+    "FORGING": {
+      "min_wall_thickness_mm": 3.0,
+      "max_part_weight_kg": 500,
+      "draft_angle_degrees": 7.0,
+      "surface_roughness_ra_um": 12.5,
+      "flash_thickness_mm": 1.0
+    },
+    "EXTRUSION": {
+      "min_wall_thickness_mm": 1.0,
+      "max_cross_section_mm": 500,
+      "max_length_m": 30,
+      "min_internal_radius_mm": 1.0
+    },
+    "LASER_CUTTING": {
+      "min_feature_size_mm": 0.5,
+      "kerf_width_mm": 0.2,
+      "max_thickness_steel_mm": 25,
+      "max_thickness_aluminum_mm": 30,
+      "cutting_speed_factor": 1.0
+    },
+    "WATERJET_CUTTING": {
+      "min_feature_size_mm": 1.0,
+      "kerf_width_mm": 0.8,
+      "max_thickness_mm": 150,
+      "taper_angle_degrees": 1.0
+    },
+    "EDM": {
+      "min_feature_size_mm": 0.05,
+      "surface_roughness_ra_um": 0.8,
+      "max_cutting_speed_mm_min": 5,
+      "wire_diameter_mm": 0.25
+    },
+    "ADDITIVE_FDM": {
+      "min_wall_thickness_mm": 0.8,
+      "layer_height_mm": 0.2,
+      "min_feature_size_mm": 0.8,
+      "max_overhang_angle_degrees": 45,
+      "support_required_overhang_degrees": 45,
+      "shrinkage_factor": 0.002
+    },
+    "ADDITIVE_SLA": {
+      "min_wall_thickness_mm": 0.5,
+      "layer_height_mm": 0.05,
+      "min_feature_size_mm": 0.1,
+      "max_part_size_mm": 145,
+      "support_required_overhang_degrees": 30
+    },
+    "ADDITIVE_SLS": {
+      "min_wall_thickness_mm": 0.7,
+      "layer_height_mm": 0.1,
+      "min_feature_size_mm": 0.5,
+      "max_part_size_mm": 300,
+      "shrinkage_factor": 0.03
+    },
+    "ADDITIVE_SLM": {
+      "min_wall_thickness_mm": 0.3,
+      "layer_height_mm": 0.03,
+      "min_feature_size_mm": 0.2,
+      "max_part_size_mm": 250,
+      "support_required_overhang_degrees": 45,
+      "shrinkage_factor": 0.02
+    }
+  },
+  "design_rules": {
+    "global": {
+      "min_hole_diameter_mm": 0.5,
+      "min_slot_width_mm": 0.5,
+      "min_text_height_mm": 1.5,
+      "min_thread_size_m": 1.0,
+      "standard_tolerance_mm": 0.1,
+      "tight_tolerance_mm": 0.05,
+      "precision_tolerance_mm": 0.01
+    },
+    "holes": {
+      "min_depth_to_diameter_ratio": 3,
+      "max_depth_to_diameter_ratio_blind": 4,
+      "recommended_depth_to_diameter_ratio": 2,
+      "counterbore_standard_depth_factor": 0.7
+    },
+    "threads": {
+      "min_external_thread_diameter_mm": 2.0,
+      "min_internal_thread_diameter_mm": 3.0,
+      "max_tap_depth_to_diameter_ratio": 3,
+      "recommended_engagement_length_factor": 1.5
+    },
+    "fillets": {
+      "recommended_internal_radius_mm": 1.0,
+      "recommended_external_radius_mm": 0.5,
+      "stress_concentration_reduction_factor": 0.3
+    }
+  },
+  "cost_factors": {
+    "material_utilization_target": 0.7,
+    "scrap_rate_cnc": 0.05,
+    "scrap_rate_casting": 0.15,
+    "scrap_rate_additive": 0.02,
+    "setup_cost_per_hour": 75,
+    "machine_cost_per_hour": {
+      "CNC_MILLING": 85,
+      "CNC_TURNING": 70,
+      "INJECTION_MOLDING": 120,
+      "DIE_CASTING": 150,
+      "ADDITIVE_SLM": 200,
+      "ADDITIVE_FDM": 25
+    }
+  }
+}

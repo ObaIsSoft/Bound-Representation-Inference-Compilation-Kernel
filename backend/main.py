@@ -2970,7 +2970,7 @@ def _sse_event(event_type: str, data: Dict) -> str:
 
 
 # =============================================================================
-# Phase 5: WebSocket Real-time Updates & Performance Monitoring
+# WebSocket Real-time Updates & Performance Monitoring
 # =============================================================================
 
 # --- WebSocket Orchestrator Endpoint ---
@@ -3193,7 +3193,7 @@ def broadcast_orchestrator_error(project_id: str, error: str, details: Optional[
 
 
 # =============================================================================
-# COST ESTIMATION API (Phase 8 - De-hardcoding)
+# COST ESTIMATION API 
 # =============================================================================
 
 from backend.agents.cost_agent import ProductionCostAgent
@@ -3331,7 +3331,7 @@ async def check_pricing_status():
     }
 
 # =============================================================================
-# FILE UPLOAD API (Phase 6 - Landing & Requirements Enhancement)
+# FILE UPLOAD API 
 # =============================================================================
 
 import uuid
@@ -3598,6 +3598,1214 @@ async def get_standards_status():
     status = await sync.get_sync_status()
     
     return status
+
+# =============================================================================
+# Network Agent API
+# =============================================================================
+
+from pydantic import BaseModel, Field
+from typing import Literal
+
+# Network Agent Request/Response Models
+class NetworkPingRequest(BaseModel):
+    target: str = Field(..., description="IP or hostname to ping")
+    count: int = Field(default=4, ge=1, le=100)
+
+class NetworkTracerouteRequest(BaseModel):
+    target: str = Field(..., description="IP or hostname")
+    max_hops: int = Field(default=30, ge=1, le=64)
+
+class NetworkScanRequest(BaseModel):
+    network: str = Field(default="192.168.1.0/24", description="CIDR notation")
+    ports: List[int] = Field(default=[22, 80, 443, 445, 3389])
+
+class NetworkDeviceModel(BaseModel):
+    id: str
+    type: str = Field(..., description="Device type (router, switch, server, etc.)")
+    name: Optional[str] = None
+    position: List[float] = Field(default=[0, 0, 0], description="3D coordinates [x, y, z]")
+    ip: Optional[str] = None
+    mac: Optional[str] = None
+    properties: Optional[Dict] = None
+
+class NetworkLinkModel(BaseModel):
+    id: Optional[str] = None
+    from_device: str = Field(..., alias="from")
+    to_device: str = Field(..., alias="to")
+    type: str = Field(default="ethernet")
+    bandwidth_mbps: float = Field(default=1000)
+    latency_ms: float = Field(default=1)
+    path_3d: Optional[List[List[float]]] = None
+
+class NetworkTopologyRequest(BaseModel):
+    devices: List[NetworkDeviceModel]
+    links: List[NetworkLinkModel]
+
+class NetworkSSHRequest(BaseModel):
+    hostname: str
+    username: str
+    password: Optional[str] = None
+    key_file: Optional[str] = None
+    command: str
+    port: int = Field(default=22)
+
+class NetworkTrafficFlowModel(BaseModel):
+    source: str
+    destination: str
+    rate_mbps: float = Field(default=100)
+    protocol: str = Field(default="tcp")
+
+class NetworkAnalyzeTrafficRequest(BaseModel):
+    flows: List[NetworkTrafficFlowModel]
+
+class NetworkPacketCaptureRequest(BaseModel):
+    interface: Optional[str] = None
+    duration: int = Field(default=10, ge=1, le=300)
+    filter: str = Field(default="", description="BPF filter expression")
+    count: int = Field(default=100, ge=1, le=10000)
+
+# Global NetworkAgent instance
+_network_agent = None
+
+def get_network_agent():
+    global _network_agent
+    if _network_agent is None:
+        from backend.agents.network_agent import NetworkAgent
+        _network_agent = NetworkAgent()
+    return _network_agent
+
+@app.post("/api/network/ping")
+async def network_ping(req: NetworkPingRequest):
+    """
+    Ping a network host and return statistics.
+    """
+    try:
+        agent = get_network_agent()
+        result = await agent.run({
+            "operation": "ping",
+            "target": req.target,
+            "count": req.count
+        })
+        return result
+    except Exception as e:
+        logger.error(f"Ping error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/network/traceroute")
+async def network_traceroute(req: NetworkTracerouteRequest):
+    """
+    Perform traceroute to a network host.
+    """
+    try:
+        agent = get_network_agent()
+        result = await agent.run({
+            "operation": "traceroute",
+            "target": req.target,
+            "max_hops": req.max_hops
+        })
+        return result
+    except Exception as e:
+        logger.error(f"Traceroute error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/network/scan")
+async def network_scan(req: NetworkScanRequest):
+    """
+    Scan a network range for devices.
+    """
+    try:
+        agent = get_network_agent()
+        result = await agent.run({
+            "operation": "scan_network",
+            "network": req.network,
+            "ports": req.ports
+        })
+        return result
+    except Exception as e:
+        logger.error(f"Network scan error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/network/topology")
+async def network_setup_topology(req: NetworkTopologyRequest):
+    """
+    Setup 3D network topology.
+    """
+    try:
+        agent = get_network_agent()
+        
+        # Convert pydantic models to dicts
+        devices = [d.dict(by_alias=True) for d in req.devices]
+        links = [l.dict(by_alias=True) for l in req.links]
+        
+        result = await agent.run({
+            "operation": "setup_3d_topology",
+            "devices": devices,
+            "links": links
+        })
+        return result
+    except Exception as e:
+        logger.error(f"Topology setup error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/network/topology")
+async def network_get_topology():
+    """
+    Get current network topology.
+    """
+    try:
+        agent = get_network_agent()
+        result = await agent.run({"operation": "list_devices"})
+        return result
+    except Exception as e:
+        logger.error(f"Topology get error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/network/ssh")
+async def network_ssh(req: NetworkSSHRequest):
+    """
+    Execute SSH command on remote device.
+    """
+    try:
+        agent = get_network_agent()
+        result = await agent.run({
+            "operation": "ssh_command",
+            "hostname": req.hostname,
+            "username": req.username,
+            "password": req.password,
+            "key_file": req.key_file,
+            "command": req.command,
+            "port": req.port
+        })
+        return result
+    except Exception as e:
+        logger.error(f"SSH error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/network/traffic/analyze")
+async def network_analyze_traffic(req: NetworkAnalyzeTrafficRequest):
+    """
+    Analyze network traffic flows.
+    """
+    try:
+        agent = get_network_agent()
+        flows = [f.dict() for f in req.flows]
+        result = await agent.run({
+            "operation": "analyze_traffic",
+            "flows": flows
+        })
+        return result
+    except Exception as e:
+        logger.error(f"Traffic analysis error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/network/packets/capture")
+async def network_capture_packets(req: NetworkPacketCaptureRequest):
+    """
+    Capture network packets (requires admin/root).
+    """
+    try:
+        agent = get_network_agent()
+        result = await agent.run({
+            "operation": "capture_packets",
+            "interface": req.interface,
+            "duration": req.duration,
+            "filter": req.filter,
+            "count": req.count
+        })
+        return result
+    except Exception as e:
+        logger.error(f"Packet capture error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/network/diagnose")
+async def network_diagnose():
+    """
+    Run full network diagnosis.
+    """
+    try:
+        agent = get_network_agent()
+        result = await agent.run({"operation": "diagnose"})
+        return result
+    except Exception as e:
+        logger.error(f"Diagnosis error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/network/topology/analyze")
+async def network_analyze_topology():
+    """
+    Analyze network topology using GNN (requires trained model).
+    """
+    try:
+        agent = get_network_agent()
+        result = await agent.run({"operation": "analyze_topology"})
+        return result
+    except Exception as e:
+        logger.error(f"Topology analysis error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/network/visualize")
+async def network_visualize():
+    """
+    Get 3D visualization data for network.
+    """
+    try:
+        agent = get_network_agent()
+        result = await agent.run({
+            "operation": "visualize",
+            "format": "json"
+        })
+        return result
+    except Exception as e:
+        logger.error(f"Visualization error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/network/device-types")
+async def network_device_types():
+    """
+    Get all available network device types.
+    """
+    from backend.agents.network_agent import NetworkDeviceType
+    
+    types = [
+        {"id": t.value, "name": t.name.replace("_", " ").title()}
+        for t in NetworkDeviceType
+    ]
+    
+    return {
+        "device_types": types,
+        "categories": {
+            "core_network": ["router", "core_switch", "distribution_switch", "access_switch"],
+            "wireless": ["access_point", "wireless_controller"],
+            "infrastructure": ["relay", "bridge", "gateway", "firewall", "load_balancer"],
+            "endpoints": ["server", "workstation", "printer", "iot_device", "phone", "camera"],
+            "cabling": ["fiber_cable", "ethernet_cable", "patch_panel"],
+            "virtual": ["virtual_machine", "container", "virtual_switch"]
+        }
+    }
+
+# =============================================================================
+# Lattice Synthesis Agent API
+# =============================================================================
+
+class LatticeSynthesizeRequest(BaseModel):
+    formula: str = Field(..., description="Chemical formula (e.g., SiO2, TiAl6V4)")
+    space_group: Optional[int] = Field(default=None)
+    crystal_system: Optional[str] = Field(default=None, description="cubic, hexagonal, etc.")
+
+class LatticeQueryRequest(BaseModel):
+    formula: Optional[str] = None
+    material_id: Optional[str] = Field(default=None, description="Materials Project ID (e.g., mp-149)")
+
+class LatticeOptimizeRequest(BaseModel):
+    structure: Dict[str, Any]
+    target_property: str = Field(default="stability")
+
+# Global LatticeSynthesisAgent instance
+_lattice_agent = None
+
+def get_lattice_agent():
+    global _lattice_agent
+    if _lattice_agent is None:
+        from backend.agents.lattice_synthesis_agent import LatticeSynthesisAgent
+        _lattice_agent = LatticeSynthesisAgent()
+    return _lattice_agent
+
+@app.post("/api/lattice/synthesize")
+async def lattice_synthesize(req: LatticeSynthesizeRequest):
+    """
+    Synthesize crystal structure from chemical formula.
+    Uses Materials Project API or GNoME models.
+    """
+    try:
+        agent = get_lattice_agent()
+        result = await agent.run({
+            "operation": "synthesize",
+            "formula": req.formula,
+            "space_group": req.space_group,
+            "crystal_system": req.crystal_system
+        })
+        return result
+    except Exception as e:
+        logger.error(f"Lattice synthesis error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/lattice/query")
+async def lattice_query(req: LatticeQueryRequest):
+    """
+    Query crystal structure from database.
+    """
+    try:
+        agent = get_lattice_agent()
+        result = await agent.run({
+            "operation": "query_database",
+            "formula": req.formula,
+            "material_id": req.material_id
+        })
+        return result
+    except Exception as e:
+        logger.error(f"Lattice query error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/lattice/optimize")
+async def lattice_optimize(req: LatticeOptimizeRequest):
+    """
+    Optimize crystal structure for target property.
+    """
+    try:
+        agent = get_lattice_agent()
+        result = await agent.run({
+            "operation": "optimize",
+            "structure": req.structure,
+            "target_property": req.target_property
+        })
+        return result
+    except Exception as e:
+        logger.error(f"Lattice optimization error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/lattice/analyze")
+async def lattice_analyze(structure: Dict[str, Any]):
+    """
+    Analyze crystal structure properties.
+    """
+    try:
+        agent = get_lattice_agent()
+        result = await agent.run({
+            "operation": "analyze",
+            "structure": structure
+        })
+        return result
+    except Exception as e:
+        logger.error(f"Lattice analysis error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/lattice/crystal-systems")
+async def lattice_crystal_systems():
+    """
+    Get available crystal systems.
+    """
+    return {
+        "crystal_systems": [
+            {"id": "triclinic", "name": "Triclinic", "params": "a, b, c, α, β, γ"},
+            {"id": "monoclinic", "name": "Monoclinic", "params": "a, b, c, β"},
+            {"id": "orthorhombic", "name": "Orthorhombic", "params": "a, b, c"},
+            {"id": "tetragonal", "name": "Tetragonal", "params": "a, c"},
+            {"id": "trigonal", "name": "Trigonal", "params": "a, α"},
+            {"id": "hexagonal", "name": "Hexagonal", "params": "a, c"},
+            {"id": "cubic", "name": "Cubic", "params": "a"}
+        ]
+    }
+
+# =============================================================================
+# Performance Agent API
+# =============================================================================
+
+class PerformanceAnalyzeRequest(BaseModel):
+    physics_results: Dict[str, Any] = Field(default_factory=dict)
+    mass_properties: Dict[str, float] = Field(default_factory=dict)
+    materials: List[str] = Field(default_factory=list)
+    application_type: str = Field(default="industrial", description="aerospace, automotive, marine, industrial")
+
+# Global PerformanceAgent instance
+_performance_agent = None
+
+def get_performance_agent():
+    global _performance_agent
+    if _performance_agent is None:
+        from backend.agents.performance_agent import PerformanceAgent
+        _performance_agent = PerformanceAgent()
+    return _performance_agent
+
+@app.post("/api/performance/analyze")
+async def performance_analyze(req: PerformanceAnalyzeRequest):
+    """
+    Analyze design performance with industry benchmarks.
+    """
+    try:
+        agent = get_performance_agent()
+        result = await agent.run({
+            "physics_results": req.physics_results,
+            "mass_properties": req.mass_properties,
+            "materials": req.materials,
+            "application_type": req.application_type
+        })
+        return result
+    except Exception as e:
+        logger.error(f"Performance analysis error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/performance/metrics")
+async def performance_metrics():
+    """
+    Get available performance metrics.
+    """
+    return {
+        "metrics": [
+            {"id": "strength_to_weight", "name": "Strength-to-Weight Ratio", "unit": "kN·m/kg"},
+            {"id": "stiffness_to_weight", "name": "Stiffness-to-Weight Ratio", "unit": "MN·m/kg"},
+            {"id": "specific_energy", "name": "Specific Energy", "unit": "J/kg"},
+            {"id": "efficiency", "name": "Efficiency", "unit": "%"},
+            {"id": "power_density", "name": "Power Density", "unit": "W/kg"}
+        ],
+        "application_types": ["aerospace", "automotive", "marine", "industrial", "medical"]
+    }
+
+# =============================================================================
+# Standards Agent API
+# =============================================================================
+
+class StandardsCheckRequest(BaseModel):
+    standards: List[str] = Field(..., description="List of standards to check (e.g., ASME Y14.5, ISO 286)")
+    design_params: Dict[str, Any] = Field(default_factory=dict)
+    industry: str = Field(default="general", description="aerospace, automotive, medical, general")
+
+class StandardsInfoRequest(BaseModel):
+    standard_code: str
+
+# Global StandardsAgent instance
+_standards_agent = None
+
+def get_standards_agent():
+    global _standards_agent
+    if _standards_agent is None:
+        from backend.agents.standards_agent import StandardsAgent
+        _standards_agent = StandardsAgent()
+    return _standards_agent
+
+@app.post("/api/standards/check")
+async def standards_check(req: StandardsCheckRequest):
+    """
+    Check design compliance against industry standards.
+    """
+    try:
+        agent = get_standards_agent()
+        result = await agent.run({
+            "standards": req.standards,
+            "design_params": req.design_params,
+            "industry": req.industry
+        })
+        return result
+    except Exception as e:
+        logger.error(f"Standards check error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/standards/info")
+async def standards_info(req: StandardsInfoRequest):
+    """
+    Get information about a specific standard.
+    """
+    try:
+        agent = get_standards_agent()
+        result = await agent.get_standard_info(req.standard_code)
+        return result
+    except Exception as e:
+        logger.error(f"Standards info error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/standards/available")
+async def standards_available():
+    """
+    Get list of available standards.
+    """
+    return {
+        "standards": [
+            {"code": "ASME Y14.5", "name": "Geometric Dimensioning and Tolerancing", "category": "GD&T"},
+            {"code": "ISO 286", "name": "ISO Tolerance System", "category": "Tolerances"},
+            {"code": "ISO 1101", "name": "Geometric Tolerancing", "category": "GD&T"},
+            {"code": "ASTM", "name": "ASTM Material Standards", "category": "Materials"},
+            {"code": "MIL-STD", "name": "Military Standards", "category": "Defense"},
+            {"code": "NASA-STD", "name": "NASA Standards", "category": "Space"},
+            {"code": "ISO 9001", "name": "Quality Management", "category": "Quality"},
+            {"code": "AS9100", "name": "Aerospace Quality", "category": "Quality"}
+        ]
+    }
+
+# =============================================================================
+# User Agent API
+# =============================================================================
+
+class UserAuthRequest(BaseModel):
+    operation: str = Field(..., description="authenticate, authorize, get_user, list_users")
+    user_id: Optional[str] = None
+    access_token: Optional[str] = None
+    permission: Optional[str] = None
+    resource: Optional[str] = None
+    organization_id: Optional[str] = None
+
+class UserCreateRequest(BaseModel):
+    email: str
+    name: str
+    roles: List[str] = Field(default=["viewer"])
+    organization_id: str = Field(default="default")
+
+# Global UserAgent instance
+_user_agent = None
+
+def get_user_agent():
+    global _user_agent
+    if _user_agent is None:
+        from backend.agents.user_agent import UserAgent
+        _user_agent = UserAgent()
+    return _user_agent
+
+@app.post("/api/users/auth")
+async def user_auth(req: UserAuthRequest):
+    """
+    User authentication and authorization operations.
+    """
+    try:
+        agent = get_user_agent()
+        result = await agent.run({
+            "operation": req.operation,
+            "user_id": req.user_id,
+            "access_token": req.access_token,
+            "permission": req.permission,
+            "resource": req.resource,
+            "organization_id": req.organization_id
+        })
+        return result
+    except Exception as e:
+        logger.error(f"User auth error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/users/{user_id}")
+async def user_get(user_id: str):
+    """
+    Get user by ID.
+    """
+    try:
+        agent = get_user_agent()
+        result = await agent.run({
+            "operation": "get_user",
+            "user_id": user_id
+        })
+        return result
+    except Exception as e:
+        logger.error(f"User get error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/users")
+async def user_list(organization_id: Optional[str] = None):
+    """
+    List users in organization.
+    """
+    try:
+        agent = get_user_agent()
+        result = await agent.run({
+            "operation": "list_users",
+            "organization_id": organization_id
+        })
+        return result
+    except Exception as e:
+        logger.error(f"User list error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/users/roles/available")
+async def user_roles_available():
+    """
+    Get available user roles and permissions.
+    """
+    return {
+        "roles": [
+            {"id": "admin", "name": "Administrator", "permissions": ["all"]},
+            {"id": "designer", "name": "Designer", "permissions": ["create:project", "read:project", "update:project", "run:simulation", "export:design"]},
+            {"id": "engineer", "name": "Engineer", "permissions": ["read:project", "run:simulation", "export:design"]},
+            {"id": "viewer", "name": "Viewer", "permissions": ["read:project"]},
+            {"id": "api", "name": "API User", "permissions": ["read:project", "run:simulation"]}
+        ]
+    }
+
+# =============================================================================
+# Asset Sourcing Agent API
+# =============================================================================
+
+class AssetSearchRequest(BaseModel):
+    query: str
+    source: Optional[str] = Field(default=None, description="nasa, thingiverse, grabcad, or empty for all")
+    format: Optional[str] = Field(default=None, description="stl, obj, step, etc.")
+    license: Optional[str] = None
+    limit: int = Field(default=20, ge=1, le=100)
+
+# Global AssetSourcingAgent instance
+_asset_agent = None
+
+def get_asset_agent():
+    global _asset_agent
+    if _asset_agent is None:
+        from backend.agents.asset_sourcing_agent import AssetSourcingAgent
+        _asset_agent = AssetSourcingAgent()
+    return _asset_agent
+
+@app.post("/api/assets/search")
+async def assets_search(req: AssetSearchRequest):
+    """
+    Search for 3D assets across multiple sources.
+    """
+    try:
+        agent = get_asset_agent()
+        result = await agent.run({
+            "query": req.query,
+            "source": req.source,
+            "format": req.format,
+            "license": req.license,
+            "limit": req.limit
+        })
+        return result
+    except Exception as e:
+        logger.error(f"Asset search error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/assets/sources")
+async def assets_sources():
+    """
+    Get available asset sources.
+    """
+    return {
+        "sources": [
+            {"id": "nasa", "name": "NASA 3D Resources", "enabled": True, "requires_key": False},
+            {"id": "thingiverse", "name": "Thingiverse", "enabled": False, "requires_key": True},
+            {"id": "grabcad", "name": "GrabCAD Community", "enabled": False, "requires_key": True}
+        ],
+        "note": "Set THINGIVERSE_API_KEY and GRABCAD_API_KEY environment variables to enable additional sources"
+    }
+
+# =============================================================================
+# Sustainability Agent API
+# =============================================================================
+
+class SustainabilityAnalyzeRequest(BaseModel):
+    materials: List[Dict[str, Any]] = Field(..., description="List of {material_id, mass_kg}")
+    manufacturing_process: str = Field(default="unspecified")
+    energy_source: str = Field(default="grid_mix")
+    lifetime_years: int = Field(default=10)
+    end_of_life: str = Field(default="recycle", description="recycle, landfill, reuse")
+    use_phase_energy_kwh_per_year: float = Field(default=0)
+
+class SustainabilityQuickCheckRequest(BaseModel):
+    material: str
+    mass_kg: float
+    process: str = Field(default="unspecified")
+
+# Global SustainabilityAgent instance
+_sustainability_agent = None
+
+def get_sustainability_agent():
+    global _sustainability_agent
+    if _sustainability_agent is None:
+        from backend.agents.sustainability_agent import SustainabilityAgent
+        _sustainability_agent = SustainabilityAgent()
+    return _sustainability_agent
+
+@app.post("/api/sustainability/analyze")
+async def sustainability_analyze(req: SustainabilityAnalyzeRequest):
+    """
+    Run comprehensive Life Cycle Assessment (LCA).
+    """
+    try:
+        agent = get_sustainability_agent()
+        result = await agent.run({
+            "materials": req.materials,
+            "manufacturing_process": req.manufacturing_process,
+            "energy_source": req.energy_source,
+            "lifetime_years": req.lifetime_years,
+            "end_of_life": req.end_of_life,
+            "use_phase_energy_kwh_per_year": req.use_phase_energy_kwh_per_year
+        })
+        return result
+    except Exception as e:
+        logger.error(f"Sustainability analysis error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/sustainability/quick-check")
+async def sustainability_quick_check(req: SustainabilityQuickCheckRequest):
+    """
+    Quick sustainability check for a single material.
+    """
+    try:
+        agent = get_sustainability_agent()
+        result = await agent.run({
+            "materials": [{"material_id": req.material, "mass_kg": req.mass_kg}],
+            "manufacturing_process": req.process
+        })
+        return result
+    except Exception as e:
+        logger.error(f"Sustainability quick check error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/sustainability/end-of-life-options")
+async def sustainability_eol_options():
+    """
+    Get available end-of-life options.
+    """
+    return {
+        "options": [
+            {"id": "recycle", "name": "Recycling", "description": "Material recovery and reprocessing"},
+            {"id": "reuse", "name": "Reuse", "description": "Direct reuse of component"},
+            {"id": "landfill", "name": "Landfill", "description": "Disposal to landfill"},
+            {"id": "incinerate", "name": "Incineration", "description": "Waste-to-energy incineration"}
+        ]
+    }
+
+# =============================================================================
+# Shell Agent API
+# =============================================================================
+
+class ShellExecuteRequest(BaseModel):
+    cmd: str
+    args: List[str] = Field(default_factory=list)
+    cwd: Optional[str] = None
+    timeout: int = Field(default=60, ge=1, le=300)
+    env: Optional[Dict[str, str]] = None
+
+# Global ShellAgent instance
+_shell_agent = None
+
+def get_shell_agent():
+    global _shell_agent
+    if _shell_agent is None:
+        from backend.agents.shell_agent import ShellAgent
+        _shell_agent = ShellAgent()
+    return _shell_agent
+
+@app.post("/api/shell/execute")
+async def shell_execute(req: ShellExecuteRequest):
+    """
+    Execute shell command securely.
+    WARNING: This provides direct system access. Use with caution.
+    """
+    try:
+        agent = get_shell_agent()
+        result = await agent.run({
+            "cmd": req.cmd,
+            "args": req.args,
+            "cwd": req.cwd,
+            "timeout": req.timeout,
+            "env": req.env
+        })
+        return result
+    except Exception as e:
+        logger.error(f"Shell execution error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/shell/brick-commands")
+async def shell_brick_commands():
+    """
+    Get available BRICK OS CLI commands.
+    """
+    return {
+        "commands": [
+            {"cmd": "brick install", "description": "Install BRICK OS components"},
+            {"cmd": "brick audit", "description": "Run cryptographic state validation"},
+            {"cmd": "brick status", "description": "Check system status"},
+            {"cmd": "brick update", "description": "Update BRICK OS"},
+            {"cmd": "ls", "description": "List directory contents"},
+            {"cmd": "cd", "description": "Change directory"},
+            {"cmd": "pwd", "description": "Print working directory"}
+        ]
+    }
+
+# =============================================================================
+# Electronics Agent API
+# =============================================================================
+
+class CircuitSimulateRequest(BaseModel):
+    circuit: Dict[str, Any] = Field(..., description="Circuit definition with components and nets")
+    analysis_type: str = Field(default="dc", description="dc, ac, tran, or op")
+    fidelity: str = Field(default="spice", description="surrogate, spice, or field")
+    params: Dict[str, Any] = Field(default_factory=dict, description="Analysis parameters")
+
+class PCBAnalyzeRequest(BaseModel):
+    pcb: Dict[str, Any] = Field(..., description="PCB layout data with traces, vias, planes")
+    design_rules: Optional[Dict[str, Any]] = None
+
+class SIAnalysisRequest(BaseModel):
+    nets: List[Dict[str, Any]] = Field(..., description="Signal nets to analyze")
+    frequency_mhz: float = Field(default=100, description="Signal frequency in MHz")
+
+class PIAnalysisRequest(BaseModel):
+    voltage_v: float = Field(default=3.3)
+    current_a: float = Field(default=1.0)
+    max_ripple_mv: float = Field(default=50)
+    plane_resistance_mohm: float = Field(default=10)
+    plane_inductance_nh: float = Field(default=10)
+
+class ThermalAnalysisRequest(BaseModel):
+    components: List[Dict[str, Any]] = Field(..., description="Components with power dissipation")
+    ambient_temp_c: float = Field(default=25)
+
+class DRCCheckRequest(BaseModel):
+    pcb: Dict[str, Any] = Field(..., description="PCB layout to check")
+    design_rules: Optional[Dict[str, Any]] = None
+
+# Global ElectronicsAgent instance
+_electronics_agent = None
+
+def get_electronics_agent():
+    global _electronics_agent
+    if _electronics_agent is None:
+        from backend.agents.electronics_agent import ElectronicsAgent
+        _electronics_agent = ElectronicsAgent()
+    return _electronics_agent
+
+@app.post("/api/electronics/circuit/simulate")
+async def electronics_simulate_circuit(req: CircuitSimulateRequest):
+    """
+    Simulate electronic circuit with SPICE or neural surrogate.
+    """
+    try:
+        agent = get_electronics_agent()
+        result = await agent.run({
+            "operation": "simulate_circuit",
+            "circuit": req.circuit,
+            "analysis_type": req.analysis_type,
+            "fidelity": req.fidelity,
+            **req.params
+        })
+        return result
+    except Exception as e:
+        logger.error(f"Circuit simulation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/electronics/pcb/analyze")
+async def electronics_analyze_pcb(req: PCBAnalyzeRequest):
+    """
+    Analyze PCB layout for trace impedance, current capacity, thermal.
+    """
+    try:
+        agent = get_electronics_agent()
+        result = await agent.run({
+            "operation": "analyze_pcb",
+            "pcb": req.pcb,
+            "design_rules": req.design_rules
+        })
+        return result
+    except Exception as e:
+        logger.error(f"PCB analysis error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/electronics/si/analyze")
+async def electronics_si_analysis(req: SIAnalysisRequest):
+    """
+    Signal Integrity analysis for high-speed traces.
+    """
+    try:
+        agent = get_electronics_agent()
+        result = await agent.run({
+            "operation": "si_analysis",
+            "nets": req.nets,
+            "frequency_mhz": req.frequency_mhz
+        })
+        return result
+    except Exception as e:
+        logger.error(f"SI analysis error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/electronics/pi/analyze")
+async def electronics_pi_analysis(req: PIAnalysisRequest):
+    """
+    Power Integrity analysis for PDN impedance and decoupling.
+    """
+    try:
+        agent = get_electronics_agent()
+        result = await agent.run({
+            "operation": "pi_analysis",
+            "voltage_v": req.voltage_v,
+            "current_a": req.current_a,
+            "max_ripple_mv": req.max_ripple_mv,
+            "plane_resistance_mohm": req.plane_resistance_mohm,
+            "plane_inductance_nh": req.plane_inductance_nh
+        })
+        return result
+    except Exception as e:
+        logger.error(f"PI analysis error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/electronics/thermal/analyze")
+async def electronics_thermal_analysis(req: ThermalAnalysisRequest):
+    """
+    Thermal analysis for electronic components.
+    """
+    try:
+        agent = get_electronics_agent()
+        result = await agent.run({
+            "operation": "thermal_analysis",
+            "components": req.components,
+            "ambient_temp_c": req.ambient_temp_c
+        })
+        return result
+    except Exception as e:
+        logger.error(f"Thermal analysis error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/electronics/pcb/drc")
+async def electronics_drc_check(req: DRCCheckRequest):
+    """
+    Design Rule Check for PCB layout.
+    """
+    try:
+        agent = get_electronics_agent()
+        result = await agent.run({
+            "operation": "drc_check",
+            "pcb": req.pcb,
+            "design_rules": req.design_rules
+        })
+        return result
+    except Exception as e:
+        logger.error(f"DRC check error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/electronics/capabilities")
+async def electronics_capabilities():
+    """
+    Get ElectronicsAgent capabilities and availability.
+    """
+    capabilities = {
+        "circuit_simulation": {
+            "available": True,
+            "fidelity_levels": ["surrogate", "spice", "field"],
+            "analysis_types": ["dc", "ac", "tran", "op"],
+            "requirements": "PySpice, ngspice"
+        },
+        "pcb_analysis": {
+            "available": True,
+            "features": [
+                "trace_impedance",
+                "current_capacity",
+                "via_design",
+                "thermal_management"
+            ]
+        },
+        "signal_integrity": {
+            "available": True,
+            "features": [
+                "transmission_line_effects",
+                "impedance_matching",
+                "reflection_analysis",
+                "crosstalk"
+            ]
+        },
+        "power_integrity": {
+            "available": True,
+            "features": [
+                "pdn_impedance",
+                "decoupling_design",
+                "target_impedance"
+            ]
+        },
+        "thermal_analysis": {
+            "available": True,
+            "features": [
+                "junction_temperature",
+                "thermal_margin",
+                "heatsink_sizing"
+            ]
+        },
+        "drc": {
+            "available": True,
+            "checks": [
+                "clearance",
+                "trace_width",
+                "via_count",
+                "annular_ring"
+            ]
+        }
+    }
+    
+    return capabilities
+
+@app.get("/api/electronics/pcb/standards")
+async def electronics_pcb_standards():
+    """
+    Get PCB design standards and formulas.
+    """
+    return {
+        "impedance": {
+            "microstrip": "Z0 = 87/√(εr+1.41) × ln(5.98h/(0.8w+t))",
+            "stripline": "Z0 = 60/√(εr) × ln(4b/(0.67π(w+t)))"
+        },
+        "current_capacity": {
+            "ipc_2221": "I = k × ΔT^0.44 × A^0.725",
+            "external_k": 0.048,
+            "internal_k": 0.024
+        },
+        "via_resistance": {
+            "formula": "R = ρ × L / (π × (r_outer² - r_inner²))",
+            "rho_copper": "0.688 Ω·mil²/inch"
+        },
+        "thermal": {
+            "junction_temp": "Tj = Ta + P × θja",
+            "thermal_resistance": "θja = θjc + θcs + θsa"
+        }
+    }
+
+# =============================================================================
+# API Documentation & Status
+# =============================================================================
+
+@app.get("/api/agents")
+async def agents_list():
+    """
+    Get list of all available agents and their capabilities.
+    """
+    return {
+        "agents": [
+            {
+                "id": "shell",
+                "name": "Shell Agent",
+                "description": "BRICK OS CLI command execution with secure subprocess handling",
+                "endpoints": [
+                    {"path": "/api/shell/execute", "method": "POST", "description": "Execute shell command"},
+                    {"path": "/api/shell/brick-commands", "method": "GET", "description": "Get BRICK CLI commands"}
+                ],
+                "features": ["BRICK OS CLI", "secure subprocess", "directory navigation"]
+            },
+            {
+                "id": "network",
+                "name": "Network Agent",
+                "description": "Physical networking diagnostics with GNN topology analysis",
+                "endpoints": [
+                    {"path": "/api/network/ping", "method": "POST", "description": "Ping host"},
+                    {"path": "/api/network/traceroute", "method": "POST", "description": "Traceroute to host"},
+                    {"path": "/api/network/scan", "method": "POST", "description": "Network port scan"},
+                    {"path": "/api/network/topology", "method": "POST/GET", "description": "3D network topology"},
+                    {"path": "/api/network/topology/analyze", "method": "POST", "description": "GNN topology analysis"},
+                    {"path": "/api/network/visualize", "method": "GET", "description": "3D visualization data"},
+                    {"path": "/api/network/diagnose", "method": "GET", "description": "Full network diagnosis"},
+                    {"path": "/api/network/ssh", "method": "POST", "description": "SSH command execution"},
+                    {"path": "/api/network/packets/capture", "method": "POST", "description": "Packet capture"},
+                    {"path": "/api/network/traffic/analyze", "method": "POST", "description": "Traffic analysis"},
+                    {"path": "/api/network/device-types", "method": "GET", "description": "Device types"}
+                ],
+                "features": ["ICMP/ping", "traceroute", "port scanning", "SSH", "SNMP", "packet capture", "GNN analysis", "3D topology"],
+                "env_vars": ["NETWORK_GNN_MODEL"]
+            },
+            {
+                "id": "lattice",
+                "name": "Lattice Synthesis Agent",
+                "description": "Atomistic crystal structure synthesis with Materials Project integration",
+                "endpoints": [
+                    {"path": "/api/lattice/synthesize", "method": "POST", "description": "Synthesize crystal structure"},
+                    {"path": "/api/lattice/query", "method": "POST", "description": "Query material database"},
+                    {"path": "/api/lattice/optimize", "method": "POST", "description": "Optimize structure"},
+                    {"path": "/api/lattice/analyze", "method": "POST", "description": "Analyze structure"},
+                    {"path": "/api/lattice/crystal-systems", "method": "GET", "description": "Crystal systems"}
+                ],
+                "features": ["Materials Project API", "GNoME models", "7 crystal systems", "pymatgen", "ASE"],
+                "env_vars": ["MP_API_KEY", "GNOME_MODEL_PATH"]
+            },
+            {
+                "id": "performance",
+                "name": "Performance Agent",
+                "description": "Multi-objective performance benchmarking against industry standards",
+                "endpoints": [
+                    {"path": "/api/performance/analyze", "method": "POST", "description": "Analyze performance"},
+                    {"path": "/api/performance/metrics", "method": "GET", "description": "Available metrics"}
+                ],
+                "features": ["specific strength", "specific stiffness", "efficiency", "application benchmarks"]
+            },
+            {
+                "id": "standards",
+                "name": "Standards Agent",
+                "description": "Industry standards compliance validation",
+                "endpoints": [
+                    {"path": "/api/standards/check", "method": "POST", "description": "Check compliance"},
+                    {"path": "/api/standards/info", "method": "POST", "description": "Standard info"},
+                    {"path": "/api/standards/available", "method": "GET", "description": "Available standards"}
+                ],
+                "features": ["ASME Y14.5", "ISO 286", "ASTM", "MIL-STD", "NASA-STD"]
+            },
+            {
+                "id": "user",
+                "name": "User Agent",
+                "description": "User management, RBAC, and authentication",
+                "endpoints": [
+                    {"path": "/api/users/auth", "method": "POST", "description": "Auth operations"},
+                    {"path": "/api/users/{id}", "method": "GET", "description": "Get user"},
+                    {"path": "/api/users", "method": "GET", "description": "List users"},
+                    {"path": "/api/users/roles/available", "method": "GET", "description": "Available roles"}
+                ],
+                "features": ["OAuth/OIDC", "RBAC", "audit logging", "multi-tenancy"]
+            },
+            {
+                "id": "asset",
+                "name": "Asset Sourcing Agent",
+                "description": "3D asset search across multiple sources",
+                "endpoints": [
+                    {"path": "/api/assets/search", "method": "POST", "description": "Search assets"},
+                    {"path": "/api/assets/sources", "method": "GET", "description": "Available sources"}
+                ],
+                "features": ["NASA 3D Resources", "Thingiverse", "GrabCAD"],
+                "env_vars": ["THINGIVERSE_API_KEY", "GRABCAD_API_KEY"]
+            },
+            {
+                "id": "sustainability",
+                "name": "Sustainability Agent",
+                "description": "ISO 14040/14044-compliant Life Cycle Assessment",
+                "endpoints": [
+                    {"path": "/api/sustainability/analyze", "method": "POST", "description": "Full LCA"},
+                    {"path": "/api/sustainability/quick-check", "method": "POST", "description": "Quick check"},
+                    {"path": "/api/sustainability/end-of-life-options", "method": "GET", "description": "EOL options"}
+                ],
+                "features": ["cradle-to-grave LCA", "material circularity", "GWP calculation"]
+            },
+            {
+                "id": "electronics",
+                "name": "Electronics Agent",
+                "description": "Circuit simulation, PCB analysis, SI/PI, thermal",
+                "endpoints": [
+                    {"path": "/api/electronics/circuit/simulate", "method": "POST", "description": "Circuit simulation"},
+                    {"path": "/api/electronics/pcb/analyze", "method": "POST", "description": "PCB analysis"},
+                    {"path": "/api/electronics/si/analyze", "method": "POST", "description": "Signal Integrity"},
+                    {"path": "/api/electronics/pi/analyze", "method": "POST", "description": "Power Integrity"},
+                    {"path": "/api/electronics/thermal/analyze", "method": "POST", "description": "Thermal analysis"},
+                    {"path": "/api/electronics/pcb/drc", "method": "POST", "description": "Design Rule Check"},
+                    {"path": "/api/electronics/capabilities", "method": "GET", "description": "Capabilities"},
+                    {"path": "/api/electronics/pcb/standards", "method": "GET", "description": "PCB standards"}
+                ],
+                "features": [
+                    "SPICE simulation", "KiCad integration", "neural surrogates",
+                    "signal integrity", "power integrity", "thermal analysis", "DRC"
+                ],
+                "env_vars": ["NGSPICE_PATH"]
+            }
+        ],
+        "total_agents": 8,
+        "patterns": "BRICK OS - database-driven, no hardcoded fallbacks"
+    }
+
+@app.get("/api/status")
+async def api_status():
+    """
+    Get API status and health information.
+    """
+    return {
+        "status": "operational",
+        "version": "1.0.0",
+        "timestamp": datetime.now().isoformat(),
+        "agents": {
+            "shell": {"status": "available"},
+            "network": {
+                "status": "available",
+                "gnn": "requires model" if not os.getenv("NETWORK_GNN_MODEL") else "ready"
+            },
+            "lattice": {
+                "status": "available",
+                "materials_project": "requires API key" if not os.getenv("MP_API_KEY") else "ready"
+            },
+            "performance": {"status": "available"},
+            "standards": {"status": "available"},
+            "user": {"status": "available"},
+            "asset": {
+                "status": "available",
+                "sources": {
+                    "nasa": True,
+                    "thingiverse": os.getenv("THINGIVERSE_API_KEY") is not None,
+                    "grabcad": os.getenv("GRABCAD_API_KEY") is not None
+                }
+            },
+            "sustainability": {"status": "available"}
+        }
+    }
 
 # =============================================================================
 # Server Startup

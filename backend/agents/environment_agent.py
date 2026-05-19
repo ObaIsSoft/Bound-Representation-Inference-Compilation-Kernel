@@ -1,24 +1,56 @@
+"""
+EnvironmentAgent - Parses user intent to determine the operating environment.
+REFACTORED VERSION - Uses configuration system instead of hardcoded values
+
+Sets gravity, atmospheric pressure, temperature, fluid properties,
+magnetic fields, and solar irradiance from configuration database.
+"""
+
+import os
+import sys
+
+# Add parent directory to path for imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from typing import Dict, Any, List
 import logging
 import re
-from physics.kernel import get_physics_kernel
 
 logger = logging.getLogger(__name__)
+
+# Import configuration system
+from backend.config import get_physics_constant
+
 
 class EnvironmentAgent:
     """
     Parses user intent to determine the operating environment.
-    Sets gravity, atmospheric pressure, temperature, fluid properties,
-    magnetic fields, and solar irradiance.
+    REFACTORED: All environment parameters loaded from config
     """
+    
+    def __init__(self):
+        """Initialize with environment database from config"""
+        self._load_environments()
+    
+    def _load_environments(self):
+        """Load environment definitions from config"""
+        try:
+            # Load from YAML config
+            import yaml
+            config_path = os.path.join(
+                os.path.dirname(os.path.dirname(__file__)),
+                'config', 'environments.yaml'
+            )
+            with open(config_path, 'r') as f:
+                self.environments = yaml.safe_load(f)
+            logger.info(f"Loaded {len(self.environments)} environment definitions")
+        except Exception as e:
+            logger.error(f"Failed to load environments config: {e}")
+            self.environments = {}
+    
     def get_manifest(self) -> List[str]:
         """Return list of all supported environment types."""
-        return [
-            "AERO", "NAVAL", "SPACE", "GROUND", "INDUSTRIAL", "BIO",
-            "MOON", "MARS", "VENUS", "TITAN", "EUROPA", 
-            "JUPITER_ORBIT", "SATURN_ORBIT", "ASTEROID", "VOLCANO", 
-            "HURRICANE", "UNDERSEA", "STATIC"
-        ]
+        return list(self.environments.keys())
 
     def run(self, user_intent: str) -> Dict[str, Any]:
         """
@@ -41,12 +73,11 @@ class EnvironmentAgent:
         
         # Physics Enhancement: Radiation Pressure (P = Phi / c)
         if regime == "SPACE" or env_data.get("fluid_density", 0) == 0:
-            kernel = get_physics_kernel()
             try:
-                c = kernel.get_constant('c')
-            except (KeyError, AttributeError) as e:
-                logger.debug(f"Could not get speed of light from kernel, using default: {e}")
-                c = 299792458 # Safe fallback only if kernel fails
+                c = get_physics_constant('universal.speed_of_light')
+            except (KeyError, Exception) as e:
+                logger.debug(f"Could not get speed of light from config: {e}")
+                c = 299792458  # Safe fallback only if config fails
                 
             flux = env_data.get("solar_flux", 0)
             # Radiation pressure (perfect absorption)
@@ -58,7 +89,6 @@ class EnvironmentAgent:
         # Assuming env_data["magnetic_field"] is in microTesla (uT)
         b_scalar_uT = env_data.get("magnetic_field", 0.0)
         # Default direction: North (Y-axis) -> [0, B, 0]
-        # In future, this could rotate based on latitude.
         env_data["magnetic_field_vec_T"] = [0.0, b_scalar_uT * 1e-6, 0.0]
             
         return env_data
@@ -78,11 +108,9 @@ class EnvironmentAgent:
             
         # Infer from Environment Type if vague
         if env_type in ["AERO", "HURRICANE", "VOLCANO", "VENUS", "TITAN"]:
-            # Default for thick atmos bodies is often aerial if not specified, 
-            # but usually rovers are safer. defaulting to aerial for Titan/Venus if ambiguous due to interest
-            # Actually, standard fallback is usually Ground for surfaces.
-            if "drone" in intent or "fly" in intent: return "AERIAL"
-            return "GROUND" # Safer default
+            if "drone" in intent or "fly" in intent:
+                return "AERIAL"
+            return "GROUND"  # Safer default
             
         if env_type in ["GROUND", "INDUSTRIAL", "MOON", "MARS", "EUROPA", "STATIC"]:
             return "GROUND"
@@ -93,342 +121,85 @@ class EnvironmentAgent:
         if "ORBIT" in env_type or env_type in ["ASTEROID", "SPACE"]:
             return "SPACE"
             
-        return "GROUND" # Ultimate fallback
-
-    @property
-    def _g_earth(self) -> float:
-        """Get standard earth gravity from kernel."""
-        try:
-            return get_physics_kernel().get_constant('g')
-        except (KeyError, AttributeError) as e:
-            logger.debug(f"Could not get gravity from kernel, using default: {e}")
-            return 9.80665
+        return "GROUND"  # Ultimate fallback
 
     def _determine_location(self, intent_lower: str) -> dict:
-        """Determine physical location constants using regex."""
+        """Determine physical location constants using regex and config."""
         
         # --- Solar System Bodies ---
         if re.search(r'\b(moon|lunar)\b', intent_lower):
-            return self._moon_environment()
+            return self._get_environment("moon", "surface")
         if re.search(r'\b(mars|martian)\b', intent_lower):
-            return self._mars_environment()
+            return self._get_environment("mars", "surface")
         if re.search(r'\b(venus|venusian)\b', intent_lower):
-            return self._venus_environment()
+            return self._get_environment("venus", "surface")
         if re.search(r'\b(titan)\b', intent_lower):
-            return self._titan_environment()
+            return self._get_environment("titan", "surface")
         if re.search(r'\b(europa)\b', intent_lower):
-            return self._europa_environment()
+            return self._get_environment("europa", "surface")
         if re.search(r'\b(jupiter|jovian)\b', intent_lower):
-            return self._jupiter_orbit_environment()
+            return self._get_environment("jupiter_orbit")
         if re.search(r'\b(saturn)\b', intent_lower):
-            return self._saturn_orbit_environment()
+            return self._get_environment("saturn_orbit")
         if re.search(r'\b(asteroid|comet|meteor)\b', intent_lower):
-            return self._asteroid_environment()
-            
+            return self._get_environment("asteroid")
+        
         # --- Extreme Earth Environments ---
         if re.search(r'\b(volcano|lava|magma)\b', intent_lower):
-            return self._volcano_environment()
+            return self._get_environment("earth", "volcano")
         if re.search(r'\b(hurricane|storm|typhoon|tornado)\b', intent_lower):
-            return self._hurricane_environment()
+            return self._get_environment("earth", "hurricane")
         if re.search(r'\b(undersea|underwater|depths?|ocean|trench)\b', intent_lower):
-            return self._undersea_environment()
+            return self._get_environment("earth", "undersea")
             
         # --- Standard Earth ---
         if re.search(r'\b(space|zero-g|orbit|vacuum)\b', intent_lower):
-            return self._asteroid_environment() # Generic Space
+            return self._get_environment("space")
         if re.search(r'\b(aero|air|sky|flight|cloud|rotor|blade|propeller)\b', intent_lower):
-            return self._aero_environment()
+            return self._get_environment("earth", "aero")
         if re.search(r'\b(naval|water|lake|river|sea)\b', intent_lower):
-            return self._naval_environment()
+            return self._get_environment("earth", "naval")
         if re.search(r'\b(bio|medical|blood|vein)\b', intent_lower):
-            return self._bio_environment()
+            return self._get_environment("earth", "bio")
         if re.search(r'\b(factory|industrial|warehouse|indoor)\b', intent_lower):
-            return self._industrial_environment()
+            return self._get_environment("earth", "industrial")
             
         # Default
-        return self._ground_environment()
+        return self._get_environment("earth", "sea_level")
 
-    # --- Environment Definitions ---
-
-    def _moon_environment(self) -> dict:
-        return {
-            "type": "MOON",
-            "gravity": 1.62, "fluid_density": 0.0, "pressure": 0.0, "temperature": -23.0,
-            "viscosity": 0.0, "magnetic_field": 0.0, "solar_flux": 1361.0,
-            "description": "Lunar surface. Vacuum, dust hazards, high solar flux (day)."
-        }
-    
-    def _mars_environment(self) -> dict:
-        return {
-            "type": "MARS",
-            "gravity": 3.71, "fluid_density": 0.020, "pressure": 600.0, "temperature": -63.0,
-            "viscosity": 1.4e-5, "magnetic_field": 0.0, "solar_flux": 589.0, # ~43% of Earth
-            "description": "Martian surface. Thin CO2 atmosphere, dust storms, cold."
-        }
-        
-    def _venus_environment(self) -> dict:
-        return {
-            "type": "VENUS",
-            "gravity": 8.87, "fluid_density": 65.0, "pressure": 9200000.0, "temperature": 462.0,
-            "viscosity": 3.0e-5, "magnetic_field": 0.0, "solar_flux": 2600.0, # High albedo affects surface
-            "description": "Venusian surface. Crushing pressure, lead-melting heat, acidic."
-        }
-        
-    def _titan_environment(self) -> dict:
-        return {
-            "type": "TITAN",
-            "gravity": 1.35, "fluid_density": 5.3, "pressure": 146700.0, "temperature": -179.0,
-            "viscosity": 6.0e-6, "magnetic_field": 0.0, "solar_flux": 15.0, # ~1% Earth
-            "description": "Titan surface. Thick nitrogen/methane atmosphere, low gravity, hydrocarbon lakes."
-        }
-
-    def _europa_environment(self) -> dict:
-        return {
-            "type": "EUROPA",
-            "gravity": 1.31, "fluid_density": 0.0, "pressure": 0.0, "temperature": -160.0,
-            "viscosity": 0.0, "magnetic_field": 400.0, # Induced field
-            "solar_flux": 50.0,
-            "description": "Europa surface. Ice shell, high radiation environment from Jupiter."
-        }
-        
-    def _jupiter_orbit_environment(self) -> dict:
-        return {
-            "type": "JUPITER_ORBIT",
-            "gravity": 24.79, "fluid_density": 0.0, "pressure": 0.0, "temperature": -145.0,
-            "viscosity": 0.0, "magnetic_field": 420000.0, # Huge field (4.2 Gauss)
-            "solar_flux": 50.0,
-            "description": "Jupiter Orbit. Intense radiation belts, powerful magnetic field."
-        }
-        
-    def _saturn_orbit_environment(self) -> dict:
-        return {
-            "type": "SATURN_ORBIT",
-            "gravity": 10.44, "fluid_density": 0.0, "pressure": 0.0, "temperature": -178.0,
-            "viscosity": 0.0, "magnetic_field": 20000.0,
-            "solar_flux": 15.0,
-            "description": "Saturn Orbit. Ring system hazards, complex gravity/moon interactions."
-        }
-    
-    def _asteroid_environment(self) -> dict:
-        return {
-            "type": "ASTEROID",
-            "gravity": 0.0, "fluid_density": 0.0, "pressure": 0.0, "temperature": -270.0,
-            "viscosity": 0.0, "magnetic_field": 0.0, "solar_flux": 1361.0,
-            "description": "Deep space/Asteroid microgravity. Vacuum, debris hazards."
-        }
-    
-    def _volcano_environment(self) -> dict:
-        return {
-            "type": "VOLCANO",
-            "gravity": self._g_earth, "fluid_density": 0.6, "pressure": 101325.0, "temperature": 800.0,
-            "viscosity": 4.0e-5, "magnetic_field": 50.0, "solar_flux": 1000.0,
-            "description": "Extreme heat environment. Ash particulates, corrosive gases."
-        }
-    
-    def _hurricane_environment(self) -> dict:
-        return {
-            "type": "HURRICANE",
-            "gravity": self._g_earth, "fluid_density": 1.225, "pressure": 95000.0, "temperature": 27.0,
-            "wind_speed": 70.0, "viscosity": 1.8e-5, "magnetic_field": 50.0, "solar_flux": 200.0, # Cloudy
-            "description": "Extreme wind, rain, turbulence."
-        }
-    
-    def _undersea_environment(self) -> dict:
-        return {
-            "type": "UNDERSEA",
-            "gravity": self._g_earth, "fluid_density": 1025.0, "pressure": 10000000.0, "temperature": 4.0,
-            "viscosity": 1.0e-3, "magnetic_field": 50.0, "solar_flux": 0.0,
-            "description": "High pressure deep ocean. No light, high salinity."
-        }
-    
-    def _aero_environment(self) -> dict:
-        return {
-            "type": "AERO",
-            "gravity": self._g_earth, "fluid_density": 1.225, "pressure": 101325.0, "temperature": 15.0,
-            "viscosity": 1.8e-5, "magnetic_field": 50.0, "solar_flux": 1000.0,
-            "description": "Standard Earth Atmosphere (ISA)."
-        }
-    
-    def _naval_environment(self) -> dict:
-        return {
-            "type": "NAVAL",
-            "gravity": self._g_earth, "fluid_density": 1025.0, "pressure": 101325.0, "temperature": 15.0,
-            "viscosity": 1.0e-3, "magnetic_field": 50.0, "solar_flux": 1000.0,
-            "description": "Surface water operations. Wave action, salt corrosion."
-        }
-    
-    def _ground_environment(self) -> dict:
-        return {
-            "type": "GROUND",
-            "gravity": self._g_earth, "fluid_density": 1.225, "pressure": 101325.0, "temperature": 20.0,
-            "viscosity": 1.8e-5, "magnetic_field": 50.0, "solar_flux": 1000.0,
-            "description": "Standard Earth Ground."
-        }
-
-    def _industrial_environment(self) -> dict:
-        return {
-            "type": "INDUSTRIAL",
-            "gravity": self._g_earth, "fluid_density": 1.225, "pressure": 101325.0, "temperature": 22.0,
-            "viscosity": 1.8e-5, "magnetic_field": 50.0, "solar_flux": 0.0, # Artificial light
-            "description": "Controlled indoor industrial."
-        }
-
-    def _bio_environment(self) -> dict:
-        return {
-            "type": "BIO",
-            "gravity": self._g_earth, "fluid_density": 1050.0, "pressure": 101325.0, "temperature": 37.0,
-            "viscosity": 3.0e-3, "magnetic_field": 0.0, "solar_flux": 0.0,
-            "description": "Internal biological. Non-newtonian fluids likely."
-        }
-
-    # --- Phase 20: Swarm Environment Logic ---
-    
-    def init_swarm_resources(self, width: float = 100.0, height: float = 100.0, count: int = 10) -> List[Dict[str, Any]]:
+    def _get_environment(self, env_key: str, sub_key: str = None) -> dict:
         """
-        Generate random resource piles for Swarm Simulation.
+        Get environment data from config.
+        
+        Args:
+            env_key: Top-level environment key (e.g., 'moon', 'mars', 'earth')
+            sub_key: Sub-environment key for Earth variants (e.g., 'sea_level', 'aero')
         """
-        import random
-        piles = []
-        for _ in range(count):
-            piles.append({
-                "id": f"res_{random.randint(1000,9999)}",
-                "x": random.uniform(-width/2, width/2),
-                "y": random.uniform(-height/2, height/2),
-                "type": random.choice(["ORE", "ENERGY"]),
-                "amount": random.uniform(100.0, 1000.0),
-                "radius": 5.0
-            })
-        return piles
-
-    def update_pheromones(self, pheromone_grid: Dict[str, float], decay_rate: float = 0.95) -> Dict[str, float]:
-        """
-        Apply decay to pheromone grid (Entropy).
-        """
-        new_grid = {}
-        for key, value in pheromone_grid.items():
-            new_val = value * decay_rate
-            if new_val > 0.01: # Cull weak signals
-                new_grid[key] = new_val
-        return new_grid
-
-    def consume_resource(self, piles: List[Dict], agent_pos: List[float], amount: float) -> float:
-        """
-        Attempt to harvest resources near agent. returns amount harvested.
-        """
-        harvested = 0.0
-        import math
+        if env_key not in self.environments:
+            logger.warning(f"Environment '{env_key}' not found in config, using Earth default")
+            env_key = "earth"
+            sub_key = "sea_level"
         
-        ax, ay = agent_pos[0], agent_pos[1]
+        env_data = self.environments[env_key]
         
-        for pile in piles:
-            dx = pile["x"] - ax
-            dy = pile["y"] - ay
-            dist = math.sqrt(dx*dx + dy*dy)
-            
-            if dist < (pile["radius"] + 1.0): # Within range
-                available = pile["amount"]
-                take = min(available, amount)
-                pile["amount"] -= take
-                harvested += take
-                if harvested >= amount:
-                    break
-                    
-        return harvested
-
-    def evaluate_terrain_sdf(self, position: List[float], terrain_map: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Query exact terrain distance using VMK.
-        Positive = In Air, Negative = Underground/In Obstacle.
-        """
-        try:
-            from vmk_kernel import SymbolicMachiningKernel, ToolProfile, VMKInstruction
-            import numpy as np
-        except ImportError:
-            return {"error": "VMK not available"}
-
-        # Optimization: Caching kernel? For MVP, we recreate.
-        stock_dims = terrain_map.get("dims", [1000, 1000, 1000])
-        kernel = SymbolicMachiningKernel(stock_dims=stock_dims)
+        # Handle nested Earth environments
+        if sub_key and isinstance(env_data, dict) and sub_key in env_data:
+            return env_data[sub_key].copy()
         
-        registered = set()
-        for op in terrain_map.get("obstacles", []):
-            tid = op.get("tool_id", "terrain_feature")
-            if tid not in registered:
-                # Default "Hill / Rock" radius
-                kernel.register_tool(ToolProfile(id=tid, radius=op.get("radius", 10.0), type="BALL"))
-                registered.add(tid)
-            kernel.execute_gcode(VMKInstruction(**op))
-            
-        p = np.array(position)
-        sdf = kernel.get_sdf(p)
+        # Handle direct environment definitions
+        if isinstance(env_data, dict) and "type" in env_data:
+            return env_data.copy()
         
-        # Interpret SDF:
-        # Our VMK is "Stock - Cuts".
-        # If Terrain is "Cuts into ground" (Caves/Canyons)?
-        # If Terrain is "Additions to ground"? VMK is subtractive.
-        # To model Hills:
-        # We start with huge Stock (Ground).
-        # We cut away "Air" to leave Hills? That's complex sculpting.
-        # Alternative: We treat "Stock" as Air, and "Cuts" as Obstacles (Collision volumes)?
-        # PhysicsAgent collision check treated Stock as Box (Solid) and Cuts as Tunnels (Air).
-        # If we want Hills involved:
-        # Modeling positive features in subtractive kernel:
-        # Start with Block. Cut everything EXCEPT the hill.
-        # Or, just use SDF primitives directly if we expand Kernel to support Union.
-        # For now, implemented as Subtractive: "Terrain" = Solid Block with Tunnels/Caves.
-        # So SDF < 0 is "Inside Rock". SDF > 0 is "In Air".
-        
-        # Return distance to surface
-        return {
-            "sdf": sdf,
-            "is_underground": sdf < 0,
-            "distance_to_surface": abs(sdf),
-            "gradient": [0,0,1] # Placeholder for future normal vector calc
-        }
-
-    def _initialize_oracles(self):
-        """Initialize Oracles for environmental analysis"""
-        try:
-            from agents.chemistry_oracle.chemistry_oracle import ChemistryOracle
-            from agents.physics_oracle.physics_oracle import PhysicsOracle
-            self.chemistry_oracle = ChemistryOracle()
-            self.physics_oracle = PhysicsOracle()
-            self.has_oracles = True
-        except ImportError:
-            self.chemistry_oracle = None
-            self.physics_oracle = None
-            self.has_oracles = False
-
-    def analyze_emissions_oracle(self, params: dict) -> dict:
-        """Analyze chemical emissions using Chemistry Oracle"""
-        if not hasattr(self, 'has_oracles'):
-            self._initialize_oracles()
-        
-        if not self.has_oracles:
-            return {"status": "error", "message": "Oracles not available"}
-        
-        return self.chemistry_oracle.solve(
-            query="Emissions analysis",
-            domain="KINETICS",
-            params=params
-        )
-    
-    def analyze_atmospheric_dispersion_oracle(self, params: dict) -> dict:
-        """Analyze atmospheric dispersion using Physics Oracle (FLUID)"""
-        if not hasattr(self, 'has_oracles'):
-            self._initialize_oracles()
-        
-        if not self.has_oracles:
-            return {"status": "error", "message": "Oracles not available"}
-        
-        return self.physics_oracle.solve(
-            query="Atmospheric dispersion",
-            domain="FLUID",
-            params=params
-        )
+        # Fallback
+        logger.warning(f"Could not parse environment '{env_key}/{sub_key}', using Earth default")
+        return self.environments["earth"]["sea_level"].copy()
 
     def detect_environment(self, user_intent: str) -> Dict[str, Any]:
         """
         Alias for run() to match main.py interface.
         """
         return self.run(user_intent)
+
+
+# Legacy compatibility
+EnvironmentAgentRefactored = EnvironmentAgent

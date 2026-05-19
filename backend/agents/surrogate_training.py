@@ -18,6 +18,12 @@ from typing import Dict, List, Tuple, Optional
 from pathlib import Path
 import json
 
+try:
+    from backend.config import get_functional_agent_config
+    HAS_CONFIG = True
+except ImportError:
+    HAS_CONFIG = False
+
 logger = logging.getLogger(__name__)
 
 # Try to import PyTorch
@@ -42,33 +48,70 @@ class SyntheticBeamDataset:
     Note: If PyTorch is available, this inherits from torch.utils.data.Dataset
     """
     
-    def __init__(self, n_samples: int = 1000, n_points: int = 100):
+    def __init__(self, n_samples: int = None, n_points: int = None):
         """
         Initialize synthetic dataset
         
         Args:
-            n_samples: Number of synthetic samples to generate
-            n_points: Number of spatial points per sample
+            n_samples: Number of synthetic samples to generate (from config if None)
+            n_points: Number of spatial points per sample (from config if None)
         """
-        self.n_samples = n_samples
-        self.n_points = n_points
+        # Get defaults from config
+        if HAS_CONFIG:
+            try:
+                syn_config = get_functional_agent_config('surrogate_training', 'synthetic_data')
+                default_samples = syn_config.get('default_samples', 1000)
+                default_points = syn_config.get('default_points', 100)
+                self.random_seed = syn_config.get('random_seed', 42)
+                beam_params = syn_config.get('beam_parameters', {})
+            except:
+                default_samples, default_points, self.random_seed = 1000, 100, 42
+                beam_params = {}
+        else:
+            default_samples, default_points, self.random_seed = 1000, 100, 42
+            beam_params = {}
+        
+        self.n_samples = n_samples if n_samples is not None else default_samples
+        self.n_points = n_points if n_points is not None else default_points
+        self.beam_params = beam_params
         self.samples = []
         
-        logger.info(f"Generating {n_samples} synthetic beam samples...")
+        logger.info(f"Generating {self.n_samples} synthetic beam samples...")
         self._generate_data()
         
     def _generate_data(self):
         """Generate synthetic stress fields using analytical solutions"""
-        np.random.seed(42)  # Reproducibility
+        np.random.seed(self.random_seed)  # Reproducibility
+        
+        # Get parameter ranges from config
+        p = self.beam_params
         
         for i in range(self.n_samples):
-            # Random beam parameters (within reasonable bounds)
-            length = np.random.uniform(0.5, 5.0)        # m
-            width = np.random.uniform(0.01, 0.5)        # m
-            height = np.random.uniform(0.01, 0.5)       # m
-            E = np.random.uniform(10e9, 300e9)          # Pa
-            nu = np.random.uniform(0.25, 0.35)          # -
-            tip_load = np.random.uniform(10, 10000)     # N
+            # Random beam parameters (within configurable bounds)
+            length = np.random.uniform(
+                p.get('length_m', {}).get('min', 0.5),
+                p.get('length_m', {}).get('max', 5.0)
+            )
+            width = np.random.uniform(
+                p.get('width_m', {}).get('min', 0.01),
+                p.get('width_m', {}).get('max', 0.5)
+            )
+            height = np.random.uniform(
+                p.get('height_m', {}).get('min', 0.01),
+                p.get('height_m', {}).get('max', 0.5)
+            )
+            E = np.random.uniform(
+                p.get('elastic_modulus_pa', {}).get('min', 10e9),
+                p.get('elastic_modulus_pa', {}).get('max', 300e9)
+            )
+            nu = np.random.uniform(
+                p.get('poisson_ratio', {}).get('min', 0.25),
+                p.get('poisson_ratio', {}).get('max', 0.35)
+            )
+            tip_load = np.random.uniform(
+                p.get('tip_load_n', {}).get('min', 10),
+                p.get('tip_load_n', {}).get('max', 10000)
+            )
             
             # Input features: [E, nu, rho, load] at each point
             # Plus spatial coordinates [x, y, z]
@@ -80,7 +123,14 @@ class SyntheticBeamDataset:
             E_vec = np.full(self.n_points, E)
             nu_vec = np.full(self.n_points, nu)
             load_vec = np.full(self.n_points, tip_load)
-            rho = 2700  # kg/m³ (typical density)
+            # Get default density from config or use typical aluminum value
+            if HAS_CONFIG:
+                try:
+                    rho = get_functional_agent_config('surrogate_training', 'synthetic_data.default_density_kg_m3')
+                except:
+                    rho = 2700  # kg/m³ (typical aluminum density)
+            else:
+                rho = 2700
             rho_vec = np.full(self.n_points, rho)
             
             # Input: [n_points, 7] -> [E, nu, rho, load, x, y, z]
@@ -154,9 +204,9 @@ class FNOTrainer:
     def __init__(
         self,
         model,
-        learning_rate: float = 1e-3,
-        batch_size: int = 16,
-        n_epochs: int = 100,
+        learning_rate: float = None,
+        batch_size: int = None,
+        n_epochs: int = None,
         device: str = 'auto'
     ):
         """
@@ -164,13 +214,31 @@ class FNOTrainer:
         
         Args:
             model: Neural operator model (e.g., PhysicsInformedNeuralOperator)
-            learning_rate: Learning rate for optimizer
-            batch_size: Batch size for training
-            n_epochs: Number of training epochs
+            learning_rate: Learning rate for optimizer (from config if None)
+            batch_size: Batch size for training (from config if None)
+            n_epochs: Number of training epochs (from config if None)
             device: 'cuda', 'cpu', or 'auto'
         """
         if not HAS_TORCH:
             raise RuntimeError("PyTorch required for training")
+        
+        # Get training defaults from config
+        if HAS_CONFIG:
+            try:
+                train_config = get_functional_agent_config('surrogate_training', 'training')
+                default_lr = train_config.get('default_learning_rate', 1e-3)
+                default_batch = train_config.get('default_batch_size', 16)
+                default_epochs = train_config.get('default_epochs', 100)
+                physics_weight = train_config.get('physics_loss_weight', 0.1)
+            except:
+                default_lr, default_batch, default_epochs, physics_weight = 1e-3, 16, 100, 0.1
+        else:
+            default_lr, default_batch, default_epochs, physics_weight = 1e-3, 16, 100, 0.1
+        
+        learning_rate = learning_rate if learning_rate is not None else default_lr
+        batch_size = batch_size if batch_size is not None else default_batch
+        n_epochs = n_epochs if n_epochs is not None else default_epochs
+        self.physics_loss_weight = physics_weight
         
         self.model = model
         self.learning_rate = learning_rate
@@ -216,8 +284,8 @@ class FNOTrainer:
             # Physics loss (simplified - would need coordinates for full implementation)
             physics_loss = self._compute_physics_loss(y_pred, x)
             
-            # Combined loss
-            loss = data_loss + 0.1 * physics_loss
+            # Combined loss using configured physics weight
+            loss = data_loss + self.physics_loss_weight * physics_loss
             
             # Backward pass
             loss.backward()
@@ -359,16 +427,16 @@ class FNOTrainer:
 
 
 def train_surrogate_model(
-    n_samples: int = 1000,
-    n_epochs: int = 100,
+    n_samples: int = None,
+    n_epochs: int = None,
     save_dir: str = "./models"
 ) -> Dict:
     """
     Convenience function to train the surrogate model
     
     Args:
-        n_samples: Number of synthetic training samples
-        n_epochs: Training epochs
+        n_samples: Number of synthetic training samples (from config if None)
+        n_epochs: Training epochs (from config if None)
         save_dir: Directory to save model
         
     Returns:
@@ -377,22 +445,48 @@ def train_surrogate_model(
     if not HAS_TORCH:
         raise RuntimeError("PyTorch required for training")
     
+    # Get model architecture from config
+    if HAS_CONFIG:
+        try:
+            model_config = get_functional_agent_config('surrogate_training', 'model')
+            modes = model_config.get('default_modes', 12)
+            width = model_config.get('default_width', 64)
+            layers = model_config.get('default_layers', 4)
+            in_ch = model_config.get('in_channels', 7)
+            out_ch = model_config.get('out_channels', 6)
+            
+            train_config = get_functional_agent_config('surrogate_training', 'training')
+            default_samples = train_config.get('default_samples', 1000)
+            default_epochs = train_config.get('default_epochs', 100)
+            
+            split_config = get_functional_agent_config('surrogate_training', 'data_split')
+            train_ratio = split_config.get('train_ratio', 0.8)
+        except:
+            modes, width, layers, in_ch, out_ch = 12, 64, 4, 7, 6
+            default_samples, default_epochs, train_ratio = 1000, 100, 0.8
+    else:
+        modes, width, layers, in_ch, out_ch = 12, 64, 4, 7, 6
+        default_samples, default_epochs, train_ratio = 1000, 100, 0.8
+    
+    n_samples = n_samples if n_samples is not None else default_samples
+    n_epochs = n_epochs if n_epochs is not None else default_epochs
+    
     from backend.agents.structural_agent import PhysicsInformedNeuralOperator
     
-    # Create model
+    # Create model with configured architecture
     model = PhysicsInformedNeuralOperator(
-        in_channels=7,   # [E, nu, rho, load, x, y, z]
-        out_channels=6,  # [σxx, σyy, σzz, σxy, σyz, σzx]
-        modes=12,
-        width=64,
-        n_layers=4
+        in_channels=in_ch,
+        out_channels=out_ch,
+        modes=modes,
+        width=width,
+        n_layers=layers
     )
     
     # Create datasets
     dataset = SyntheticBeamDataset(n_samples=n_samples)
     
-    # Split train/val
-    train_size = int(0.8 * len(dataset))
+    # Split train/val using configured ratio
+    train_size = int(train_ratio * len(dataset))
     val_size = len(dataset) - train_size
     train_dataset, val_dataset = torch.utils.data.random_split(
         dataset, [train_size, val_size]

@@ -2,6 +2,13 @@
 from typing import Dict, Any, List, Optional
 import logging
 import json
+
+try:
+    from backend.config import get_functional_agent_config, component_config
+    HAS_CONFIG = True
+except ImportError:
+    HAS_CONFIG = False
+
 try:
     from database.supabase_client import SupabaseClient
 except ImportError:
@@ -26,17 +33,32 @@ class ComponentAgent:
         self.name = "ComponentAgent"
         self.db = SupabaseClient()
         
-        # Load Config
-        try:
-            from config.component_config import COMPONENT_DEFAULTS, TEST_ASSETS, ATLAS_CONFIG
-            self.defaults = COMPONENT_DEFAULTS
-            self.assets = TEST_ASSETS
-            self.atlas_config = ATLAS_CONFIG
-        except ImportError:
-            logger.warning("Could not import component_config. Using defaults.")
-            self.defaults = {"db_table": "components", "weights_path": "data/component_agent_weights.json"}
-            self.assets = {"cube": "test_assets/test_cube.stl"}
-            self.atlas_config = {"default_resolution": 64}
+        # Load Config from centralized config system
+        if HAS_CONFIG:
+            try:
+                self.defaults = {
+                    "db_table": component_config("db_table"),
+                    "weights_path": component_config("weights_path"),
+                    "install_path": component_config("install_path")
+                }
+                self.assets = {"cube": "test_assets/test_cube.stl"}  # Test assets not in config
+                self.atlas_config = {"default_resolution": component_config("default_atlas_resolution")}
+                self.learning_rate = component_config("learning_rate")
+                self.min_preference_score = component_config("min_preference_score")
+            except Exception as e:
+                logger.warning(f"Could not load config: {e}. Using hardcoded defaults.")
+                self._set_fallback_defaults()
+        else:
+            logger.warning("Config system not available. Using hardcoded defaults.")
+            self._set_fallback_defaults()
+    
+    def _set_fallback_defaults(self):
+        """Set fallback defaults when config is unavailable"""
+        self.defaults = {"db_table": "components", "weights_path": "data/component_agent_weights.json", "install_path": "data/components"}
+        self.assets = {"cube": "test_assets/test_cube.stl"}
+        self.atlas_config = {"default_resolution": 64}
+        self.learning_rate = 0.1
+        self.min_preference_score = 0.1
 
     def run(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -52,8 +74,17 @@ class ComponentAgent:
         """
         category = params.get("category")
         requirements = params.get("requirements", params.get("specs", {})) # Support legacy 'specs' key
-        limit = params.get("limit", 5)
-        volatility = params.get("volatility", 0.0)
+        
+        # Get defaults from config if not provided
+        if HAS_CONFIG:
+            default_limit = component_config("default_limit")
+            default_volatility = component_config("default_volatility")
+        else:
+            default_limit = 5
+            default_volatility = 0.0
+        
+        limit = params.get("limit", default_limit)
+        volatility = params.get("volatility", default_volatility)
         
         logs = [f"[COMPONENT] Search Requirements: {requirements} (Category: {category or 'ALL'})"]
         
@@ -130,9 +161,10 @@ class ComponentAgent:
             
         current = prefs.get(component_id, 1.0)
         # Simple update rule: New = Old + alpha * Reward
-        # Alpha = 0.1
-        new_score = current + (0.1 * reward_signal)
-        prefs[component_id] = max(0.1, new_score) # Clamp min score
+        alpha = getattr(self, 'learning_rate', 0.1)
+        min_score = getattr(self, 'min_preference_score', 0.1)
+        new_score = current + (alpha * reward_signal)
+        prefs[component_id] = max(min_score, new_score) # Clamp min score
         
         try:
             with open(path, 'w') as f: json.dump(prefs, f, indent=2)
@@ -282,7 +314,9 @@ class ComponentAgent:
         try:
             bridge = MeshSDFBridge()
             # Use Atlas Baker for everything to standardize the output format (Manifest + Texture)
-            result = bridge.bake_scene_to_atlas(mesh_path, resolution=resolution or 64)
+            # Use configured default resolution if not provided
+            default_res = self.atlas_config.get("default_resolution", 64)
+            result = bridge.bake_scene_to_atlas(mesh_path, resolution=resolution or default_res)
             
             # Clean up temp file
             if temp_file and os.path.exists(temp_file.name):

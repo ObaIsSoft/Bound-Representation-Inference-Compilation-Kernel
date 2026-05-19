@@ -1,0 +1,315 @@
+# Functional Agents Configuration
+# Production-level defaults and thresholds for agent behavior
+
+# =============================================================================
+# Component Agent Configuration
+# =============================================================================
+component_agent:
+  # Search and filtering defaults
+  default_limit: 5
+  default_volatility: 0.0
+  
+  # Reinforcement learning parameters
+  learning_rate: 0.1
+  min_preference_score: 0.1
+  
+  # Mesh/SDF defaults
+  default_atlas_resolution: 64
+  
+  # File paths (relative to project root)
+  weights_path: "data/component_agent_weights.json"
+  install_path: "data/components"
+  
+  # Database
+  db_table: "components"
+
+# =============================================================================
+# Document Agent Configuration
+# =============================================================================
+document_agent:
+  # Default testing plan
+  default_testing_plan:
+    unit_tests:
+      - "Component dimensional verification"
+      - "Material property validation"
+    integration_tests:
+      - "Assembly fit check"
+      - "Interface compatibility"
+    performance_tests:
+      - "Load testing"
+      - "Environmental testing"
+    acceptance_criteria: "Meets all specified requirements within ±5% tolerance"
+  
+  # Timeline defaults (weeks per phase)
+  timeline:
+    design_weeks: 2
+    procurement_weeks: 1
+    fabrication_weeks: 2
+    testing_weeks: 1
+
+# =============================================================================
+# Feedback Agent Configuration
+# =============================================================================
+feedback_agent:
+  # Default manufacturing process
+  default_process_type: "cnc_milling"
+  default_material: "aluminum_6061"
+  
+  # Priority mapping
+  priority_mapping:
+    critical: "critical"
+    high: "high"
+    medium: "medium"
+    low: "low"
+
+# =============================================================================
+# GNC Agent Configuration
+# =============================================================================
+gnc_agent:
+  # Trajectory Planner - Cross-Entropy Method (CEM) hyperparameters
+  cem:
+    num_samples: 100
+    num_elites: 10
+    iterations: 40
+    simulation_step: 0.5  # seconds
+    horizon: 20  # steps
+    thrust_std_factor: 0.4  # std = max_thrust * factor
+    cost_threshold: 300.0  # success threshold
+    
+  # Control authority
+  maneuver_reserve_ratio: 0.2  # 20% of thrust reserved for maneuvering
+  
+  # Thrust-to-weight thresholds
+  tw_ratio:
+    hover_minimum: 1.0
+    control_margin: 1.2
+    excellent: 3.0
+    
+  # API endpoint defaults
+  default_waypoints: 20
+  peak_altitude_factor: 0.3  # of path length
+
+# =============================================================================
+# Geometry Estimator Configuration
+# =============================================================================
+geometry_estimator:
+  # Size constraints
+  max_dimension_mm: 5000
+  
+  # Default primitive dimensions
+  default_cube_size: 1.0
+  default_sphere_radius: 1.0
+  default_cylinder_radius: 1.0
+  default_cylinder_height: 1.0
+
+# =============================================================================
+# Manufacturing Agent Configuration
+# =============================================================================
+manufacturing_agent:
+  # Default process and region
+  default_process_type: "cnc_milling"
+  default_region: "global"
+  
+  # Volume calculation scale
+  mm3_to_m3_scale: 1.0e-9
+  
+  # Stock dimensions for VMK [mm]
+  default_stock_dims: [100, 100, 100]
+  
+  # Tool defaults
+  default_tool_radius_mm: 0.5
+  default_verify_tool_radius_mm: 0.1
+  
+  # Lead time calculation
+  lead_time_hours_per_item: 0.5
+  min_lead_time_days: 1
+
+# =============================================================================
+# Mitigation Agent Configuration
+# =============================================================================
+mitigation_agent:
+  # Safety factor requirements
+  target_safety_factor: 1.5
+  
+  # Neural risk assessment
+  risk_threshold: 0.05  # 5% probability
+  
+  # Buckling fix recommendation
+  buckling_radius_increase: 0.15  # 15%
+  
+  # VMK verification tolerance
+  vmk_tolerance_mm: 1.0e-6  # 1 nanometer in mm
+  
+  # Stock dimensions for verification
+  verify_stock_dims: [100, 100, 100]
+
+# =============================================================================
+# Mesh Quality Checker Configuration (NAFEMS Standards)
+# =============================================================================
+mesh_quality:
+  # NAFEMS Quality Thresholds
+  thresholds:
+    excellent:
+      jacobian: 0.6
+      aspect_ratio: 2.0
+    good:
+      jacobian: 0.3
+      aspect_ratio: 5.0
+    fair:
+      jacobian: 0.1
+      aspect_ratio: 10.0
+    degenerate:
+      jacobian: 0.01
+  
+  # Pass/Fail criteria
+  criteria:
+    nafems:
+      max_degenerate_ratio: 0.01  # < 1%
+      max_poor_ratio: 0.05  # < 5%
+    industry:
+      max_degenerate_count: 0  # no degenerate
+      max_poor_ratio: 0.01  # < 1%
+  
+  # Scoring weights
+  scoring:
+    jacobian_weight: 0.5
+    aspect_weight: 0.3
+    distribution_weight: 0.2
+  
+  # Analysis-specific thresholds
+  analysis_requirements:
+    structural:
+      min_avg_jacobian: 0.3
+      requires_nafems: true
+    thermal:
+      requires_nafems: true
+    cfd:
+      requires_nafems: true
+      max_aspect_ratio: 100.0  # Allow high AR in boundary layers
+    modal:
+      requires_industry: true
+
+# =============================================================================
+# Surrogate Training Configuration
+# =============================================================================
+surrogate_training:
+  # Synthetic data generation
+  synthetic_data:
+    random_seed: 42
+    default_samples: 1000
+    default_points: 100
+    
+    # Parameter ranges for beam generation
+    beam_parameters:
+      length_m:
+        min: 0.5
+        max: 5.0
+      width_m:
+        min: 0.01
+        max: 0.5
+      height_m:
+        min: 0.01
+        max: 0.5
+      elastic_modulus_pa:
+        min: 10.0e9
+        max: 300.0e9
+      poisson_ratio:
+        min: 0.25
+        max: 0.35
+      tip_load_n:
+        min: 10
+        max: 10000
+    
+    # Default density for synthetic data (aluminum)
+    default_density_kg_m3: 2700
+  
+  # Training defaults
+  training:
+    default_epochs: 100
+    default_batch_size: 16
+    default_learning_rate: 0.001
+    physics_loss_weight: 0.1
+    
+  # Model architecture defaults
+  model:
+    default_modes: 12
+    default_width: 64
+    default_layers: 4
+    in_channels: 7   # [E, nu, rho, load, x, y, z]
+    out_channels: 6  # [σxx, σyy, σzz, σxy, σyz, σzx]
+  
+  # Data split
+  data_split:
+    train_ratio: 0.8
+    val_ratio: 0.2
+
+# =============================================================================
+# Designer Agent Configuration
+# =============================================================================
+designer_agent:
+  # Exploration parameters
+  exploration:
+    default_count: 16
+    variation_factor: 0.6
+    base_influence: 0.4
+  
+  # Evolution parameters
+  evolution:
+    mutation_range: 0.1
+  
+  # Quality refiner
+  quality_refiner:
+    levels:
+      low: 1
+      medium: 2
+      high: 3
+      ultra: 4
+
+# =============================================================================
+# Visual Validator Agent Configuration
+# =============================================================================
+visual_validator:
+  # Pass/fail threshold
+  overall_pass_threshold: 0.7
+  
+  # Completeness check
+  completeness:
+    black_threshold: 10  # pixel value
+    critical_black_ratio: 0.9
+    warning_black_ratio: 0.5
+  
+  # Lighting check
+  lighting:
+    too_dark_threshold: 30
+    too_bright_threshold: 240
+    low_contrast_threshold: 20
+    ideal_std: 50
+  
+  # Artifacts check
+  artifacts:
+    noise_threshold: 30
+    max_noise_norm: 50
+  
+  # Defects check
+  defects:
+    min_color_ratio: 0.001
+  
+  # Consistency check
+  consistency:
+    default_score: 0.5
+    warning_threshold: 0.5
+
+# =============================================================================
+# Electronics Surrogate Configuration
+# =============================================================================
+electronics_surrogate:
+  # Default circuit parameters
+  simulation:
+    time_step: 0.001
+    default_duration: 0.1
+  
+  # Component defaults
+  components:
+    default_resistance_ohm: 1000
+    default_capacitance_f: 1.0e-6
+    default_inductance_h: 1.0e-3

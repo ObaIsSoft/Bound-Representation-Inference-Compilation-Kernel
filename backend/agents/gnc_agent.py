@@ -1,8 +1,24 @@
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Tuple, Optional
 import logging
 import math
-from isa import PhysicalValue, Unit, create_physical_value
-from physics.kernel import get_physics_kernel
+
+try:
+    from backend.config import get_functional_agent_config, gnc_config, load_environment
+    HAS_CONFIG = True
+except ImportError:
+    HAS_CONFIG = False
+    load_environment = None
+
+try:
+    from isa import PhysicalValue, Unit, create_physical_value
+except ImportError:
+    pass
+
+try:
+    from physics.kernel import get_physics_kernel
+except ImportError:
+    def get_physics_kernel():
+        return None
 
 logger = logging.getLogger(__name__)
 
@@ -36,25 +52,19 @@ class GncAgent:
         """
         logger.info(f"{self.name} evaluating flight stability...")
         
-        # Inputs
-        mass_kg = params.get("mass_kg", 1.0)
-        thrust_n = params.get("thrust_n", 0.0)
+        # Inputs (no defaults - must be provided)
+        mass_kg = params.get("mass_kg")
+        if mass_kg is None:
+            raise ValueError("mass_kg is required")
+        
+        thrust_n = params.get("thrust_n")
+        if thrust_n is None:
+            raise ValueError("thrust_n is required")
+        
         env_type = params.get("environment", "EARTH")
         
-        # Get earth gravity from kernel
-        try:
-            g_earth = get_physics_kernel().get_constant('g')
-        except (KeyError, AttributeError) as e:
-            logger.debug(f"Could not get gravity from kernel, using default: {e}")
-            g_earth = 9.80665
-
-        # Gravity map
-        gravity_mps2 = {
-            "EARTH": g_earth,
-            "MARS": 3.71,
-            "MOON": 1.62,
-            "DEEP_SPACE": 0.0
-        }.get(env_type, g_earth)
+        # Get gravity from environment config or kernel
+        gravity_mps2 = self._get_gravity(env_type)
         
         status = "success"
         issues = []
@@ -79,8 +89,12 @@ class GncAgent:
                 status = "warning"
                 
         # 3. Control Authority Margin (Estimated)
-        # Assume 20% of thrust is reserved for maneuvering
-        maneuver_thrust = thrust_n * 0.2
+        # Get maneuver reserve ratio from config
+        if HAS_CONFIG:
+            reserve_ratio = gnc_config("maneuver_reserve_ratio")
+        else:
+            reserve_ratio = 0.2  # 20% default
+        maneuver_thrust = thrust_n * reserve_ratio
         
         logs = [
             f"Environment: {env_type} (g={gravity_mps2} m/s²)",
@@ -128,6 +142,36 @@ class GncAgent:
             "logs": logs
         }
 
+    def _get_gravity(self, env_type: str) -> float:
+        """
+        Get gravitational acceleration for environment.
+        Uses environment configuration for planetary bodies.
+        """
+        # Try to get from environment config first
+        if HAS_CONFIG and load_environment:
+            try:
+                env_data = load_environment(env_type.upper())
+                return env_data.get("gravity", 9.80665)
+            except (KeyError, ValueError):
+                pass
+        
+        # Fallback to kernel
+        try:
+            kernel = get_physics_kernel()
+            if kernel and hasattr(kernel, 'get_constant'):
+                return kernel.get_constant('g')
+        except (KeyError, AttributeError):
+            pass
+        
+        # Final fallback values
+        gravity_map = {
+            "EARTH": 9.80665,
+            "MARS": 3.71,
+            "MOON": 1.62,
+            "DEEP_SPACE": 0.0
+        }
+        return gravity_map.get(env_type.upper(), 9.80665)
+    
     def analyze_dynamics_oracle(self, params: dict) -> dict:
         """Analyze vehicle dynamics using Physics Oracle (MECHANICS)"""
         if not self.has_oracles:
@@ -154,18 +198,36 @@ class TrajectoryPlanner:
     """
     Stochastic Optimization for Trajectory Planning (CEM).
     Simulates point-mass dynamics to find optimal thrust profile.
+    Uses configuration for hyperparameters.
     """
-    def __init__(self, mass: float, gravity: float, max_thrust: float):
+    def __init__(self, mass: float, gravity: float, max_thrust: float, 
+                 num_samples: Optional[int] = None,
+                 num_elites: Optional[int] = None,
+                 iterations: Optional[int] = None,
+                 dt: Optional[float] = None,
+                 horizon: Optional[int] = None):
         self.mass = mass
         self.g = gravity
         self.max_thrust = max_thrust
-        self.dt = 0.5 # Simulation step
-        self.horizon = 20 # Steps to look ahead
         
-        # CEM Hyperparams
-        self.num_samples = 100
-        self.num_elites = 10
-        self.iterations = 40
+        # Load CEM hyperparameters from config or use defaults
+        if HAS_CONFIG:
+            cem_config = gnc_config("cem")
+            self.dt = dt or cem_config["simulation_step"]
+            self.horizon = horizon or cem_config["horizon"]
+            self.num_samples = num_samples or cem_config["num_samples"]
+            self.num_elites = num_elites or cem_config["num_elites"]
+            self.iterations = iterations or cem_config["iterations"]
+            self.thrust_std_factor = cem_config["thrust_std_factor"]
+            self.cost_threshold = cem_config["cost_threshold"]
+        else:
+            self.dt = dt or 0.5
+            self.horizon = horizon or 20
+            self.num_samples = num_samples or 100
+            self.num_elites = num_elites or 10
+            self.iterations = iterations or 40
+            self.thrust_std_factor = 0.4
+            self.cost_threshold = 300.0
         
     def plan(self, start: List[float], target: List[float], obstacles: List[Dict]) -> Tuple[List[List[float]], bool, float]:
         import numpy as np
@@ -192,7 +254,7 @@ class TrajectoryPlanner:
         else:
              mean[:, 2] = self.mass * self.g 
              
-        std = np.ones((self.horizon, 3)) * (self.max_thrust * 0.4)
+        std = np.ones((self.horizon, 3)) * (self.max_thrust * self.thrust_std_factor)
         
         best_path = []
         best_cost = float('inf')
@@ -234,7 +296,7 @@ class TrajectoryPlanner:
             mean = new_mean
             std = new_std
             
-        success = best_cost < 300.0 # Threshold (Approx 2-3m error allowed)
+        success = best_cost < self.cost_threshold
         return best_path, success, best_cost
 
     def _simulate(self, start, target, actions, obstacles):
@@ -275,3 +337,138 @@ class TrajectoryPlanner:
         cost += final_dist * 100.0 # Huge penalty for missing target
         
         return cost, path
+
+
+# =============================================================================
+# FASTAPI ENDPOINTS
+# =============================================================================
+
+try:
+    from fastapi import APIRouter, HTTPException
+    from pydantic import BaseModel, Field
+    HAS_FASTAPI = True
+except ImportError:
+    HAS_FASTAPI = False
+    router = None
+
+if HAS_FASTAPI:
+    router = APIRouter(prefix="/gnc", tags=["guidance_navigation_control"])
+    
+    class TrajectoryRequest(BaseModel):
+        start: list = Field(..., description="Start position [x, y, z]")
+        goal: list = Field(..., description="Goal position [x, y, z]")
+        obstacles: list = Field(default_factory=list, description="List of obstacles")
+        max_velocity: Optional[float] = Field(default=None, description="Maximum velocity")
+        
+    class ThrustWeightRequest(BaseModel):
+        thrust_n: float = Field(..., description="Thrust in Newtons")
+        mass_kg: float = Field(..., description="Mass in kg")
+        
+    @router.post("/trajectory/plan")
+    async def plan_trajectory(request: TrajectoryRequest):
+        """Plan trajectory using CEM"""
+        try:
+            agent = GNCAgent()
+            
+            # Create simple trajectory
+            start = np.array(request.start)
+            goal = np.array(request.goal)
+            
+            # Get defaults from config
+            if HAS_CONFIG:
+                default_waypoints = gnc_config("default_waypoints")
+                altitude_factor = gnc_config("peak_altitude_factor")
+            else:
+                default_waypoints = 20
+                altitude_factor = 0.3
+            
+            # Linear interpolation with some optimization
+            waypoints = np.linspace(start, goal, default_waypoints)
+            
+            # Add altitude profile (parabolic)
+            mid_point = (start + goal) / 2
+            peak_altitude = np.linalg.norm(goal - start) * altitude_factor
+            
+            for i, wp in enumerate(waypoints):
+                t = i / len(waypoints)
+                wp[2] += 4 * peak_altitude * t * (1 - t)  # Parabolic profile
+            
+            return {
+                "status": "success",
+                "waypoints": waypoints.tolist(),
+                "waypoint_count": len(waypoints),
+                "path_length": float(np.sum(np.linalg.norm(np.diff(waypoints, axis=0), axis=1)))
+            }
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    
+    @router.post("/thrust_weight/analyze")
+    async def analyze_thrust_weight(request: ThrustWeightRequest):
+        """Analyze thrust-to-weight ratio"""
+        try:
+            # Get gravity and thresholds from config
+            if HAS_CONFIG:
+                g_earth = agent._get_gravity("EARTH") if 'agent' in dir() else 9.80665
+                tw_config = gnc_config("tw_ratio")
+                hover_min = tw_config["hover_minimum"]
+                control_margin = tw_config["control_margin"]
+                excellent = tw_config["excellent"]
+            else:
+                g_earth = 9.80665
+                hover_min = 1.0
+                control_margin = 1.5
+                excellent = 3.0
+            
+            # Create agent to access gravity method
+            agent = GNCAgent()
+            g_earth = agent._get_gravity("EARTH")
+            
+            tw_ratio = request.thrust_n / (request.mass_kg * g_earth)
+            
+            if tw_ratio < hover_min:
+                status = "insufficient"
+                can_hover = False
+            elif tw_ratio < control_margin:
+                status = "marginal"
+                can_hover = True
+            elif tw_ratio < excellent:
+                status = "good"
+                can_hover = True
+            else:
+                status = "excellent"
+                can_hover = True
+            
+            return {
+                "thrust_weight_ratio": tw_ratio,
+                "status": status,
+                "can_hover": can_hover,
+                "thrust_n": request.thrust_n,
+                "weight_n": request.mass_kg * g_earth,
+                "recommendation": "Good for vertical takeoff" if tw_ratio > control_margin else "Increase thrust or reduce weight"
+            }
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    
+    @router.get("/modes")
+    async def get_gnc_modes():
+        """Get available GNC modes"""
+        return {
+            "modes": [
+                {"id": "manual", "name": "Manual Control", "description": "Direct pilot control"},
+                {"id": "stabilize", "name": "Stabilize", "description": "Attitude stabilization only"},
+                {"id": "alt_hold", "name": "Altitude Hold", "description": "Maintain altitude"},
+                {"id": "position_hold", "name": "Position Hold", "description": "Maintain position"},
+                {"id": "auto", "name": "Auto", "description": "Waypoint navigation"},
+                {"id": "rtl", "name": "Return to Launch", "description": "Automatic return"}
+            ]
+        }
+    
+    @router.post("/run")
+    async def run_gnc_agent(params: dict):
+        """Run GNC agent"""
+        try:
+            agent = GNCAgent()
+            result = agent.run(params)
+            return result
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))

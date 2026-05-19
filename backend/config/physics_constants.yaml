@@ -1,0 +1,88 @@
+# Physics Constants Configuration
+# Extracted from agents to remove hardcoding
+
+# Universal Constants
+universal:
+  stefan_boltzmann: 5.67e-8  # W/m²K⁴
+  boltzmann_constant: 1.38e-23  # J/K
+  gravitational_acceleration: 9.81  # m/s²
+  gas_constant: 8.314  # J/(mol·K)
+  speed_of_light: 299792458  # m/s
+  
+# Standard Conditions
+standard_conditions:
+  pressure_pa: 101325  # Pa (sea level)
+  temperature_k: 288.15  # K (15°C)
+  density_air: 1.225  # kg/m³
+  density_water: 998.0  # kg/m³
+  
+# Air Properties at Standard Conditions
+air:
+  specific_heat_cp: 1005  # J/(kg·K)
+  specific_heat_cv: 718  # J/(kg·K)
+  thermal_conductivity: 0.025  # W/(m·K)
+  dynamic_viscosity: 1.81e-5  # Pa·s
+  prandtl_number: 0.71
+  
+# Water Properties at Standard Conditions
+water:
+  specific_heat: 4182  # J/(kg·K)
+  thermal_conductivity: 0.598  # W/(m·K)
+  boiling_point: 373.15  # K (100°C)
+  freezing_point: 273.15  # K (0°C)
+  
+# Convection Correlations
+convection:
+  natural:
+    vertical_plate:
+      correlation: "churchill_chu"
+      valid_range: [1e-1, 1e12]  # Ra range
+    horizontal_plate:
+      correlation: "raithby_hollands"
+  forced:
+    flat_plate_laminar:
+      correlation: "blasius"
+      valid_range: [1, 5e5]  # Re range
+    flat_plate_turbulent:
+      correlation: "turbulent_flat_plate"
+      valid_range: [5e5, 1e7]
+    internal:
+      correlation: "gnielinski"
+      
+# Safety Factors
+safety_factors:
+  structural:
+    yield: 1.5
+    ultimate: 2.0
+    buckling: 1.0
+    fatigue: 2.0
+  thermal:
+    melting_fraction_warning: 0.4
+    melting_fraction_critical: 0.7
+    
+# Numerical Settings
+numerical:
+  convergence_tolerance: 1e-3
+  max_iterations: 1000
+  mesh_quality_threshold: 0.1
+  time_step_default: 0.01
+  
+# Environment Types
+environments:
+  sea_level:
+    pressure_pa: 101325
+    temperature_c: 15
+    density: 1.225
+  high_altitude:
+    pressure_pa: 50000
+    temperature_c: -25
+    density: 0.736
+  space:
+    pressure_pa: 0
+    temperature_c: -270
+    radiation_only: true
+  marine:
+    pressure_pa: 101325
+    temperature_c: 20
+    humidity: 0.85
+    salinity: 0.035

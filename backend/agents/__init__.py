@@ -34,7 +34,7 @@ from .visual_validator_agent import VisualValidatorAgent
 # Design & Optimization
 from .lattice_synthesis_agent import LatticeSynthesisAgent
 from .optimization_agent import OptimizationAgent
-from .topology_agent import TopologicalAgent
+from .topological_agent import TopologicalAgent
 
 # Standards & Compliance
 from .standards_agent import StandardsAgent

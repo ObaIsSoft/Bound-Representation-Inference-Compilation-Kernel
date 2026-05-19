@@ -35,8 +35,8 @@ class ControlMode(Enum):
 class ControlGains:
     """Controller gains."""
     kp: float
-    ki: float = 0.0
     kd: float
+    ki: float = 0.0
     u_ff: float = 0.0
 
 
@@ -534,3 +534,144 @@ def quick_rl(state: List[float], target: List[float]) -> Dict[str, Any]:
         "state_vec": state,
         "target_vec": target
     })
+
+
+# =============================================================================
+# FASTAPI ENDPOINTS
+# =============================================================================
+
+try:
+    from fastapi import APIRouter, HTTPException
+    from pydantic import BaseModel, Field
+    HAS_FASTAPI = True
+except ImportError:
+    HAS_FASTAPI = False
+    router = None
+
+if HAS_FASTAPI:
+    router = APIRouter(prefix="/control", tags=["control_systems"])
+    
+    class LQRDesignRequest(BaseModel):
+        A: list = Field(..., description="State matrix")
+        B: list = Field(..., description="Input matrix")
+        Q: Optional[list] = Field(default=None, description="State cost matrix")
+        R: Optional[list] = Field(default=None, description="Input cost matrix")
+        
+    class ControlSimRequest(BaseModel):
+        system_type: Optional[str] = Field(default=None, description="System type")
+        natural_freq: Optional[float] = Field(default=None, description="Natural frequency (rad/s)")
+        damping_ratio: Optional[float] = Field(default=None, description="Damping ratio")
+        setpoint: Optional[float] = Field(default=None, description="Target setpoint")
+        duration: Optional[float] = Field(default=None, description="Simulation duration (s)")
+        
+    @router.post("/lqr/design")
+    async def design_lqr(request: LQRDesignRequest):
+        """Design LQR controller"""
+        try:
+            import numpy as np
+            from scipy import linalg
+            
+            A = np.array(request.A)
+            B = np.array(request.B)
+            
+            # Default Q and R if not provided
+            if request.Q is None:
+                Q = np.eye(A.shape[0])
+            else:
+                Q = np.array(request.Q)
+            
+            if request.R is None:
+                R = np.eye(B.shape[1])
+            else:
+                R = np.array(request.R)
+            
+            # Solve Riccati equation
+            P = linalg.solve_continuous_are(A, B, Q, R)
+            K = np.linalg.inv(R) @ B.T @ P
+            
+            return {
+                "gain_matrix": K.tolist(),
+                "riccati_solution": P.tolist(),
+                "status": "success"
+            }
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"LQR design failed: {str(e)}")
+    
+    @router.post("/pid/tune")
+    async def tune_pid(params: dict):
+        """Tune PID controller"""
+        try:
+            method = params.get("method", "ziegler_nichols")
+            
+            if method == "ziegler_nichols":
+                # Simplified Ziegler-Nichols tuning
+                Ku = params.get("ultimate_gain", 1.0)
+                Tu = params.get("ultimate_period", 1.0)
+                
+                Kp = 0.6 * Ku
+                Ti = 0.5 * Tu
+                Td = 0.125 * Tu
+                
+                return {
+                    "Kp": Kp,
+                    "Ki": Kp / Ti,
+                    "Kd": Kp * Td,
+                    "method": "ziegler_nichols"
+                }
+            else:
+                return {"error": f"Unknown tuning method: {method}"}
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    
+    @router.post("/simulate")
+    async def simulate_control(request: ControlSimRequest):
+        """Simulate closed-loop control system"""
+        try:
+            import numpy as np
+            from scipy.integrate import odeint
+            
+            # Define second-order system
+            wn = request.natural_freq
+            zeta = request.damping_ratio
+            
+            def system(y, t, Kp=1.0):
+                x, v = y
+                # PD control
+                error = request.setpoint - x
+                u = Kp * error
+                
+                dxdt = v
+                dvdt = -2*zeta*wn*v - wn**2*x + wn**2*u
+                return [dxdt, dvdt]
+            
+            # Time vector
+            t = np.linspace(0, request.duration, 1000)
+            
+            # Initial conditions
+            y0 = [0, 0]
+            
+            # Solve
+            solution = odeint(system, y0, t)
+            
+            return {
+                "time": t.tolist(),
+                "position": solution[:, 0].tolist(),
+                "velocity": solution[:, 1].tolist(),
+                "setpoint": request.setpoint,
+                "parameters": {
+                    "natural_freq": wn,
+                    "damping_ratio": zeta
+                }
+            }
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    
+    @router.post("/run")
+    async def run_control_agent(params: dict):
+        """Run control agent"""
+        try:
+            agent = ControlAgent()
+            result = agent.run(params)
+            return result
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))

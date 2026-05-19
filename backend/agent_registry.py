@@ -1,7 +1,10 @@
 import logging
 import importlib
 from typing import Dict, Any, Optional, List
-from agents.explainable_agent import create_xai_wrapper
+try:
+    from backend.agents.explainable_agent import create_xai_wrapper
+except ImportError:
+    from agents.explainable_agent import create_xai_wrapper
 
 logger = logging.getLogger(__name__)
 
@@ -47,12 +50,11 @@ class GlobalAgentRegistry:
         "DfmAgent": ("agents.dfm_agent", "DfmAgent"),
         "ToleranceAgent": ("agents.tolerance_agent", "ToleranceAgent"),
         "ReviewAgent": ("agents.review_agent", "ReviewAgent"),
-        # DesignQualityAgent removed — file does not exist. Use DesignerAgent (UnifiedDesignAgent) instead.
+        # DesignQualityAgent removed — file does not exist. DesignerAgent covers this role.
         "VerificationAgent": ("agents.verification_agent", "VerificationAgent"),
         "VisualValidatorAgent": ("agents.visual_validator_agent", "VisualValidatorAgent"),
         
-        # Exploration & Electronics
-        "DesignExplorationAgent": ("agents.design_exploration_agent", "DesignExplorationAgent"),
+        # Electronics
         "ElectronicsAgent": ("agents.electronics_agent", "ElectronicsAgent"),
         "GncAgent": ("agents.gnc_agent", "GncAgent"),
         "ControlAgent": ("agents.control_agent", "ControlAgent"),
@@ -71,7 +73,6 @@ class GlobalAgentRegistry:
         
         "CodegenAgent": ("agents.codegen_agent", "CodegenAgent"),
         "ComponentAgent": ("agents.component_agent", "ComponentAgent"),
-        "ConstructionAgent": ("agents.construction_agent", "ConstructionAgent"),
         "DevOpsAgent": ("agents.devops_agent", "DevOpsAgent"),
         "DiagnosticAgent": ("agents.diagnostic_agent", "DiagnosticAgent"),
         "DoctorAgent": ("agents.doctor_agent", "DoctorAgent"),
@@ -80,7 +81,6 @@ class GlobalAgentRegistry:
         "FeedbackAgent": ("agents.feedback_agent", "FeedbackAgent"),
         "GenericAgent": ("agents.generic_agent", "GenericAgent"),
         "LatticeSynthesisAgent": ("agents.lattice_synthesis_agent", "LatticeSynthesisAgent"),
-        "MepAgent": ("agents.mep_agent", "MepAgent"),
         "MitigationAgent": ("agents.mitigation_agent", "MitigationAgent"),
         "MultiModeAgent": ("agents.multi_mode_agent", "MultiModeAgent"),
         "NetworkAgent": ("agents.network_agent", "NetworkAgent"),
@@ -96,8 +96,7 @@ class GlobalAgentRegistry:
         "TrainingAgent": ("agents.training_agent", "TrainingAgent"),
         "UserAgent": ("agents.user_agent", "UserAgent"),
         "VhilAgent": ("agents.vhil_agent", "VhilAgent"),
-        "VonNeumannAgent": ("agents.von_neumann_agent", "VonNeumannAgent"),
-        "ZoningAgent": ("agents.zoning_agent", "ZoningAgent")
+        "VonNeumannAgent": ("agents.von_neumann_agent", "VonNeumannAgent")
     }
 
     def __new__(cls):

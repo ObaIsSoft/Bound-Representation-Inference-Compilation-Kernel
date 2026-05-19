@@ -2,7 +2,10 @@ from typing import Any, Dict, Optional
 import time
 import asyncio
 import logging
-from xai_stream import inject_thought
+try:
+    from backend.xai_stream import inject_thought
+except ImportError:
+    from xai_stream import inject_thought
 
 logger = logging.getLogger(__name__)
 

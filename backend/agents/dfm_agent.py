@@ -1114,3 +1114,70 @@ def analyze_mesh_file(
     report = agent.analyze_mesh(mesh, process_enums, gdt_enums)
     
     return report.to_dict()
+
+
+# =============================================================================
+# FASTAPI ENDPOINTS
+# =============================================================================
+
+try:
+    from fastapi import APIRouter, HTTPException
+    from pydantic import BaseModel, Field
+    HAS_FASTAPI = True
+except ImportError:
+    HAS_FASTAPI = False
+    router = None
+
+if HAS_FASTAPI:
+    router = APIRouter(prefix="/dfm", tags=["design_for_manufacturing"])
+    
+    class DFMAnalysisRequest(BaseModel):
+        geometry_type: str = Field(..., description="Type of geometry: bracket, housing, etc.")
+        material: str = Field(..., description="Material")
+        process: str = Field(..., description="Manufacturing process")
+        
+    @router.post("/analyze")
+    async def analyze_dfm(request: DFMAnalysisRequest):
+        """Analyze design for manufacturability"""
+        try:
+            agent = DFMAgent()
+            result = agent.run({
+                "geometry_type": request.geometry_type,
+                "material": request.material,
+                "process": request.process
+            })
+            return result
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    
+    @router.get("/rules/{process}")
+    async def get_dfm_rules(process: str):
+        """Get DFM rules for a specific process"""
+        rules = {
+            "cnc": [
+                {"rule": "min_wall_thickness", "value": "0.5mm", "severity": "critical"},
+                {"rule": "max_depth_to_width", "value": "4:1", "severity": "warning"},
+                {"rule": "internal_radius", "value": ">= tool radius", "severity": "critical"}
+            ],
+            "3d_printing": [
+                {"rule": "overhang_angle", "value": "< 45°", "severity": "critical"},
+                {"rule": "min_feature_size", "value": "0.5mm", "severity": "warning"},
+                {"rule": "support_requirements", "value": "check overhangs", "severity": "info"}
+            ],
+            "injection_molding": [
+                {"rule": "draft_angle", "value": ">= 1°", "severity": "critical"},
+                {"rule": "wall_thickness", "value": "uniform", "severity": "critical"},
+                {"rule": "undercuts", "value": "avoid or use side-actions", "severity": "warning"}
+            ]
+        }
+        return {"process": process, "rules": rules.get(process, [])}
+    
+    @router.post("/run")
+    async def run_dfm_agent(params: dict):
+        """Run DFM agent"""
+        try:
+            agent = DFMAgent()
+            result = agent.run(params)
+            return result
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))

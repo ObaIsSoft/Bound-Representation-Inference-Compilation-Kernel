@@ -2,6 +2,13 @@
 import numpy as np
 import math
 from typing import List, Dict, Any, Optional, Tuple, Union
+
+try:
+    from backend.config import get_functional_agent_config
+    HAS_CONFIG = True
+except ImportError:
+    HAS_CONFIG = False
+
 try:
     from .openscad_parser import ASTNode, NodeType
 except ImportError:
@@ -63,9 +70,31 @@ class GeometryEstimator:
     """
     Analytic Geometry Bounds Estimator from AST.
     Avoids CSG compilation.
+    Uses configuration for size limits and defaults.
     """
     def __init__(self):
         self.name = "GeometryEstimator"
+        
+        # Load configuration
+        if HAS_CONFIG:
+            try:
+                self.max_dimension_mm = get_functional_agent_config('geometry_estimator', 'max_dimension_mm')
+                self.default_cube_size = get_functional_agent_config('geometry_estimator', 'default_cube_size')
+                self.default_sphere_radius = get_functional_agent_config('geometry_estimator', 'default_sphere_radius')
+                self.default_cylinder_radius = get_functional_agent_config('geometry_estimator', 'default_cylinder_radius')
+                self.default_cylinder_height = get_functional_agent_config('geometry_estimator', 'default_cylinder_height')
+            except Exception as e:
+                self._set_fallback_defaults()
+        else:
+            self._set_fallback_defaults()
+    
+    def _set_fallback_defaults(self):
+        """Set fallback defaults when config unavailable"""
+        self.max_dimension_mm = 5000
+        self.default_cube_size = 1.0
+        self.default_sphere_radius = 1.0
+        self.default_cylinder_radius = 1.0
+        self.default_cylinder_height = 1.0
 
     def estimate(self, intent: str, params: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -78,10 +107,9 @@ class GeometryEstimator:
         
         # Check size constraints
         dims = params.get("dimensions", [0,0,0])
-        MAX_SIZE = 5000 # mm
-        if any(d > MAX_SIZE for d in dims):
+        if any(d > self.max_dimension_mm for d in dims):
             impossible = True
-            reason = f"Dimensions exceed max size ({MAX_SIZE}mm)"
+            reason = f"Dimensions exceed max size ({self.max_dimension_mm}mm)"
             
         return {
             "feasible": not impossible,
@@ -218,7 +246,7 @@ class GeometryEstimator:
             elif isinstance(size, list) and len(size) >= 3:
                 dims = size[:3]
             else:
-                dims = [1,1,1] # Fallback
+                dims = [self.default_cube_size] * 3  # Configured fallback
                 
             if center:
                 local_aabb.min_pt = np.array([-dims[0]/2, -dims[1]/2, -dims[2]/2])
@@ -233,7 +261,7 @@ class GeometryEstimator:
             if r is None: 
                 d = get_val("d")
                 if d is not None: r = d/2
-                else: r = get_val("_pos_0", 1.0)
+                else: r = get_val("_pos_0", self.default_sphere_radius)
                 
             local_aabb.min_pt = np.array([-r, -r, -r])
             local_aabb.max_pt = np.array([r, r, r])
@@ -241,7 +269,7 @@ class GeometryEstimator:
         elif name == "cylinder":
             # cylinder(h, r/r1/r2, center)
             h = get_val("h")
-            if h is None: h = get_val("_pos_0", 1.0) # Pos 0 is usually H? No, usually r is named or unnamed?
+            if h is None: h = get_val("_pos_0", self.default_cylinder_height)
             # cylinder(h=10, r=5). cylinder(5, 10)? 
             # Docs: cylinder(h, r|d, ...)
             
@@ -250,7 +278,7 @@ class GeometryEstimator:
                 r1 = get_val("r1", 1.0)
                 r2 = get_val("r2", 1.0)
                 r = max(r1, r2)
-            if r is None: r = 1.0
+            if r is None: r = self.default_cylinder_radius
             
             if center:
                 local_aabb.min_pt = np.array([-r, -r, -h/2])

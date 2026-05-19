@@ -24,8 +24,8 @@ from backend.agents.critics.SurrogateCritic import SurrogateCritic
 from backend.agents.critics.PhysicsCritic import PhysicsCritic
 from backend.agents.stt_agent import get_stt_agent
 
-# Import new node functions for 8-phase architecture
-from backend.new_nodes import (
+# Import node functions for 8-phase architecture
+from backend.nodes import (
     # Phase 1: Feasibility
     geometry_estimator_node,
     cost_quick_estimate_node,
@@ -259,10 +259,10 @@ async def topological_node(state: AgentState) -> Dict[str, Any]:
 
 async def designer_node(state: AgentState) -> Dict[str, Any]:
     """
-    Executes the Design stage using the UnifiedDesignAgent.
+    Executes the Design stage using the DesignerAgent.
     Generates aesthetic 'DNA' (genome) from user intent.
     """
-    from backend.agents.unified_design_agent import UnifiedDesignAgent
+    from backend.agents.designer_agent import DesignerAgent
     from backend.xai_stream import inject_thought
     
     intent = state.get("user_intent", "")
@@ -389,7 +389,18 @@ async def geometry_node(state: AgentState) -> Dict[str, Any]:
             "duration_ms": duration_ms,
             "has_geometry": bool(result.get("geometry_tree")),
         })
-        
+
+        # H-03: Emit geometry payload so Omniviewport can render it
+        if result.get("gltf_data") or result.get("geometry_tree"):
+            broadcast_state_update(project_id, {
+                "type": "geometry",
+                "payload": {
+                    "gltf_data": result.get("gltf_data"),
+                    "geometry_tree": result.get("geometry_tree"),
+                    "model_id": result.get("model_id"),
+                }
+            })
+
     except Exception as e:
         duration_ms = (time.time() - start_time) * 1000
         perf_monitor.record_agent_timing(project_id, "GeometryAgent", duration_ms)

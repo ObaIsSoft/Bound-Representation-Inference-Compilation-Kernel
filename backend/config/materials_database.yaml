@@ -1,0 +1,159 @@
+# Materials Database
+# Standard material properties for engineering calculations
+
+metals:
+  steel:
+    density_kg_m3: 7850
+    elastic_modulus_gpa: 210
+    poisson_ratio: 0.3
+    yield_strength_mpa: 250
+    ultimate_strength_mpa: 400
+    thermal_conductivity_w_m_k: 50
+    specific_heat_j_kg_k: 500
+    melting_point_c: 1538
+    thermal_expansion_1_k: 12e-6
+    
+  steel_stainless:
+    density_kg_m3: 8000
+    elastic_modulus_gpa: 200
+    poisson_ratio: 0.3
+    yield_strength_mpa: 215
+    ultimate_strength_mpa: 505
+    thermal_conductivity_w_m_k: 15
+    specific_heat_j_kg_k: 500
+    melting_point_c: 1450
+    thermal_expansion_1_k: 17e-6
+    
+  aluminum:
+    density_kg_m3: 2700
+    elastic_modulus_gpa: 70
+    poisson_ratio: 0.33
+    yield_strength_mpa: 270
+    ultimate_strength_mpa: 310
+    thermal_conductivity_w_m_k: 205
+    specific_heat_j_kg_k: 900
+    melting_point_c: 660
+    thermal_expansion_1_k: 23e-6
+    
+  aluminum_7075:
+    density_kg_m3: 2810
+    elastic_modulus_gpa: 72
+    poisson_ratio: 0.33
+    yield_strength_mpa: 503
+    ultimate_strength_mpa: 572
+    thermal_conductivity_w_m_k: 130
+    specific_heat_j_kg_k: 860
+    melting_point_c: 477
+    thermal_expansion_1_k: 23e-6
+    
+  titanium:
+    density_kg_m3: 4500
+    elastic_modulus_gpa: 116
+    poisson_ratio: 0.32
+    yield_strength_mpa: 880
+    ultimate_strength_mpa: 950
+    thermal_conductivity_w_m_k: 7
+    specific_heat_j_kg_k: 520
+    melting_point_c: 1668
+    thermal_expansion_1_k: 9e-6
+    
+  titanium_6al4v:
+    density_kg_m3: 4430
+    elastic_modulus_gpa: 114
+    poisson_ratio: 0.31
+    yield_strength_mpa: 1100
+    ultimate_strength_mpa: 1170
+    thermal_conductivity_w_m_k: 6.7
+    specific_heat_j_kg_k: 526
+    melting_point_c: 1604
+    thermal_expansion_1_k: 8.6e-6
+    
+  copper:
+    density_kg_m3: 8960
+    elastic_modulus_gpa: 130
+    poisson_ratio: 0.34
+    yield_strength_mpa: 70
+    ultimate_strength_mpa: 220
+    thermal_conductivity_w_m_k: 400
+    specific_heat_j_kg_k: 385
+    melting_point_c: 1085
+    thermal_expansion_1_k: 17e-6
+    
+  brass:
+    density_kg_m3: 8530
+    elastic_modulus_gpa: 100
+    poisson_ratio: 0.35
+    yield_strength_mpa: 200
+    ultimate_strength_mpa: 350
+    thermal_conductivity_w_m_k: 120
+    specific_heat_j_kg_k: 380
+    melting_point_c: 940
+    thermal_expansion_1_k: 19e-6
+
+polymers:
+  pla:
+    density_kg_m3: 1250
+    elastic_modulus_gpa: 3.5
+    poisson_ratio: 0.36
+    yield_strength_mpa: 50
+    thermal_conductivity_w_m_k: 0.13
+    specific_heat_j_kg_k: 1800
+    melting_point_c: 180
+    glass_transition_c: 60
+    
+  abs:
+    density_kg_m3: 1050
+    elastic_modulus_gpa: 2.3
+    poisson_ratio: 0.35
+    yield_strength_mpa: 40
+    thermal_conductivity_w_m_k: 0.15
+    specific_heat_j_kg_k: 1500
+    melting_point_c: 200
+    glass_transition_c: 105
+    
+  nylon:
+    density_kg_m3: 1150
+    elastic_modulus_gpa: 2.8
+    poisson_ratio: 0.39
+    yield_strength_mpa: 80
+    thermal_conductivity_w_m_k: 0.25
+    specific_heat_j_kg_k: 1700
+    melting_point_c: 220
+    glass_transition_c: 50
+    
+  peek:
+    density_kg_m3: 1320
+    elastic_modulus_gpa: 3.6
+    poisson_ratio: 0.38
+    yield_strength_mpa: 90
+    thermal_conductivity_w_m_k: 0.25
+    specific_heat_j_kg_k: 1300
+    melting_point_c: 343
+    glass_transition_c: 143
+
+composites:
+  carbon_fiber:
+    density_kg_m3: 1600
+    elastic_modulus_gpa: 150  # Longitudinal
+    poisson_ratio: 0.3
+    yield_strength_mpa: 1500
+    thermal_conductivity_w_m_k: 50
+    specific_heat_j_kg_k: 800
+    
+  fiberglass:
+    density_kg_m3: 1850
+    elastic_modulus_gpa: 25
+    poisson_ratio: 0.28
+    yield_strength_mpa: 300
+    thermal_conductivity_w_m_k: 0.3
+    specific_heat_j_kg_k: 800
+
+ceramics:
+  alumina:
+    density_kg_m3: 3900
+    elastic_modulus_gpa: 380
+    poisson_ratio: 0.22
+    yield_strength_mpa: 300
+    thermal_conductivity_w_m_k: 35
+    specific_heat_j_kg_k: 880
+    melting_point_c: 2050

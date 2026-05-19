@@ -91,7 +91,7 @@ class FailureReport(BaseModel):
     mesh_stats: Optional[Dict[str, Any]] = None
 
 class ForensicResult(BaseModel):
-    verdict: str = Field(..., regex="^(UNSAFE|MARGINAL|SAFE|ERROR)$")
+    verdict: str = Field(..., pattern="^(UNSAFE|MARGINAL|SAFE|ERROR)$")
     overall_severity: Severity
     confidence_score: float = Field(..., ge=0.0, le=1.0)
     root_causes: List[RootCause]

@@ -21,7 +21,16 @@ from dataclasses import dataclass
 from pathlib import Path
 import json
 
-from meshing_engine import Mesh, MeshQuality, ElementType, MeshingEngine
+try:
+    from backend.config import get_functional_agent_config, mesh_quality_config
+    HAS_CONFIG = True
+except ImportError:
+    HAS_CONFIG = False
+
+try:
+    from meshing_engine import Mesh, MeshQuality, ElementType, MeshingEngine
+except ImportError:
+    Mesh = MeshQuality = ElementType = MeshingEngine = None
 
 logger = logging.getLogger(__name__)
 
@@ -110,16 +119,38 @@ class MeshQualityChecker:
     - Degenerate: Jacobian < 0.01
     """
     
-    # Quality thresholds per NAFEMS
-    THRESHOLDS = {
-        "excellent": {"jacobian": 0.6, "aspect": 2.0},
-        "good": {"jacobian": 0.3, "aspect": 5.0},
-        "fair": {"jacobian": 0.1, "aspect": 10.0},
-        "degenerate": {"jacobian": 0.01}
-    }
-    
     def __init__(self):
         self.quality_history: List[QualityReport] = []
+        
+        # Load quality thresholds from config
+        if HAS_CONFIG:
+            try:
+                self.thresholds = mesh_quality_config("thresholds")
+                self.criteria = mesh_quality_config("criteria")
+                self.scoring_weights = mesh_quality_config("scoring")
+            except Exception as e:
+                logger.warning(f"Could not load mesh quality config: {e}. Using defaults.")
+                self._set_default_thresholds()
+        else:
+            self._set_default_thresholds()
+    
+    def _set_default_thresholds(self):
+        """Set default NAFEMS thresholds when config unavailable"""
+        self.thresholds = {
+            "excellent": {"jacobian": 0.6, "aspect": 2.0},
+            "good": {"jacobian": 0.3, "aspect": 5.0},
+            "fair": {"jacobian": 0.1, "aspect": 10.0},
+            "degenerate": {"jacobian": 0.01}
+        }
+        self.criteria = {
+            "nafems": {"max_degenerate_ratio": 0.01, "max_poor_ratio": 0.05},
+            "industry": {"max_degenerate_count": 0, "max_poor_ratio": 0.01}
+        }
+        self.scoring_weights = {
+            "jacobian_weight": 0.5,
+            "aspect_weight": 0.3,
+            "distribution_weight": 0.2
+        }
     
     def check_mesh(self, mesh: Mesh, mesh_name: str = "unnamed") -> QualityReport:
         """
@@ -190,14 +221,14 @@ class MeshQualityChecker:
             aspect_ratio = max_edge / (min_altitude + 1e-10)
             aspect_ratios.append(aspect_ratio)
             
-            # Classify element
-            if jacobian_norm < self.THRESHOLDS["degenerate"]["jacobian"]:
+            # Classify element using configured thresholds
+            if jacobian_norm < self.thresholds["degenerate"]["jacobian"]:
                 num_degenerate += 1
-            elif jacobian_norm < self.THRESHOLDS["fair"]["jacobian"] or aspect_ratio > self.THRESHOLDS["fair"]["aspect"]:
+            elif jacobian_norm < self.thresholds["fair"]["jacobian"] or aspect_ratio > self.thresholds["fair"]["aspect"]:
                 num_poor += 1
-            elif jacobian_norm < self.THRESHOLDS["good"]["jacobian"] or aspect_ratio > self.THRESHOLDS["good"]["aspect"]:
+            elif jacobian_norm < self.thresholds["good"]["jacobian"] or aspect_ratio > self.thresholds["good"]["aspect"]:
                 num_fair += 1
-            elif jacobian_norm < self.THRESHOLDS["excellent"]["jacobian"] or aspect_ratio > self.THRESHOLDS["excellent"]["aspect"]:
+            elif jacobian_norm < self.thresholds["excellent"]["jacobian"] or aspect_ratio > self.thresholds["excellent"]["aspect"]:
                 num_good += 1
             else:
                 num_excellent += 1
@@ -205,21 +236,34 @@ class MeshQualityChecker:
         jacobians = np.array(jacobians)
         aspect_ratios = np.array(aspect_ratios)
         
-        # Calculate scores
+        # Calculate scores using configured weights
+        jacobian_weight = self.scoring_weights.get("jacobian_weight", 0.5)
+        aspect_weight = self.scoring_weights.get("aspect_weight", 0.3)
+        distribution_weight = self.scoring_weights.get("distribution_weight", 0.2)
+        
         jacobian_score = np.mean(jacobians)
         aspect_score = 1.0 / (1.0 + np.mean(aspect_ratios) / 5.0)
-        overall_score = 0.5 * jacobian_score + 0.3 * aspect_score + 0.2 * (num_excellent + num_good) / len(mesh.elements)
+        distribution_score = (num_excellent + num_good) / len(mesh.elements)
+        overall_score = jacobian_weight * jacobian_score + aspect_weight * aspect_score + distribution_weight * distribution_score
         
-        # NAFEMS criteria: < 1% degenerate, < 5% poor
+        # NAFEMS criteria from config
+        nafems_criteria = self.criteria.get("nafems", {})
+        max_deg_ratio = nafems_criteria.get("max_degenerate_ratio", 0.01)
+        max_poor_ratio = nafems_criteria.get("max_poor_ratio", 0.05)
+        
         passes_nafems = (
-            num_degenerate / len(mesh.elements) < 0.01 and
-            (num_degenerate + num_poor) / len(mesh.elements) < 0.05
+            num_degenerate / len(mesh.elements) < max_deg_ratio and
+            (num_degenerate + num_poor) / len(mesh.elements) < max_poor_ratio
         )
         
-        # Industry criteria: no degenerate, < 1% poor
+        # Industry criteria from config
+        industry_criteria = self.criteria.get("industry", {})
+        max_deg_count = industry_criteria.get("max_degenerate_count", 0)
+        max_poor_ratio_ind = industry_criteria.get("max_poor_ratio", 0.01)
+        
         passes_industry = (
-            num_degenerate == 0 and
-            num_poor / len(mesh.elements) < 0.01
+            num_degenerate <= max_deg_count and
+            num_poor / len(mesh.elements) < max_poor_ratio_ind
         )
         
         # Generate recommendations
@@ -313,18 +357,28 @@ class MeshQualityChecker:
         jacobians = np.array(jacobians)
         aspect_ratios = np.array(aspect_ratios)
         
+        # Calculate scores using configured weights
+        jacobian_weight = self.scoring_weights.get("jacobian_weight", 0.5)
+        aspect_weight = self.scoring_weights.get("aspect_weight", 0.3)
+        distribution_weight = self.scoring_weights.get("distribution_weight", 0.2)
+        
         jacobian_score = np.mean(jacobians)
         aspect_score = 1.0 / (1.0 + np.mean(aspect_ratios) / 5.0)
-        overall_score = 0.5 * jacobian_score + 0.3 * aspect_score + 0.2 * (num_excellent + num_good) / len(mesh.elements)
+        distribution_score = (num_excellent + num_good) / len(mesh.elements)
+        overall_score = jacobian_weight * jacobian_score + aspect_weight * aspect_score + distribution_weight * distribution_score
+        
+        # Apply NAFEMS and industry criteria from config
+        nafems_criteria = self.criteria.get("nafems", {})
+        industry_criteria = self.criteria.get("industry", {})
         
         passes_nafems = (
-            num_degenerate / len(mesh.elements) < 0.01 and
-            (num_degenerate + num_poor) / len(mesh.elements) < 0.05
+            num_degenerate / len(mesh.elements) < nafems_criteria.get("max_degenerate_ratio", 0.01) and
+            (num_degenerate + num_poor) / len(mesh.elements) < nafems_criteria.get("max_poor_ratio", 0.05)
         )
         
         passes_industry = (
-            num_degenerate == 0 and
-            num_poor / len(mesh.elements) < 0.01
+            num_degenerate <= industry_criteria.get("max_degenerate_count", 0) and
+            num_poor / len(mesh.elements) < industry_criteria.get("max_poor_ratio", 0.01)
         )
         
         recommendations = self._generate_recommendations(
@@ -485,19 +539,31 @@ def validate_mesh_for_analysis(mesh: Mesh, analysis_type: str = "structural") ->
     checker = MeshQualityChecker()
     report = checker.check_mesh(mesh, f"validation_{analysis_type}")
     
+    # Get analysis-specific requirements from config
+    if HAS_CONFIG:
+        try:
+            analysis_reqs = mesh_quality_config("analysis_requirements")
+            reqs = analysis_reqs.get(analysis_type, {})
+        except:
+            reqs = {}
+    else:
+        reqs = {}
+    
     # Different criteria for different analysis types
     if analysis_type == "structural":
         # Structural needs good quality for stress accuracy
-        is_valid = report.passes_nafems and report.avg_jacobian >= 0.3
+        min_jac = reqs.get("min_avg_jacobian", 0.3)
+        is_valid = report.passes_nafems and report.avg_jacobian >= min_jac
     elif analysis_type == "thermal":
         # Thermal is more forgiving
-        is_valid = report.passes_nafems
+        is_valid = reqs.get("requires_nafems", True) and report.passes_nafems
     elif analysis_type == "cfd":
         # CFD needs boundary layer resolution
-        is_valid = report.passes_nafems and report.max_aspect_ratio <= 100  # Allow high AR in BL
+        max_ar = reqs.get("max_aspect_ratio", 100)
+        is_valid = report.passes_nafems and report.max_aspect_ratio <= max_ar
     elif analysis_type == "modal":
         # Modal needs good quality for eigenvalue accuracy
-        is_valid = report.passes_industry
+        is_valid = reqs.get("requires_industry", True) and report.passes_industry
     else:
         is_valid = report.passes_nafems
     

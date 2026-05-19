@@ -1,14 +1,13 @@
 """
-New Node Functions for 8-Phase LangGraph Pipeline
+Node Functions for 8-Phase LangGraph Pipeline
 
-This module contains node functions for the refactored orchestrator.
-These nodes implement Phase 1 (Feasibility), Phase 2 (Planning), and Phase 8 (Final Documentation).
+Phase 1 (Feasibility), Phase 2 (Planning), and Phase 8 (Final Documentation).
 """
 
 from typing import Dict, Any
 import logging
-from xai_stream import inject_thought
-from agent_registry import registry
+from backend.xai_stream import inject_thought
+from backend.agent_registry import registry
 
 logger = logging.getLogger(__name__)
 

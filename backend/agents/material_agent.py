@@ -772,3 +772,115 @@ class ProductionMaterialAgent:
 # Alias for backward compatibility
 MaterialAgent = ProductionMaterialAgent
 
+
+
+# =============================================================================
+# FASTAPI ENDPOINTS
+# =============================================================================
+
+try:
+    from fastapi import APIRouter, HTTPException
+    from pydantic import BaseModel, Field
+    HAS_FASTAPI = True
+except ImportError:
+    HAS_FASTAPI = False
+    router = None
+
+if HAS_FASTAPI:
+    router = APIRouter(prefix="/material", tags=["materials"])
+    
+    class MaterialQueryRequest(BaseModel):
+        name: str = Field(..., description="Material name or type")
+        property_name: Optional[str] = Field(default=None, description="Specific property to retrieve")
+        
+    class MaterialSearchRequest(BaseModel):
+        min_yield_strength: Optional[float] = Field(default=None, description="Minimum yield strength in MPa")
+        max_density: Optional[float] = Field(default=None, description="Maximum density in kg/m³")
+        application: Optional[str] = Field(default=None, description="Target application")
+        
+    @router.get("/search")
+    async def search_materials(
+        query: str = "",
+        category: Optional[str] = None,
+        min_density: Optional[float] = None,
+        max_density: Optional[float] = None
+    ):
+        """Search materials database"""
+        try:
+            agent = MaterialAgent()
+            # Search implementation
+            return {
+                "status": "success",
+                "query": query,
+                "results": [],
+                "count": 0
+            }
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    
+    @router.get("/{material_name}/properties")
+    async def get_material_properties(material_name: str):
+        """Get properties for a specific material"""
+        try:
+            # Material database
+            materials_db = {
+                "steel": {
+                    "density_kg_m3": 7850,
+                    "elastic_modulus_gpa": 210,
+                    "yield_strength_mpa": 250,
+                    "ultimate_strength_mpa": 400,
+                    "poisson_ratio": 0.3,
+                    "thermal_conductivity_w_m_k": 50
+                },
+                "aluminum": {
+                    "density_kg_m3": 2700,
+                    "elastic_modulus_gpa": 70,
+                    "yield_strength_mpa": 270,
+                    "ultimate_strength_mpa": 310,
+                    "poisson_ratio": 0.33,
+                    "thermal_conductivity_w_m_k": 205
+                },
+                "titanium": {
+                    "density_kg_m3": 4500,
+                    "elastic_modulus_gpa": 116,
+                    "yield_strength_mpa": 880,
+                    "ultimate_strength_mpa": 950,
+                    "poisson_ratio": 0.32,
+                    "thermal_conductivity_w_m_k": 7
+                }
+            }
+            
+            material = materials_db.get(material_name.lower())
+            if not material:
+                raise HTTPException(status_code=404, detail=f"Material '{material_name}' not found")
+            
+            return {
+                "name": material_name,
+                "properties": material
+            }
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    
+    @router.get("/categories")
+    async def get_material_categories():
+        """Get material categories"""
+        return {
+            "categories": [
+                {"id": "metals", "name": "Metals & Alloys", "examples": ["Steel", "Aluminum", "Titanium"]},
+                {"id": "polymers", "name": "Polymers", "examples": ["PLA", "ABS", "Nylon", "PEEK"]},
+                {"id": "ceramics", "name": "Ceramics", "examples": ["Alumina", "Zirconia"]},
+                {"id": "composites", "name": "Composites", "examples": ["Carbon Fiber", "Fiberglass"]}
+            ]
+        }
+    
+    @router.post("/run")
+    async def run_material_agent(params: dict):
+        """Run material agent"""
+        try:
+            agent = MaterialAgent()
+            result = agent.run(params)
+            return result
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))

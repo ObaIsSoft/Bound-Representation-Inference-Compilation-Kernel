@@ -25,6 +25,7 @@ export const PanelProvider = ({ children }) => {
     const [leftPanelRequest, setLeftPanelRequest] = useState(null);
 
     const [isAgentProcessing, setIsAgentProcessing] = useState(false);
+    const [activeProjectId, setActiveProjectId] = useState(null);
 
     // XAI: Thought Streaming Hook
     // Only poll when agent is processing
@@ -227,6 +228,8 @@ export const PanelProvider = ({ children }) => {
             thoughts,
             isStreaming,
             clearThoughts,
+            activeProjectId,
+            setActiveProjectId,
             PANEL_IDS
         }}>
             {children}

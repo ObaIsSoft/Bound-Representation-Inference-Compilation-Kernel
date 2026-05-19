@@ -142,10 +142,10 @@ async def preview_agent_selection(state: Dict[str, Any]):
 
 
 # --- Design Genome API ---
-from backend.agents.unified_design_agent import UnifiedDesignAgent
+from backend.agents.designer_agent import DesignerAgent
 
 # Global instance for stateful operations like exploration
-unified_design_agent = UnifiedDesignAgent()
+designer_agent = DesignerAgent()
 
 # Global Conversational Agent with integrated RLM
 # RLM is now unified into ConversationalAgent (no separate module)
@@ -176,7 +176,7 @@ class DesignEvolveRequest(BaseModel):
 async def interpret_design(req: DesignInterpretRequest):
     """Convert prompt to a single base genome"""
     try:
-        res = unified_design_agent.run({"mode": "interpret", "prompt": req.prompt})
+        res = designer_agent.run({"mode": "interpret", "prompt": req.prompt})
         return {
             "success": True,
             "genome": res["genome"]
@@ -189,7 +189,7 @@ async def interpret_design(req: DesignInterpretRequest):
 async def explore_design(req: DesignExploreRequest):
     """Generate variants from a prompt"""
     try:
-        res = unified_design_agent.run({
+        res = designer_agent.run({
             "mode": "explore", 
             "prompt": req.prompt, 
             "count": req.count
@@ -206,7 +206,7 @@ async def explore_design(req: DesignExploreRequest):
 async def evolve_design(req: DesignEvolveRequest):
     """Breed new variants from selected parents"""
     try:
-        res = unified_design_agent.run({
+        res = designer_agent.run({
             "mode": "evolve", 
             "parent_ids": req.parent_ids, 
             "count": req.count
@@ -229,10 +229,10 @@ async def select_variant(variant_id: str):
     """Select a specific variant from the current exploration session"""
     try:
         # In a unified agent, the explorer is held in state
-        if not unified_design_agent.active_explorer:
+        if not designer_agent.active_explorer:
             raise HTTPException(status_code=404, detail="No active exploration session")
             
-        selected = unified_design_agent.active_explorer.user_select(variant_id)
+        selected = designer_agent.active_explorer.user_select(variant_id)
         if not selected:
             raise HTTPException(status_code=404, detail="Variant not found")
             
@@ -485,10 +485,9 @@ async def explain_decision_endpoint(req: ExplainLogRequest):
 # --- Agent Metrics ---
 @app.get("/api/agents/metrics")
 async def get_agent_metrics():
-    """Returns real-time execution metrics for all agents."""
-    from backend.core.agent_registry import AgentVersionRegistry
-    registry = AgentVersionRegistry()
-    return {"metrics": registry.get_all_metrics()}
+    """Returns the list of registered agents from the global registry."""
+    from backend.agent_registry import registry
+    return {"agents": list(registry.AVAILABLE_AGENTS.keys()), "count": len(registry.AVAILABLE_AGENTS)}
 
 # --- STT API ---
 
@@ -510,6 +509,29 @@ async def transcribe_audio(file: UploadFile = File(...)):
         "text": transcript,
         "success": "[Error" not in transcript
     }
+
+
+async def _run_physics_pipeline(
+    project_id: str,
+    user_intent: str,
+    entities: Dict[str, Any]
+) -> None:
+    """
+    Background task: create and run a ProjectOrchestrator project.
+    Runs entirely async — caller does not await.
+    """
+    try:
+        from backend.core.project_orchestrator import ProjectOrchestrator
+        orchestrator = ProjectOrchestrator()
+        await orchestrator.create_project(
+            project_id=project_id,
+            user_intent=user_intent,
+        )
+        logger.info(f"[Pipeline] Project {project_id} created, running phases...")
+        await orchestrator.run_project(project_id)
+        logger.info(f"[Pipeline] Project {project_id} completed.")
+    except Exception as e:
+        logger.error(f"[Pipeline] Project {project_id} failed: {e}", exc_info=True)
 
 
 class ChatRequest(BaseModel):
@@ -543,23 +565,41 @@ async def chat_endpoint(req: ChatRequest):
         
     result = await conversational_agent.run({
         "input_text": req.message,
-        "context": history[:-1], # History excluding the message we just added
-        "initial_intent": "" # No intent forcing for general chat
+        "context": history[:-1],
+        "initial_intent": "",
+        "ai_model": req.ai_model
     }, session_id=session_id)
     
     response_text = result.get("response", "I am standing by.")
     intent = result.get("intent", "chat")
-    
+    discovery_complete = result.get("discovery_complete", False)
+
     # 5. Add agent response to session
     session.add_message("agent", response_text, metadata={"intent": intent})
-    
+
+    # 6. Fire physics pipeline if discovery is complete
+    project_id = None
+    if discovery_complete and intent == "design_request":
+        project_id = f"proj_{session_id}_{int(time.time())}"
+        entities = result.get("entities", {})
+        asyncio.create_task(
+            _run_physics_pipeline(project_id, req.message, entities)
+        )
+        session.add_message(
+            "agent",
+            f"[Pipeline started: {project_id}]",
+            metadata={"project_id": project_id, "type": "pipeline_start"}
+        )
+
     # Auto-save
     conversation_manager._auto_save()
-    
+
     return {
         "response": response_text,
         "intent": intent,
-        "session_id": session_id
+        "session_id": session_id,
+        "project_id": project_id,
+        "discovery_complete": discovery_complete
     }
 
 # --- Phase 1 & 2: Requirements Gathering Chat Logic ---
@@ -985,23 +1025,13 @@ async def run_agent(name: str, payload: Dict[str, Any]):
     if not agent:
         raise HTTPException(status_code=404, detail=f"Agent '{name}' not found.")
     
-    # Track Execution Time for Real Metrics
-    from backend.core.agent_registry import AgentVersionRegistry
-    registry = AgentVersionRegistry()
-    
     start_time = time.time()
     try:
-        # Most base agents define run(params)
-        # We assume payload is the params dict
         result = agent.run(payload)
-        
         duration = time.time() - start_time
-        registry.record_execution(name, duration)
-        
-        return {"status": "success", "agent": name, "result": result}
+        return {"status": "success", "agent": name, "result": result, "duration_ms": round(duration * 1000, 2)}
     except Exception as e:
         duration = time.time() - start_time
-        registry.record_execution(name, duration) # Log even on failure
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -2410,14 +2440,6 @@ async def execute_shell(command: ShellCommand):
         return {"type": "err", "text": f"Execution error: {str(e)}", "returncode": -1}
 
 # --- Conversational API ---
-
-class ChatRequest(BaseModel):
-    message: str
-    context: List[Dict[str, str]] = []
-    aiModel: str = "mock"
-    conversation_id: Optional[str] = None
-    language: str = "en"
-    focusedPodId: Optional[str] = None # Phase 9: Recursive ISA
 
 @app.post("/api/chat/discovery")
 async def chat_discovery(

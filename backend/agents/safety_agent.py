@@ -227,3 +227,107 @@ class SafetyAgent:
                 "error": f"Could not get safety limits for {material}",
                 "details": str(e)
             }
+
+
+# =============================================================================
+# FASTAPI ENDPOINTS
+# =============================================================================
+
+try:
+    from fastapi import APIRouter, HTTPException
+    from pydantic import BaseModel, Field
+    HAS_FASTAPI = True
+except ImportError:
+    HAS_FASTAPI = False
+    router = None
+
+if HAS_FASTAPI:
+    router = APIRouter(prefix="/safety", tags=["safety_analysis"])
+    
+    class SafetyAssessmentRequest(BaseModel):
+        system_type: str = Field(..., description="System type: mechanical, electrical, chemical")
+        hazard_scenarios: list = Field(default_factory=list, description="List of hazard scenarios")
+        mitigations: list = Field(default_factory=list, description="Existing mitigations")
+        
+    @router.post("/assess")
+    async def assess_safety(request: SafetyAssessmentRequest):
+        """Perform safety assessment"""
+        try:
+            agent = SafetyAgent()
+            result = agent.run({
+                "system_type": request.system_type,
+                "hazard_scenarios": request.hazard_scenarios,
+                "mitigations": request.mitigations
+            })
+            return result
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    
+    @router.post("/fmea/analyze")
+    async def analyze_fmea(params: dict):
+        """Perform FMEA analysis"""
+        try:
+            # Simplified FMEA
+            components = params.get("components", [])
+            
+            fmea_results = []
+            for comp in components:
+                failure_modes = comp.get("failure_modes", [])
+                for mode in failure_modes:
+                    severity = mode.get("severity", 5)
+                    occurrence = mode.get("occurrence", 5)
+                    detection = mode.get("detection", 5)
+                    rpn = severity * occurrence * detection
+                    
+                    fmea_results.append({
+                        "component": comp.get("name"),
+                        "failure_mode": mode.get("name"),
+                        "severity": severity,
+                        "occurrence": occurrence,
+                        "detection": detection,
+                        "rpn": rpn,
+                        "risk_level": "High" if rpn > 100 else "Medium" if rpn > 50 else "Low"
+                    })
+            
+            return {
+                "status": "success",
+                "fmea_results": sorted(fmea_results, key=lambda x: x["rpn"], reverse=True),
+                "total_modes": len(fmea_results)
+            }
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    
+    @router.get("/hazards/{system_type}")
+    async def get_common_hazards(system_type: str):
+        """Get common hazards for system type"""
+        hazards = {
+            "mechanical": [
+                {"id": "haz_001", "name": "Pinch Points", "severity": "high"},
+                {"id": "haz_002", "name": "Sharp Edges", "severity": "medium"},
+                {"id": "haz_003", "name": "Moving Parts", "severity": "high"},
+                {"id": "haz_004", "name": "High Pressure", "severity": "critical"}
+            ],
+            "electrical": [
+                {"id": "haz_101", "name": "Electric Shock", "severity": "critical"},
+                {"id": "haz_102", "name": "Arc Flash", "severity": "critical"},
+                {"id": "haz_103", "name": "Overheating", "severity": "high"},
+                {"id": "haz_104", "name": "Short Circuit", "severity": "high"}
+            ],
+            "aerial": [
+                {"id": "haz_201", "name": "Collision", "severity": "critical"},
+                {"id": "haz_202", "name": "Loss of Control", "severity": "critical"},
+                {"id": "haz_203", "name": "Battery Fire", "severity": "critical"},
+                {"id": "haz_204", "name": "GPS Failure", "severity": "high"}
+            ]
+        }
+        return {"system_type": system_type, "hazards": hazards.get(system_type, [])}
+    
+    @router.post("/run")
+    async def run_safety_agent(params: dict):
+        """Run safety agent"""
+        try:
+            agent = SafetyAgent()
+            result = agent.run(params)
+            return result
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))

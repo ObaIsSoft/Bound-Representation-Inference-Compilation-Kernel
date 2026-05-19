@@ -14,18 +14,18 @@ import Omniviewport from '../workspace/Omniviewport';
  */
 export default function Workspace() {
     const { theme } = useTheme();
-    const { openTabs, activeTab } = usePanel();
+    const { openTabs, activeTab, activeProjectId, createNewSession } = usePanel();
     const [activePanel, setActivePanel] = useState('');
 
-    // Get current project from active tab or use default
-    const currentProject = openTabs.find(tab => tab.id === activeTab)?.projectId || 'default';
+    // Prefer the actively running project_id; fall back to tab projectId
+    const currentProject = activeProjectId || openTabs.find(tab => tab.id === activeTab)?.projectId || 'default';
 
     const handlePanelChange = (panel) => {
         setActivePanel(panel === activePanel ? '' : panel);
     };
 
-    const handleNewChat = () => {
-        window.location.reload();
+    const handleNewChat = async () => {
+        await createNewSession();
     };
 
     const handleSettingsClick = () => {

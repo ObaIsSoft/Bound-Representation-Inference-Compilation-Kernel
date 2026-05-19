@@ -1070,3 +1070,148 @@ async def quick_pcb_check(pcb_data: Dict[str, Any]) -> Dict[str, Any]:
         "operation": "analyze_pcb",
         "pcb": pcb_data
     })
+
+
+# =============================================================================
+# FASTAPI ENDPOINTS
+# =============================================================================
+
+try:
+    from fastapi import APIRouter, HTTPException
+    from pydantic import BaseModel, Field
+    HAS_FASTAPI = True
+except ImportError:
+    HAS_FASTAPI = False
+    router = None
+
+if HAS_FASTAPI:
+    router = APIRouter(prefix="/electronics", tags=["electronics"])
+    
+    class CircuitDesignRequest(BaseModel):
+        components: List[Dict[str, Any]] = Field(default_factory=list, description="Circuit components")
+        connections: List[Dict[str, Any]] = Field(default_factory=list, description="Component connections")
+        fidelity: Optional[str] = Field(default=None, description="Simulation fidelity: basic, spice, si_pi")
+        
+    class PCBLayoutRequest(BaseModel):
+        board_width: float = Field(..., description="Board width in mm")
+        board_height: float = Field(..., description="Board height in mm")
+        layer_count: Optional[int] = Field(default=None, description="Number of copper layers")
+        component_placement: Dict[str, Any] = Field(default_factory=dict, description="Component positions")
+        
+    class PowerAnalysisRequest(BaseModel):
+        voltage: float = Field(..., description="Supply voltage in V")
+        components: List[Dict[str, Any]] = Field(..., description="Components with power ratings")
+        
+    @router.post("/design/circuit")
+    async def design_circuit(request: CircuitDesignRequest):
+        """Generate circuit design"""
+        try:
+            agent = ElectronicsAgent()
+            
+            # Build circuit from components
+            circuit = {
+                "components": request.components,
+                "connections": request.connections
+            }
+            
+            result = await agent.run({
+                "operation": "design_topology",
+                "requirements": {
+                    "voltage": request.voltage if hasattr(request, 'voltage') else 5.0,
+                    "power_budget": 10.0,
+                    "io_requirements": {}
+                },
+                "fidelity": request.fidelity
+            })
+            
+            return result
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    
+    @router.post("/simulate")
+    async def simulate_circuit(request: CircuitDesignRequest):
+        """Simulate circuit using SPICE"""
+        try:
+            agent = ElectronicsAgent()
+            result = await agent.run({
+                "operation": "simulate_circuit",
+                "circuit": {
+                    "components": request.components,
+                    "connections": request.connections
+                },
+                "fidelity": request.fidelity
+            })
+            return result
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    
+    @router.post("/pcb/layout")
+    async def layout_pcb(request: PCBLayoutRequest):
+        """Generate PCB layout"""
+        try:
+            agent = ElectronicsAgent()
+            result = await agent.generate_pcb_layout({
+                "board_width": request.board_width,
+                "board_height": request.board_height,
+                "layer_count": request.layer_count,
+                "components": request.component_placement
+            })
+            return {
+                "status": "success",
+                "layout": result
+            }
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    
+    @router.post("/analyze/power")
+    async def analyze_power(request: PowerAnalysisRequest):
+        """Analyze power consumption and distribution"""
+        try:
+            agent = ElectronicsAgent()
+            result = await agent.analyze_power_distribution(
+                request.voltage,
+                request.components
+            )
+            return result
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    
+    @router.post("/export/kicad")
+    async def export_kicad(params: Dict[str, Any]):
+        """Export to KiCad format"""
+        try:
+            agent = ElectronicsAgent()
+            output_dir = params.get("output_dir", "./output")
+            result = await agent.generate_kicad_project(
+                params.get("circuit", {}),
+                output_dir
+            )
+            return result
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    
+    @router.get("/library/components")
+    async def get_component_library():
+        """Get available component library"""
+        components = {
+            "resistors": ["1k", "10k", "100k", "1M"],
+            "capacitors": ["100nF", "1uF", "10uF", "100uF"],
+            "diodes": ["1N4148", "1N4007", "LED"],
+            "transistors": ["2N2222", "2N2907", "BC547"],
+            "ics": ["LM358", "LM7805", "NE555", "ATmega328"]
+        }
+        return {
+            "status": "success",
+            "components": components
+        }
+    
+    @router.post("/run")
+    async def run_electronics_agent(params: Dict[str, Any]):
+        """Run full electronics agent workflow"""
+        try:
+            agent = ElectronicsAgent()
+            result = await agent.run(params)
+            return result
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+

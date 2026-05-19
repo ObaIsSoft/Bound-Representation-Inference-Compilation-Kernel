@@ -34,7 +34,7 @@ class StructuresDomain:
         """Lazy load ProductionStructuralAgent"""
         if self._structural_agent is None:
             try:
-                from backend.agents.structural_agent_fixed import ProductionStructuralAgent
+                from backend.agents.structural_agent import ProductionStructuralAgent
                 self._structural_agent = ProductionStructuralAgent()
                 logger.info("ProductionStructuralAgent loaded for FEA")
             except Exception as e:
@@ -71,7 +71,7 @@ class StructuresDomain:
         
         # Use ProductionStructuralAgent for FEA
         try:
-            from backend.agents.structural_agent_fixed import FidelityLevel
+            from backend.agents.structural_agent import FidelityLevel
             
             fid = FidelityLevel.FEA if fidelity == "FEA" else FidelityLevel.ANALYTICAL
             

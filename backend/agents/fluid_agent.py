@@ -1252,3 +1252,167 @@ def analyze_flow(
     conditions = FlowConditions(velocity=velocity)
     result = agent.analyze(geometry, conditions, FidelityLevel.AUTO)
     return result.to_dict()
+
+
+
+# =============================================================================
+# FASTAPI ENDPOINTS
+# =============================================================================
+
+try:
+    from fastapi import APIRouter, HTTPException
+    from pydantic import BaseModel, Field
+    HAS_FASTAPI = True
+except ImportError:
+    HAS_FASTAPI = False
+    router = None
+
+if HAS_FASTAPI:
+    router = APIRouter(prefix="/fluid", tags=["fluid_dynamics"])
+    
+    class CFDRequest(BaseModel):
+        velocity: float = Field(..., description="Flow velocity in m/s")
+        geometry_type: str = Field(..., description="Geometry type: box, cylinder, airfoil")
+        length: Optional[float] = Field(default=None, description="Characteristic length in m")
+        width: Optional[float] = Field(default=None, description="Width in m")
+        height: Optional[float] = Field(default=None, description="Height in m")
+        fidelity: Optional[str] = Field(default=None, description="Fidelity: auto, panel, rans, les")
+        
+    class ReynoldsRequest(BaseModel):
+        velocity: float = Field(..., description="Velocity in m/s")
+        length: float = Field(..., description="Characteristic length in m")
+        temperature: Optional[float] = Field(default=None, description="Temperature in °C")
+        fluid: str = Field(default="air", description="Fluid type")
+        
+    @router.post("/cfd/simulate")
+    async def simulate_cfd(request: CFDRequest):
+        """Run CFD simulation"""
+        try:
+            agent = FluidAgent()
+            
+            geometry = GeometryConfig(
+                shape_type=request.geometry_type,
+                length=request.length,
+                width=request.width,
+                height=request.height
+            )
+            conditions = FlowConditions(velocity=request.velocity)
+            
+            fidelity_map = {
+                "panel": FidelityLevel.PANEL,
+                "rans": FidelityLevel.RANS,
+                "les": FidelityLevel.LES,
+                "auto": FidelityLevel.AUTO
+            }
+            fidelity = fidelity_map.get(request.fidelity.lower(), FidelityLevel.AUTO)
+            
+            result = agent.analyze(geometry, conditions, fidelity)
+            return result.to_dict()
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    
+    @router.post("/reynolds/calculate")
+    async def calculate_reynolds(request: ReynoldsRequest):
+        """Calculate Reynolds number"""
+        try:
+            # Get fluid properties
+            from backend.agents.thermal_agent import get_fluid_properties
+            props = get_fluid_properties(
+                request.fluid,
+                temperature=request.temperature + 273.15
+            )
+            
+            rho = props["density_kg_m3"]
+            mu = props["dynamic_viscosity_pa_s"]
+            
+            Re = rho * request.velocity * request.length / mu
+            
+            # Determine flow regime
+            if Re < 2300:
+                regime = "laminar"
+            elif Re < 4000:
+                regime = "transitional"
+            else:
+                regime = "turbulent"
+            
+            return {
+                "reynolds_number": Re,
+                "flow_regime": regime,
+                "density_kg_m3": rho,
+                "viscosity_pa_s": mu,
+                "velocity_m_s": request.velocity,
+                "characteristic_length_m": request.length
+            }
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    
+    @router.post("/drag/estimate")
+    async def estimate_drag(params: Dict[str, Any]):
+        """Estimate drag coefficient and force"""
+        try:
+            agent = FluidAgent()
+            
+            geometry = GeometryConfig(
+                shape_type=params.get("shape_type", "box"),
+                length=params.get("length", 1.0),
+                width=params.get("width", 0.5),
+                height=params.get("height", 0.5)
+            )
+            
+            cd = agent._estimate_cd(geometry)
+            
+            velocity = params.get("velocity", 10.0)
+            area = params.get("frontal_area", geometry.width * geometry.height)
+            rho = 1.225  # kg/m³ at sea level
+            
+            drag_force = 0.5 * rho * velocity**2 * cd * area
+            
+            return {
+                "drag_coefficient": cd,
+                "drag_force_n": drag_force,
+                "velocity_m_s": velocity,
+                "frontal_area_m2": area,
+                "shape_type": geometry.shape_type
+            }
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    
+    @router.get("/fidelity/levels")
+    async def get_fidelity_levels():
+        """Get available fidelity levels"""
+        return {
+            "levels": [
+                {
+                    "id": "panel",
+                    "name": "Panel Method",
+                    "description": "Fast potential flow solver",
+                    "time": "< 1 second",
+                    "use_for": "Conceptual design"
+                },
+                {
+                    "id": "rans",
+                    "name": "RANS CFD",
+                    "description": "Reynolds-Averaged Navier-Stokes",
+                    "time": "Minutes to hours",
+                    "use_for": "Detailed analysis"
+                },
+                {
+                    "id": "les",
+                    "name": "LES",
+                    "description": "Large Eddy Simulation",
+                    "time": "Hours to days",
+                    "use_for": "Unsteady phenomena"
+                }
+            ]
+        }
+    
+    @router.post("/run")
+    async def run_fluid_agent(params: Dict[str, Any]):
+        """Run full fluid agent workflow"""
+        try:
+            agent = FluidAgent()
+            result = await agent.run(params)
+            return result
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+

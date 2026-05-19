@@ -35,7 +35,9 @@ const GlobalInputConsole = () => {
         isSubmitting,
         setIsSubmitting,
         thoughts,
-        clearThoughts
+        clearThoughts,
+        setActiveProjectId,
+        setIsAgentProcessing
     } = usePanel();
 
     const [message, setMessage] = useState('');
@@ -102,13 +104,7 @@ const GlobalInputConsole = () => {
                 formData.append('ai_model', llmProvider);
                 formData.append('context', JSON.stringify(context));
                 filesToSend.forEach(file => formData.append('files', file));
-
-                responseData = await apiClient.post('/chat', {
-                    message: userMsg,
-                    session_id: activeSessionId,
-                    ai_model: llmProvider,
-                    context: context
-                });
+                responseData = await apiClient.post('/chat', formData);
             } else {
                 responseData = await apiClient.post('/chat', {
                     message: userMsg,
@@ -121,6 +117,11 @@ const GlobalInputConsole = () => {
             if (responseData.session_id && responseData.session_id !== activeSessionId) {
                 setActiveSessionId(responseData.session_id);
                 await fetchSessions();
+            }
+
+            if (responseData.project_id) {
+                setActiveProjectId(responseData.project_id);
+                setIsAgentProcessing(true);
             }
 
             const targetSessionId = responseData.session_id || activeSessionId;

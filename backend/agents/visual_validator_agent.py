@@ -20,6 +20,12 @@ from enum import Enum
 import numpy as np
 import logging
 
+try:
+    from backend.config import get_functional_agent_config
+    HAS_CONFIG = True
+except ImportError:
+    HAS_CONFIG = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -129,9 +135,17 @@ class VisualValidatorAgent:
         # Overall score
         overall_score = np.mean(list(scores.values()))
         
-        # Determine pass/fail
+        # Determine pass/fail using configured threshold
+        if HAS_CONFIG:
+            try:
+                pass_threshold = get_functional_agent_config('visual_validator', 'overall_pass_threshold')
+            except:
+                pass_threshold = 0.7
+        else:
+            pass_threshold = 0.7
+        
         critical_issues = [i for i in issues if i.severity == ValidationSeverity.CRITICAL]
-        passed = len(critical_issues) == 0 and overall_score > 0.7
+        passed = len(critical_issues) == 0 and overall_score > pass_threshold
         
         return {
             "status": "passed" if passed else "failed",
@@ -186,24 +200,35 @@ class VisualValidatorAgent:
         
         issues = []
         
+        # Load completeness config
+        if HAS_CONFIG:
+            try:
+                comp_config = get_functional_agent_config('visual_validator', 'completeness')
+                black_threshold = comp_config.get('black_threshold', 10)
+                critical_ratio = comp_config.get('critical_black_ratio', 0.9)
+                warning_ratio = comp_config.get('warning_black_ratio', 0.5)
+            except:
+                black_threshold, critical_ratio, warning_ratio = 10, 0.9, 0.5
+        else:
+            black_threshold, critical_ratio, warning_ratio = 10, 0.9, 0.5
+        
         # Check for completely black regions (missing geometry)
         gray = np.mean(image, axis=2) if len(image.shape) == 3 else image
         
         # Count black pixels (potential missing renders)
-        black_threshold = 10
         black_pixels = np.sum(gray < black_threshold)
         total_pixels = gray.size
         black_ratio = black_pixels / total_pixels
         
         # Normal renders should have some variation
-        if black_ratio > 0.9:
+        if black_ratio > critical_ratio:
             issues.append(VisualIssue(
                 aspect=ValidationAspect.COMPLETENESS,
                 severity=ValidationSeverity.CRITICAL,
                 description=f"Render appears mostly black ({black_ratio*100:.1f}% black pixels)"
             ))
             score = 0.0
-        elif black_ratio > 0.5:
+        elif black_ratio > warning_ratio:
             issues.append(VisualIssue(
                 aspect=ValidationAspect.COMPLETENESS,
                 severity=ValidationSeverity.WARNING,
@@ -220,27 +245,40 @@ class VisualValidatorAgent:
         
         issues = []
         
+        # Load lighting config
+        if HAS_CONFIG:
+            try:
+                light_config = get_functional_agent_config('visual_validator', 'lighting')
+                too_dark = light_config.get('too_dark_threshold', 30)
+                too_bright = light_config.get('too_bright_threshold', 240)
+                low_contrast = light_config.get('low_contrast_threshold', 20)
+                ideal_std = light_config.get('ideal_std', 50)
+            except:
+                too_dark, too_bright, low_contrast, ideal_std = 30, 240, 20, 50
+        else:
+            too_dark, too_bright, low_contrast, ideal_std = 30, 240, 20, 50
+        
         # Check brightness distribution
         gray = np.mean(image, axis=2) if len(image.shape) == 3 else image
         mean_brightness = np.mean(gray)
         std_brightness = np.std(gray)
         
         # Ideal brightness around 128 (middle gray)
-        if mean_brightness < 30:
+        if mean_brightness < too_dark:
             issues.append(VisualIssue(
                 aspect=ValidationAspect.LIGHTING,
                 severity=ValidationSeverity.WARNING,
                 description="Image too dark - check lighting setup"
             ))
             score = 0.3
-        elif mean_brightness > 240:
+        elif mean_brightness > too_bright:
             issues.append(VisualIssue(
                 aspect=ValidationAspect.LIGHTING,
                 severity=ValidationSeverity.WARNING,
                 description="Image too bright - possible overexposure"
             ))
             score = 0.3
-        elif std_brightness < 20:
+        elif std_brightness < low_contrast:
             issues.append(VisualIssue(
                 aspect=ValidationAspect.LIGHTING,
                 severity=ValidationSeverity.WARNING,
@@ -248,7 +286,7 @@ class VisualValidatorAgent:
             ))
             score = 0.6
         else:
-            score = min(1.0, std_brightness / 50)
+            score = min(1.0, std_brightness / ideal_std)
         
         return issues, score
     
@@ -257,8 +295,22 @@ class VisualValidatorAgent:
         
         issues = []
         
+        # Load artifacts config
+        if HAS_CONFIG:
+            try:
+                art_config = get_functional_agent_config('visual_validator', 'artifacts')
+                noise_threshold = art_config.get('noise_threshold', 30)
+                max_noise_norm = art_config.get('max_noise_norm', 50)
+            except:
+                noise_threshold, max_noise_norm = 30, 50
+        else:
+            noise_threshold, max_noise_norm = 30, 50
+        
         # Check for z-fighting (high frequency patterns)
-        from scipy import ndimage
+        try:
+            from scipy import ndimage
+        except ImportError:
+            return [], 0.5
         
         gray = np.mean(image, axis=2).astype(np.float32) if len(image.shape) == 3 else image.astype(np.float32)
         
@@ -266,7 +318,7 @@ class VisualValidatorAgent:
         high_pass = gray - ndimage.gaussian_filter(gray, sigma=3)
         noise_level = np.std(high_pass)
         
-        if noise_level > 30:
+        if noise_level > noise_threshold:
             issues.append(VisualIssue(
                 aspect=ValidationAspect.ARTIFACTS,
                 severity=ValidationSeverity.WARNING,
@@ -274,7 +326,7 @@ class VisualValidatorAgent:
             ))
             score = 0.5
         else:
-            score = 1.0 - (noise_level / 50)
+            score = 1.0 - (noise_level / max_noise_norm)
         
         return issues, max(0, score)
     
@@ -285,8 +337,19 @@ class VisualValidatorAgent:
     ) -> Tuple[List[VisualIssue], float]:
         """Check consistency with reference renders."""
         
+        # Load consistency config
+        if HAS_CONFIG:
+            try:
+                cons_config = get_functional_agent_config('visual_validator', 'consistency')
+                default_score = cons_config.get('default_score', 0.5)
+                warning_threshold = cons_config.get('warning_threshold', 0.5)
+            except:
+                default_score, warning_threshold = 0.5, 0.5
+        else:
+            default_score, warning_threshold = 0.5, 0.5
+        
         if not reference_paths:
-            return [], 0.5  # No references to compare
+            return [], default_score  # No references to compare
         
         issues = []
         scores = []
@@ -299,7 +362,7 @@ class VisualValidatorAgent:
                 hist_sim = self._histogram_similarity(image, ref_image)
                 scores.append(hist_sim)
                 
-                if hist_sim < 0.5:
+                if hist_sim < warning_threshold:
                     issues.append(VisualIssue(
                         aspect=ValidationAspect.CONSISTENCY,
                         severity=ValidationSeverity.WARNING,
@@ -344,13 +407,23 @@ class VisualValidatorAgent:
         # Fallback: check for common defects
         issues = []
         
+        # Load defects config
+        if HAS_CONFIG:
+            try:
+                def_config = get_functional_agent_config('visual_validator', 'defects')
+                min_color_ratio = def_config.get('min_color_ratio', 0.001)
+            except:
+                min_color_ratio = 0.001
+        else:
+            min_color_ratio = 0.001
+        
         # Check for pure colors (possible material issues)
         unique_colors = len(np.unique(image.reshape(-1, 3), axis=0))
         total_pixels = image.shape[0] * image.shape[1]
         
         color_ratio = unique_colors / total_pixels
         
-        if color_ratio < 0.001:
+        if color_ratio < min_color_ratio:
             issues.append(VisualIssue(
                 aspect=ValidationAspect.DEFECTS,
                 severity=ValidationSeverity.WARNING,
@@ -358,7 +431,7 @@ class VisualValidatorAgent:
             ))
             score = 0.5
         else:
-            score = min(1.0, color_ratio * 100)
+            score = min(1.0, color_ratio / min_color_ratio)
         
         return issues, score
     

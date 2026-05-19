@@ -1,4 +1,4 @@
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 try:
     from materials.materials_db import MaterialsDatabase
 except ImportError:

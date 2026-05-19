@@ -1451,3 +1451,161 @@ def get_available_kernels() -> List[str]:
     if HAS_MANIFOLD:
         kernels.append("manifold3d")
     return kernels
+
+
+# =============================================================================
+# FASTAPI ENDPOINTS
+# =============================================================================
+
+try:
+    from fastapi import APIRouter, HTTPException, Query
+    from pydantic import BaseModel, Field
+    HAS_FASTAPI = True
+except ImportError:
+    HAS_FASTAPI = False
+    router = None
+
+if HAS_FASTAPI:
+    router = APIRouter(prefix="/geometry", tags=["geometry"])
+    
+    class GeometryCreateRequest(BaseModel):
+        feature_type: str = Field(..., description="Type of feature: box, cylinder, sphere, extrude, revolve")
+        parameters: Dict[str, Any] = Field(default_factory=dict, description="Feature parameters")
+        kernel: Optional[str] = Field(default=None, description="CAD kernel to use")
+        
+    class BooleanRequest(BaseModel):
+        operation: str = Field(..., description="Boolean operation: union, subtract, intersect")
+        target_id: str = Field(..., description="ID of target body")
+        tool_id: str = Field(..., description="ID of tool body")
+        
+    class ExportRequest(BaseModel):
+        filepath: str = Field(..., description="Output file path")
+        format: str = Field(..., description="Export format: step, iges, stl, obj")
+        
+    class MeshRequest(BaseModel):
+        geometry_id: str = Field(..., description="ID of geometry to mesh")
+        max_edge_length: Optional[float] = Field(default=None, description="Maximum mesh edge length")
+        min_angle: Optional[float] = Field(default=None, description="Minimum triangle angle")
+        
+    @router.post("/create")
+    async def create_geometry(request: GeometryCreateRequest):
+        """Create a new geometric feature"""
+        try:
+            agent = ProductionGeometryAgent(kernel=request.kernel)
+            feature_type = FeatureType(request.feature_type.lower())
+            feature_id = agent.create_feature(feature_type, request.parameters)
+            
+            return {
+                "status": "success",
+                "feature_id": feature_id,
+                "kernel": agent.kernel_name,
+                "bounds": agent.model_bounds if agent.model_bounds else None
+            }
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    
+    @router.post("/boolean")
+    async def boolean_operation(request: BooleanRequest):
+        """Perform boolean operation on geometries"""
+        try:
+            agent = ProductionGeometryAgent()
+            result_id = agent.boolean_operation(
+                request.operation,
+                request.target_id,
+                request.tool_id
+            )
+            return {
+                "status": "success",
+                "result_id": result_id
+            }
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    
+    @router.post("/export")
+    async def export_geometry(request: ExportRequest):
+        """Export geometry to file"""
+        try:
+            agent = ProductionGeometryAgent()
+            success = False
+            
+            if request.format.lower() == "step":
+                success = agent.export_step(request.filepath)
+            elif request.format.lower() == "stl":
+                success = agent.export_mesh(request.filepath, "stl")
+            elif request.format.lower() == "obj":
+                success = agent.export_mesh(request.filepath, "obj")
+            else:
+                raise ValueError(f"Unsupported format: {request.format}")
+            
+            if success:
+                return {
+                    "status": "success",
+                    "filepath": request.filepath,
+                    "format": request.format
+                }
+            else:
+                raise HTTPException(status_code=500, detail="Export failed")
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    
+    @router.get("/kernels")
+    async def get_kernels():
+        """Get available CAD kernels"""
+        return {
+            "available": get_available_kernels(),
+            "manifold3d": HAS_MANIFOLD,
+            "opencascade": HAS_OPENCASCADE,
+            "gmsh": HAS_GMSH
+        }
+    
+    @router.post("/mesh")
+    async def generate_mesh(request: MeshRequest):
+        """Generate mesh from geometry"""
+        try:
+            agent = ProductionGeometryAgent()
+            mesh_data = agent.generate_mesh(
+                max_edge_length=request.max_edge_length,
+                min_angle=request.min_angle
+            )
+            return {
+                "status": "success",
+                "mesh": mesh_data,
+                "vertex_count": len(mesh_data.get("vertices", [])),
+                "face_count": len(mesh_data.get("faces", []))
+            }
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    
+    @router.post("/analyze")
+    async def analyze_geometry(parameters: Dict[str, Any]):
+        """Analyze geometry properties"""
+        try:
+            agent = ProductionGeometryAgent()
+            
+            # Create geometry if specified
+            if "feature_type" in parameters:
+                feature_type = FeatureType(parameters["feature_type"].lower())
+                agent.create_feature(feature_type, parameters.get("params", {}))
+            
+            mass_props = agent.calculate_mass_properties()
+            
+            return {
+                "status": "success",
+                "volume": mass_props.get("volume"),
+                "surface_area": mass_props.get("surface_area"),
+                "centroid": mass_props.get("centroid"),
+                "bounds": agent.model_bounds
+            }
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    
+    @router.post("/run")
+    async def run_geometry_agent(params: Dict[str, Any]):
+        """Run full geometry agent workflow"""
+        try:
+            agent = ProductionGeometryAgent()
+            result = await agent.run(params)
+            return result
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+

@@ -1,6 +1,12 @@
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import math
 import logging
+
+try:
+    from backend.config import get_functional_agent_config, manufacturing_config
+    HAS_CONFIG = True
+except ImportError:
+    HAS_CONFIG = False
 
 logger = logging.getLogger(__name__)
 
@@ -165,7 +171,11 @@ class ManufacturingAgent:
         """Estimate volume in m^3 based on params."""
         params = node.get("params", {})
         shape_type = node.get("type", "unknown").lower()
-        scale = 1e-9  # mm^3 to m^3
+        # Get scale from config or use default
+        if HAS_CONFIG:
+            scale = manufacturing_config("mm3_to_m3_scale")
+        else:
+            scale = 1e-9  # mm^3 to m^3
         
         if shape_type in ["box", "plate", "structure"]:
             w = params.get("width", params.get("radius", 0)*2)
@@ -186,9 +196,14 @@ class ManufacturingAgent:
         geometry_tree: List[Dict[str, Any]], 
         material: str, 
         pod_id: str = None,
-        process_type: str = "cnc_milling",
-        region: str = "global"
+        process_type: Optional[str] = None,
+        region: Optional[str] = None
     ) -> Dict[str, Any]:
+        # Get defaults from config if not provided
+        if process_type is None:
+            process_type = manufacturing_config("default_process_type") if HAS_CONFIG else "cnc_milling"
+        if region is None:
+            region = manufacturing_config("default_region") if HAS_CONFIG else "global"
         """
         Analyze geometry and material to produce manufacturing data.
         
@@ -332,8 +347,15 @@ class ManufacturingAgent:
                 pass
 
         # Calculate lead time from setup time
+        if HAS_CONFIG:
+            hours_per_item = manufacturing_config("lead_time_hours_per_item")
+            min_lead_days = manufacturing_config("min_lead_time_days")
+        else:
+            hours_per_item = 0.5
+            min_lead_days = 1
+        
         setup_hours = self.setup_time_minutes / 60.0
-        lead_time_days = max(1, int(setup_hours + len(bom_items) * 0.5))
+        lead_time_days = max(min_lead_days, int(setup_hours + len(bom_items) * hours_per_item))
 
         return {
             "components": bom_items,
@@ -353,8 +375,14 @@ class ManufacturingAgent:
             import numpy as np
         except ImportError:
             return {"verified": False, "error": "VMK not available"}
+        
+        # Get stock dimensions from config
+        if HAS_CONFIG:
+            stock_dims = manufacturing_config("default_stock_dims")
+        else:
+            stock_dims = [100, 100, 100]
             
-        kernel = SymbolicMachiningKernel(stock_dims=[100, 100, 100])
+        kernel = SymbolicMachiningKernel(stock_dims=stock_dims)
         tools = {}
         gouges = []
         
@@ -362,7 +390,12 @@ class ManufacturingAgent:
             tool_id = op_data.get("tool_id")
             
             if tool_id not in tools:
-                tool = ToolProfile(id=tool_id, radius=0.5, type="BALL")
+                # Get default tool radius from config
+                if HAS_CONFIG:
+                    default_radius = manufacturing_config("default_tool_radius_mm")
+                else:
+                    default_radius = 0.5
+                tool = ToolProfile(id=tool_id, radius=default_radius, type="BALL")
                 kernel.register_tool(tool)
                 tools[tool_id] = tool
             
@@ -489,3 +522,90 @@ class ManufacturingAgent:
             "avg_loss": total_loss / max(1, count),
             "epochs": self.surrogate.trained_epochs
         }
+
+
+# =============================================================================
+# FASTAPI ENDPOINTS
+# =============================================================================
+
+try:
+    from fastapi import APIRouter, HTTPException
+    from pydantic import BaseModel, Field
+    HAS_FASTAPI = True
+except ImportError:
+    HAS_FASTAPI = False
+    router = None
+
+if HAS_FASTAPI:
+    router = APIRouter(prefix="/manufacturing", tags=["manufacturing"])
+    
+    class ProcessSelectRequest(BaseModel):
+        part_type: str = Field(..., description="Type of part: bracket, housing, shaft, etc.")
+        material: str = Field(..., description="Material: steel, aluminum, plastic")
+        volume: Optional[int] = Field(default=None, description="Production volume")
+        tolerance: Optional[str] = Field(default=None, description="Required tolerance: loose, medium, tight")
+        
+    class ToolpathRequest(BaseModel):
+        geometry_type: str = Field(..., description="Geometry type")
+        material: str = Field(..., description="Material to machine")
+        operation: Optional[str] = Field(default=None, description="Operation type: roughing, finishing, drilling")
+        
+    @router.post("/process/select")
+    async def select_process(request: ProcessSelectRequest):
+        """Select optimal manufacturing process"""
+        try:
+            agent = ManufacturingAgent()
+            result = agent.select_process(
+                request.part_type,
+                request.material,
+                request.volume,
+                request.tolerance
+            )
+            return {
+                "status": "success",
+                "recommended_process": result.get("process"),
+                "cycle_time": result.get("cycle_time"),
+                "setup_cost": result.get("setup_cost"),
+                "per_part_cost": result.get("per_part_cost")
+            }
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    
+    @router.post("/toolpath/generate")
+    async def generate_toolpath(request: ToolpathRequest):
+        """Generate CNC toolpath"""
+        try:
+            agent = ManufacturingAgent()
+            result = agent.generate_toolpath(
+                request.geometry_type,
+                request.material,
+                request.operation
+            )
+            return result
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    
+    @router.get("/processes")
+    async def get_processes():
+        """Get available manufacturing processes"""
+        return {
+            "processes": [
+                {"id": "cnc_milling", "name": "CNC Milling", "materials": ["steel", "aluminum", "plastic"]},
+                {"id": "cnc_turning", "name": "CNC Turning", "materials": ["steel", "aluminum", "brass"]},
+                {"id": "3d_printing_fdm", "name": "3D Printing (FDM)", "materials": ["pla", "abs", "petg", "nylon"]},
+                {"id": "3d_printing_sla", "name": "3D Printing (SLA)", "materials": ["resin"]},
+                {"id": "injection_molding", "name": "Injection Molding", "materials": ["plastic"]},
+                {"id": "sheet_metal", "name": "Sheet Metal", "materials": ["steel", "aluminum"]},
+                {"id": "casting", "name": "Die Casting", "materials": ["aluminum", "zinc"]}
+            ]
+        }
+    
+    @router.post("/run")
+    async def run_manufacturing_agent(params: dict):
+        """Run full manufacturing agent workflow"""
+        try:
+            agent = ManufacturingAgent()
+            result = agent.run(params)
+            return result
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))

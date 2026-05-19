@@ -697,3 +697,217 @@ async def analyze_structure(
     fid = FidelityLevel(fidelity) if fidelity != "auto" else FidelityLevel.AUTO
     
     return await agent.analyze(geo_obj, mat_obj, load_objs, [], fid)
+
+
+
+# =============================================================================
+# FASTAPI ENDPOINTS
+# =============================================================================
+
+try:
+    from fastapi import APIRouter, HTTPException
+    from pydantic import BaseModel, Field
+    HAS_FASTAPI = True
+except ImportError:
+    HAS_FASTAPI = False
+    router = None
+
+if HAS_FASTAPI:
+    router = APIRouter(prefix="/structural", tags=["structural_analysis"])
+    
+    class FEASimulationRequest(BaseModel):
+        geometry_type: str = Field(..., description="Geometry type: beam, plate, shell, solid")
+        length: float = Field(..., description="Length in m")
+        width: Optional[float] = Field(default=None, description="Width in m")
+        height: Optional[float] = Field(default=None, description="Height in m")
+        material: str = Field(..., description="Material name")
+        force: float = Field(..., description="Applied force in N")
+        force_direction: Optional[str] = Field(default=None, description="Force direction: x, y, z")
+        fidelity: Optional[str] = Field(default=None, description="Fidelity: analytical, surrogate, fea")
+        
+    class StressConcentrationRequest(BaseModel):
+        geometry_type: str = Field(..., description="Geometry with discontinuity: hole, notch, fillet")
+        nominal_stress: float = Field(..., description="Nominal stress in MPa")
+        hole_diameter: float = Field(default=0.0, description="Hole diameter in mm")
+        plate_width: float = Field(default=0.0, description="Plate width in mm")
+        notch_radius: float = Field(default=0.0, description="Notch radius in mm")
+        
+    @router.post("/fea/simulate")
+    async def simulate_fea(request: FEASimulationRequest):
+        """Run FEA simulation"""
+        try:
+            agent = ProductionStructuralAgent()
+            
+            # Create geometry
+            geometry = Geometry(primitives=[{
+                "type": request.geometry_type,
+                "params": {
+                    "length": request.length,
+                    "width": request.width,
+                    "height": request.height
+                }
+            }])
+            
+            # Material properties
+            materials_db = {
+                "steel": {"elastic_modulus": 210e9, "poisson_ratio": 0.3, "yield_strength": 250e6, "density": 7850},
+                "aluminum": {"elastic_modulus": 70e9, "poisson_ratio": 0.33, "yield_strength": 270e6, "density": 2700},
+                "titanium": {"elastic_modulus": 116e9, "poisson_ratio": 0.32, "yield_strength": 880e6, "density": 4500}
+            }
+            
+            mat_props = materials_db.get(request.material.lower(), materials_db["steel"])
+            material = Material(**mat_props)
+            
+            # Create load case
+            direction_map = {"x": [1, 0, 0], "y": [0, 1, 0], "z": [0, 0, 1]}
+            direction = direction_map.get(request.force_direction.lower(), [0, 1, 0])
+            forces = [request.force * d for d in direction]
+            
+            loads = [LoadCase(
+                name="applied_load",
+                forces=np.array(forces),
+                moments=np.array([0, 0, 0])
+            )]
+            
+            fidelity_map = {
+                "analytical": FidelityLevel.ANALYTICAL,
+                "surrogate": FidelityLevel.SURROGATE,
+                "fea": FidelityLevel.FEA,
+                "auto": FidelityLevel.AUTO
+            }
+            fidelity = fidelity_map.get(request.fidelity.lower(), FidelityLevel.ANALYTICAL)
+            
+            result = await agent.analyze(geometry, material, loads, [], fidelity)
+            return result.to_dict()
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    
+    @router.post("/stress/concentration")
+    async def calculate_stress_concentration(request: StressConcentrationRequest):
+        """Calculate stress concentration factor"""
+        try:
+            Kt = 1.0
+            explanation = ""
+            
+            if request.geometry_type == "hole":
+                # Circular hole in infinite plate: Kt = 3
+                # Finite width correction
+                if request.plate_width > 0 and request.hole_diameter > 0:
+                    d_over_w = request.hole_diameter / request.plate_width
+                    Kt = 3.0 - 3.13 * d_over_w + 3.66 * d_over_w**2 - 1.53 * d_over_w**3
+                    explanation = f"Circular hole in finite plate (d/W = {d_over_w:.3f})"
+                else:
+                    Kt = 3.0
+                    explanation = "Circular hole in infinite plate"
+                    
+            elif request.geometry_type == "notch":
+                # U-notch approximation
+                if request.notch_radius > 0:
+                    Kt = 1 + np.sqrt(request.hole_diameter / request.notch_radius) if request.hole_diameter > 0 else 2.0
+                    explanation = f"U-notch with root radius {request.notch_radius}mm"
+                else:
+                    Kt = 3.0
+                    explanation = "Sharp notch (conservative estimate)"
+                    
+            elif request.geometry_type == "fillet":
+                # Fillet (typically Kt = 1.5-2.5)
+                Kt = 1.8
+                explanation = "Typical fillet stress concentration"
+            
+            max_stress = request.nominal_stress * Kt
+            
+            return {
+                "stress_concentration_factor": Kt,
+                "nominal_stress_mpa": request.nominal_stress,
+                "max_stress_mpa": max_stress,
+                "geometry_type": request.geometry_type,
+                "explanation": explanation
+            }
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    
+    @router.post("/buckling/calculate")
+    async def calculate_buckling(params: Dict[str, Any]):
+        """Calculate Euler buckling load"""
+        try:
+            E = params.get("elastic_modulus", 210e9)  # Pa
+            I = params.get("moment_of_inertia", 1e-6)  # m^4
+            L = params.get("length", 1.0)  # m
+            end_condition = params.get("end_condition", "pinned-pinned")
+            
+            # Effective length factor
+            K_map = {
+                "pinned-pinned": 1.0,
+                "fixed-free": 2.0,
+                "fixed-fixed": 0.5,
+                "fixed-pinned": 0.7
+            }
+            K = K_map.get(end_condition, 1.0)
+            
+            # Euler critical load
+            P_cr = np.pi**2 * E * I / (K * L)**2
+            
+            return {
+                "critical_load_n": P_cr,
+                "critical_load_kn": P_cr / 1000,
+                "effective_length_factor": K,
+                "end_condition": end_condition,
+                "slenderness_ratio": L / np.sqrt(I / (params.get("area", 1e-4)))
+            }
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    
+    @router.get("/materials")
+    async def get_materials():
+        """Get available materials with properties"""
+        return {
+            "materials": {
+                "steel": {
+                    "elastic_modulus_gpa": 210,
+                    "poisson_ratio": 0.3,
+                    "yield_strength_mpa": 250,
+                    "density_kg_m3": 7850
+                },
+                "aluminum": {
+                    "elastic_modulus_gpa": 70,
+                    "poisson_ratio": 0.33,
+                    "yield_strength_mpa": 270,
+                    "density_kg_m3": 2700
+                },
+                "titanium": {
+                    "elastic_modulus_gpa": 116,
+                    "poisson_ratio": 0.32,
+                    "yield_strength_mpa": 880,
+                    "density_kg_m3": 4500
+                }
+            }
+        }
+    
+    @router.post("/run")
+    async def run_structural_agent(params: Dict[str, Any]):
+        """Run full structural agent workflow"""
+        try:
+            agent = ProductionStructuralAgent()
+            
+            # Parse geometry
+            geometry = Geometry(primitives=params.get("geometry", {}).get("primitives", []))
+            
+            # Parse material
+            material = Material(**params.get("material", {}))
+            
+            # Parse loads
+            loads = []
+            for load in params.get("loads", []):
+                loads.append(LoadCase(
+                    name=load.get("name", "load"),
+                    forces=np.array(load.get("forces", [0, 0, 0])),
+                    moments=np.array(load.get("moments", [0, 0, 0]))
+                ))
+            
+            fidelity = FidelityLevel(params.get("fidelity", "auto"))
+            
+            result = await agent.analyze(geometry, material, loads, [], fidelity)
+            return result.to_dict()
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+

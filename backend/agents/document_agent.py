@@ -1,7 +1,11 @@
 from typing import Dict, Any, List, Optional
 import logging
-from llm.provider import LLMProvider
-from agent_registry import registry
+try:
+    from backend.llm.provider import LLMProvider
+    from backend.agent_registry import registry
+except ImportError:
+    from llm.provider import LLMProvider
+    from agent_registry import registry
 import asyncio
 logger = logging.getLogger(__name__)
 
@@ -158,7 +162,7 @@ class DocumentAgent:
             logger.warning(f"CostAgent failed: {e}")
             errors["cost"] = str(e)
         
-        # 4. Design Quality & Risk Assessment (via DesignerAgent / UnifiedDesignAgent)
+        # 4. Design Quality & Risk Assessment (via DesignerAgent)
         try:
             design_agent = registry.get_agent("DesignerAgent")
             if not design_agent:
@@ -430,3 +434,85 @@ Design and development of {intent} for {env.get('regime', 'STANDARD')} environme
         if not breakdown:
             return "- No breakdown available"
         return "\n".join(f"- **{k}:** ${v:,.2f}" if isinstance(v, (int, float)) else f"- **{k}:** {v}" for k, v in breakdown.items())
+
+
+
+# =============================================================================
+# FASTAPI ENDPOINTS
+# =============================================================================
+
+try:
+    from fastapi import APIRouter, HTTPException
+    from pydantic import BaseModel, Field
+    HAS_FASTAPI = True
+except ImportError:
+    HAS_FASTAPI = False
+    router = None
+
+if HAS_FASTAPI:
+    router = APIRouter(prefix="/document", tags=["documentation"])
+    
+    class DesignPlanRequest(BaseModel):
+        intent: str = Field(..., description="Design intent description")
+        environment: Dict[str, Any] = Field(default_factory=dict, description="Environment parameters")
+        parameters: Dict[str, Any] = Field(default_factory=dict, description="Design parameters")
+        
+    class PDFGenerateRequest(BaseModel):
+        content: str = Field(..., description="Markdown content")
+        output_path: str = Field(..., description="Output PDF file path")
+        
+    @router.post("/plan/generate")
+    async def generate_design_plan(request: DesignPlanRequest):
+        """Generate comprehensive design plan"""
+        try:
+            agent = DocumentAgent()
+            result = await agent.generate_design_plan(
+                intent=request.intent,
+                env=request.environment,
+                params=request.parameters
+            )
+            return result
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    
+    @router.post("/pdf/generate")
+    async def generate_pdf(request: PDFGenerateRequest):
+        """Generate PDF from markdown content"""
+        try:
+            agent = DocumentAgent()
+            result = await agent.generate_pdf(
+                markdown_content=request.content,
+                output_path=request.output_path
+            )
+            return result
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    
+    @router.post("/gather")
+    async def gather_agent_data(params: Dict[str, Any]):
+        """Gather data from specialized agents"""
+        try:
+            agent = DocumentAgent()
+            agent_data, errors = await agent._gather_agent_data(
+                intent=params.get("intent", ""),
+                env=params.get("environment", {}),
+                design_params=params.get("parameters", {})
+            )
+            return {
+                "status": "success",
+                "data": agent_data,
+                "errors": errors
+            }
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    
+    @router.post("/run")
+    async def run_document_agent(params: Dict[str, Any]):
+        """Run full document agent workflow"""
+        try:
+            agent = DocumentAgent()
+            result = await agent.run(params)
+            return result
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+

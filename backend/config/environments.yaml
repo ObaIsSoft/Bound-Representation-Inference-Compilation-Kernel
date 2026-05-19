@@ -1,0 +1,209 @@
+# Environment Definitions
+# Physical parameters for celestial bodies and Earth environments
+
+# Standard Earth
+earth:
+  sea_level:
+    type: "GROUND"
+    gravity: 9.80665  # m/s²
+    fluid_density: 1.225  # kg/m³ (air)
+    pressure: 101325.0  # Pa
+    temperature: 15.0  # °C
+    viscosity: 1.81e-5  # Pa·s
+    magnetic_field: 50.0  # microTesla
+    solar_flux: 1361.0  # W/m²
+    description: "Standard Earth sea level conditions"
+  
+  aero:
+    type: "AERO"
+    gravity: 9.80665
+    fluid_density: 1.225
+    pressure: 101325.0
+    temperature: 15.0
+    viscosity: 1.81e-5
+    magnetic_field: 50.0
+    solar_flux: 1361.0
+    description: "Earth aerial environment"
+  
+  naval:
+    type: "NAVAL"
+    gravity: 9.80665
+    fluid_density: 1025.0  # kg/m³ (seawater)
+    pressure: 101325.0
+    temperature: 15.0
+    viscosity: 1.0e-3  # Pa·s
+    magnetic_field: 50.0
+    solar_flux: 1361.0
+    description: "Earth ocean surface"
+  
+  undersea:
+    type: "UNDERSEA"
+    gravity: 9.80665
+    fluid_density: 1025.0
+    pressure: 101325.0  # Base pressure (adds 1 atm per 10m depth)
+    temperature: 4.0  # Deep ocean temperature
+    viscosity: 1.0e-3
+    magnetic_field: 50.0
+    solar_flux: 0.0  # No sunlight at depth
+    description: "Deep ocean environment"
+  
+  industrial:
+    type: "INDUSTRIAL"
+    gravity: 9.80665
+    fluid_density: 1.225
+    pressure: 101325.0
+    temperature: 25.0  # Indoor typical
+    viscosity: 1.81e-5
+    magnetic_field: 50.0
+    solar_flux: 0.0  # Indoor
+    description: "Indoor industrial environment"
+  
+  bio:
+    type: "BIO"
+    gravity: 9.80665
+    fluid_density: 1060.0  # kg/m³ (blood approx)
+    pressure: 101325.0
+    temperature: 37.0  # Body temperature
+    viscosity: 3.0e-3  # Blood viscosity
+    magnetic_field: 50.0
+    solar_flux: 0.0
+    description: "Biological/medical environment"
+  
+  volcano:
+    type: "VOLCANO"
+    gravity: 9.80665
+    fluid_density: 0.8  # Hot volcanic gas
+    pressure: 101325.0
+    temperature: 800.0  # Extreme heat
+    viscosity: 3.0e-5
+    magnetic_field: 50.0
+    solar_flux: 1361.0
+    description: "Volcanic environment with toxic gases and extreme heat"
+  
+  hurricane:
+    type: "HURRICANE"
+    gravity: 9.80665
+    fluid_density: 1.2
+    pressure: 95000.0  # Low pressure
+    temperature: 28.0
+    viscosity: 1.81e-5
+    magnetic_field: 50.0
+    solar_flux: 1361.0
+    description: "Severe storm environment with high winds"
+
+# Solar System Bodies
+moon:
+  surface:
+    type: "MOON"
+    gravity: 1.62  # m/s²
+    fluid_density: 0.0  # Vacuum
+    pressure: 0.0  # Pa
+    temperature: -23.0  # °C (average)
+    viscosity: 0.0
+    magnetic_field: 0.0  # microTesla
+    solar_flux: 1361.0  # W/m² (same as Earth)
+    description: "Lunar surface. Vacuum, dust hazards, high solar flux (day)."
+
+mars:
+  surface:
+    type: "MARS"
+    gravity: 3.71  # m/s²
+    fluid_density: 0.020  # kg/m³ (thin CO2 atmosphere)
+    pressure: 600.0  # Pa
+    temperature: -63.0  # °C
+    viscosity: 1.4e-5  # Pa·s
+    magnetic_field: 0.0  # No global field
+    solar_flux: 589.0  # W/m² (~43% of Earth)
+    description: "Martian surface. Thin CO2 atmosphere, dust storms, cold."
+
+venus:
+  surface:
+    type: "VENUS"
+    gravity: 8.87  # m/s²
+    fluid_density: 65.0  # kg/m³ (dense CO2)
+    pressure: 9200000.0  # Pa (92 bar)
+    temperature: 462.0  # °C
+    viscosity: 3.0e-5  # Pa·s
+    magnetic_field: 0.0  # Weak induced field
+    solar_flux: 2600.0  # W/m² (high albedo)
+    description: "Venusian surface. Crushing pressure, lead-melting heat, acidic."
+
+titan:
+  surface:
+    type: "TITAN"
+    gravity: 1.35  # m/s²
+    fluid_density: 5.3  # kg/m³ (thick N2/CH4)
+    pressure: 146700.0  # Pa (1.45 atm)
+    temperature: -179.0  # °C
+    viscosity: 6.0e-6  # Pa·s
+    magnetic_field: 0.0
+    solar_flux: 15.0  # W/m² (~1% Earth)
+    description: "Titan surface. Thick nitrogen/methane atmosphere, low gravity, hydrocarbon lakes."
+
+europa:
+  surface:
+    type: "EUROPA"
+    gravity: 1.31  # m/s²
+    fluid_density: 0.0  # Trace atmosphere
+    pressure: 0.0  # Pa
+    temperature: -160.0  # °C
+    viscosity: 0.0
+    magnetic_field: 400.0  # microTesla (induced by Jupiter)
+    solar_flux: 50.0  # W/m²
+    description: "Europa surface. Ice shell, high radiation environment from Jupiter."
+
+jupiter_orbit:
+  type: "JUPITER_ORBIT"
+  gravity: 24.79  # m/s² (surface gravity)
+  fluid_density: 0.0
+  pressure: 0.0
+  temperature: -145.0  # °C
+  viscosity: 0.0
+  magnetic_field: 420000.0  # microTesla (huge field ~4.2 Gauss)
+  solar_flux: 50.0  # W/m²
+  description: "Jupiter Orbit. Intense radiation belts, powerful magnetic field."
+
+saturn_orbit:
+  type: "SATURN_ORBIT"
+  gravity: 10.44  # m/s²
+  fluid_density: 0.0
+  pressure: 0.0
+  temperature: -178.0  # °C
+  viscosity: 0.0
+  magnetic_field: 21000.0  # microTesla
+  solar_flux: 15.0  # W/m²
+  description: "Saturn Orbit. Ring system, lower radiation than Jupiter."
+
+asteroid:
+  type: "ASTEROID"
+  gravity: 0.0  # Microgravity
+  fluid_density: 0.0
+  pressure: 0.0
+  temperature: -100.0  # °C (varies greatly)
+  viscosity: 0.0
+  magnetic_field: 0.0
+  solar_flux: 1361.0  # W/m² (1 AU)
+  description: "Generic space/deep space environment. Microgravity, vacuum."
+
+space:
+  type: "SPACE"
+  gravity: 0.0
+  fluid_density: 0.0
+  pressure: 0.0
+  temperature: -270.0  # °C (CMB)
+  viscosity: 0.0
+  magnetic_field: 0.0
+  solar_flux: 1361.0  # At 1 AU
+  description: "Deep space environment."
+
+# Special Environment Types
+static:
+  type: "STATIC"
+  gravity: 0.0
+  fluid_density: 0.0
+  pressure: 0.0
+  temperature: 20.0
+  viscosity: 0.0
+  magnetic_field: 0.0
+  solar_flux: 0.0
+  description: "Static test environment with no external physics."

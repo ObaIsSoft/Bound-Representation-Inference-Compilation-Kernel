@@ -16,7 +16,7 @@ echo "Test 1: New Nodes (22 functions)"
 echo "-----------------------------------"
 python3 << 'EOF'
 try:
-    from new_nodes import (
+    from nodes import (
         geometry_estimator_node, cost_quick_estimate_node,
         document_plan_node, review_plan_node,
         mass_properties_node, structural_node, fluid_node, geometry_physics_validator_node,

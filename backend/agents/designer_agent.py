@@ -8,6 +8,12 @@ from dataclasses import dataclass, field
 from typing import Dict, Any, List, Optional, Tuple
 from enum import Enum
 
+try:
+    from backend.config import get_functional_agent_config
+    HAS_CONFIG = True
+except ImportError:
+    HAS_CONFIG = False
+
 logger = logging.getLogger(__name__)
 
 # --- GENOMIC FOUNDATION ---
@@ -227,15 +233,36 @@ class DesignExplorer3D:
     def __init__(self, base: DesignGenome3D):
         self.base = base
         self.population = []
+        
+        # Load exploration parameters from config
+        if HAS_CONFIG:
+            try:
+                explore_config = get_functional_agent_config('designer_agent', 'exploration')
+                self.variation_factor = explore_config.get('variation_factor', 0.6)
+                self.base_influence = explore_config.get('base_influence', 0.4)
+            except:
+                self.variation_factor = 0.6
+                self.base_influence = 0.4
+        else:
+            self.variation_factor = 0.6
+            self.base_influence = 0.4
 
-    def explore(self, count: int = 16) -> List[DesignGenome3D]:
+    def explore(self, count: int = None) -> List[DesignGenome3D]:
+        # Get default count from config
+        if count is None:
+            if HAS_CONFIG:
+                count = get_functional_agent_config('designer_agent', 'exploration.default_count')
+            else:
+                count = 16
+        
         self.population = []
         for i in range(count):
             g = copy.deepcopy(self.base)
             g.id = f"{self.base.id}_var_{i}"
             for dim in StyleDimension:
-                # LHS-ish shuffle
-                val = (self.base.style_genes.get(dim, StyleGene(dim, 0.5)).value * 0.4) + (random.random() * 0.6)
+                # LHS-ish shuffle with configurable factors
+                base_val = self.base.style_genes.get(dim, StyleGene(dim, 0.5)).value
+                val = (base_val * self.base_influence) + (random.random() * self.variation_factor)
                 g.style_genes[dim] = StyleGene(dim, np.clip(val, 0, 1))
             self.population.append(g)
         return self.population
@@ -247,8 +274,24 @@ class DesignExplorer3D:
                 return g
         return None
 
-    def evolve(self, parent_ids: List[str], count: int = 16) -> List[DesignGenome3D]:
+    def evolve(self, parent_ids: List[str], count: int = None) -> List[DesignGenome3D]:
         """Breeding: Create new variants based on selected parents (GA style)"""
+        # Get default count from config
+        if count is None:
+            if HAS_CONFIG:
+                count = get_functional_agent_config('designer_agent', 'exploration.default_count')
+            else:
+                count = 16
+        
+        # Get mutation range from config
+        if HAS_CONFIG:
+            try:
+                mutation_range = get_functional_agent_config('designer_agent', 'evolution.mutation_range')
+            except:
+                mutation_range = 0.1
+        else:
+            mutation_range = 0.1
+        
         # Find the parent genomes
         parents = [self.user_select(pid) for pid in parent_ids]
         parents = [p for p in parents if p]
@@ -271,8 +314,8 @@ class DesignExplorer3D:
             for dim in StyleDimension:
                 # Randomly inherit from p1 or p2
                 base_val = (p1.style_genes.get(dim).value + p2.style_genes.get(dim).value) / 2
-                # Add mutation noise (10%)
-                mutation = random.uniform(-0.1, 0.1)
+                # Add mutation noise (configurable)
+                mutation = random.uniform(-mutation_range, mutation_range)
                 child.style_genes[dim] = StyleGene(dim, np.clip(base_val + mutation, 0, 1))
                 
             self.population.append(child)
@@ -283,19 +326,28 @@ class DesignExplorer3D:
 class QualityRefiner:
     def refine(self, geometry_tree: List[Dict], target: str = "high") -> Dict[str, Any]:
         """Integrated quality enhancement logic"""
-        levels = {"low": 1, "medium": 2, "high": 3, "ultra": 4}
+        # Load quality levels from config
+        if HAS_CONFIG:
+            try:
+                levels = get_functional_agent_config('designer_agent', 'quality_refiner.levels')
+            except:
+                levels = {"low": 1, "medium": 2, "high": 3, "ultra": 4}
+        else:
+            levels = {"low": 1, "medium": 2, "high": 3, "ultra": 4}
+        
         subdivisions = levels.get(target, 2)
+        max_level = max(levels.values()) if levels else 4
         
         return {
             "refinement_level": subdivisions,
             "smoothing": True if subdivisions > 1 else False,
-            "quality_score": subdivisions / 4.0
+            "quality_score": subdivisions / max_level
         }
 
-# --- UNIFIED AGENT ---
+# --- DESIGNER AGENT ---
 
-class UnifiedDesignAgent:
-    """The Single Point of Contact for Design in BRICK OS"""
+class DesignerAgent:
+    """Design synthesis, exploration, and evolution for BRICK OS"""
     
     def __init__(self):
         self.interpreter = PromptInterpreter()

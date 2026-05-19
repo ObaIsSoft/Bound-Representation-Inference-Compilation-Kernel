@@ -97,3 +97,64 @@ class DoctorAgent:
             "status_map": status_map,
             "logs": logs
         }
+
+
+# =============================================================================
+# FASTAPI ENDPOINTS
+# =============================================================================
+
+try:
+    from fastapi import APIRouter, HTTPException
+    from pydantic import BaseModel, Field
+    HAS_FASTAPI = True
+except ImportError:
+    HAS_FASTAPI = False
+    router = None
+
+if HAS_FASTAPI:
+    router = APIRouter(prefix="/health", tags=["system_health"])
+    
+    @router.get("/status")
+    async def health_status():
+        """Get system health status"""
+        try:
+            agent = DoctorAgent()
+            # Check common agents
+            agents = [
+                "GeometryAgent", "MaterialAgent", "StructuralAgent",
+                "ThermalAgent", "ManufacturingAgent", "CostAgent"
+            ]
+            result = agent.run({"agent_registry": agents})
+            return result
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+    
+    @router.post("/check")
+    async def check_agents(agents: list):
+        """Check specific agents"""
+        try:
+            agent = DoctorAgent()
+            result = agent.run({"agent_registry": agents})
+            return result
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    
+    @router.get("/metrics")
+    async def system_metrics():
+        """Get system metrics"""
+        try:
+            import psutil
+            import os
+            
+            process = psutil.Process(os.getpid())
+            
+            return {
+                "cpu_percent": psutil.cpu_percent(interval=None),
+                "memory_mb": process.memory_info().rss / (1024 * 1024),
+                "memory_percent": process.memory_percent(),
+                "status": "healthy"
+            }
+        except ImportError:
+            return {"status": "psutil_not_available"}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))

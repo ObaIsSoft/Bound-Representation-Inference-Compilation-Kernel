@@ -439,7 +439,8 @@ class ConversationalAgent:
         """
         text = params.get("input_text", "")
         context_history = params.get("context", [])
-        
+        ai_model = params.get("ai_model")
+
         if not session_id:
             import hashlib
             session_id = hashlib.md5(f"{text}:{time.time()}".encode()).hexdigest()[:16]
@@ -486,10 +487,20 @@ class ConversationalAgent:
         analysis_results.extend(await asyncio.gather(*analysis_tasks))
         
         # STEP 3: Synthesize with LLM (ALWAYS)
+        # Use per-request provider if ai_model was specified
+        request_provider = None
+        if ai_model:
+            try:
+                from llm.factory import get_llm_provider
+                request_provider = get_llm_provider(preferred=ai_model)
+            except Exception:
+                pass
+
         final_response = await self._synthesize(
             results=analysis_results,
             user_input=text,
-            context=node_ctx
+            context=node_ctx,
+            provider=request_provider
         )
         
         # Build unified entities
@@ -513,7 +524,8 @@ class ConversationalAgent:
         self,
         results: List[NodeResult],
         user_input: str,
-        context: NodeContext
+        context: NodeContext,
+        provider=None
     ) -> str:
         """
         ALWAYS synthesize with LLM. Never return raw debug output.
@@ -544,7 +556,7 @@ Response:"""
 
         try:
             response = await asyncio.wait_for(
-                self._call_llm(prompt, self.system_prompt),
+                self._call_llm(prompt, self.system_prompt, provider=provider),
                 timeout=15.0
             )
             return response.strip()
@@ -608,14 +620,15 @@ Response:"""
         """Persist facts."""
         await self.session_store.set(f"rlm:facts:{session_id}", ctx.facts)
     
-    async def _call_llm(self, prompt: str, system_prompt: str) -> str:
-        """Async LLM call."""
-        if hasattr(self.provider, 'generate_async'):
-            return await self.provider.generate_async(prompt, system_prompt)
+    async def _call_llm(self, prompt: str, system_prompt: str, provider=None) -> str:
+        """Async LLM call. Uses per-call provider if supplied, else falls back to self.provider."""
+        p = provider or self.provider
+        if hasattr(p, 'generate_async'):
+            return await p.generate_async(prompt, system_prompt)
         else:
             loop = asyncio.get_event_loop()
             return await loop.run_in_executor(
-                None, lambda: self.provider.generate(prompt, system_prompt)
+                None, lambda: p.generate(prompt, system_prompt)
             )
 
 

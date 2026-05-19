@@ -1,6 +1,12 @@
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import logging
 import re
+
+try:
+    from backend.config import get_functional_agent_config, mitigation_config
+    HAS_CONFIG = True
+except ImportError:
+    HAS_CONFIG = False
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +71,12 @@ class MitigationAgent:
     def _calculate_stress_fix(self, error_msg: str, physics_data: Dict) -> Dict:
         """Calculate required area increase for stress failure."""
         
+        # Get target safety factor from config
+        if HAS_CONFIG:
+            target_safety_factor = mitigation_config("target_safety_factor")
+        else:
+            target_safety_factor = 1.5
+        
         # Get data from physics payload if available
         max_stress = physics_data.get("max_stress_mpa")
         yield_str = physics_data.get("yield_strength_mpa") # fixed typo
@@ -80,27 +92,35 @@ class MitigationAgent:
         
         if max_stress and yield_str and max_stress > yield_str:
             ratio = max_stress / yield_str
-            target_safety_factor = 1.5
             required_increase = (ratio * target_safety_factor) - 1.0
             
             return {
                 "type": "geometry",
                 "description": f"Increase load-bearing cross-section area by {required_increase:.0%}",
                 "action": f"Scale thickness or width by {1.0 + required_increase:.2f}x",
-                "technical_basis": f"Current Stress ({max_stress}MPa) > Yield ({yield_str}MPa). Target FoS: 1.5",
+                "technical_basis": f"Current Stress ({max_stress}MPa) > Yield ({yield_str}MPa). Target FoS: {target_safety_factor}",
                 "priority": "critical"
             }
         return None
 
     def _calculate_buckling_fix(self, physics_data: Dict) -> Dict:
         """Calculate inertia increase for buckling."""
+        # Get radius increase recommendation from config
+        if HAS_CONFIG:
+            radius_increase = mitigation_config("buckling_radius_increase")
+        else:
+            radius_increase = 0.15
+        
+        min_increase_pct = int(radius_increase * 100)
+        max_increase_pct = int((radius_increase + 0.05) * 100)
+        
         # Buckling load P_cr is proportional to Area^2 (for solid circle) approximately
         # or Radius^4. 
         # Increase radius is most effective.
         return {
             "type": "geometry",
             "description": "Increase cross-section radius to improve Moment of Inertia",
-            "action": "Increase radius by 15-20%",
+            "action": f"Increase radius by {min_increase_pct}-{max_increase_pct}%",
             "technical_basis": "Buckling is invalid; Moment of Inertia (I) scales with r^4",
             "priority": "critical"
         }
@@ -125,9 +145,13 @@ class MitigationAgent:
         try:
             prob = self.surrogate.predict_risk(stress_ratio, temp_c, cycles, corrosion)
             
-            RISK_THRESHOLD = 0.05 # 5% probability
+            # Get risk threshold from config
+            if HAS_CONFIG:
+                risk_threshold = mitigation_config("risk_threshold")
+            else:
+                risk_threshold = 0.05  # 5% probability
             
-            if prob > RISK_THRESHOLD:
+            if prob > risk_threshold:
                 fixes.append({
                     "type": "reliability",
                     "description": f"High Failure Probability ({prob:.1%}) detected by Neural Net",
@@ -161,7 +185,12 @@ class MitigationAgent:
             return {"verified": False, "error": "VMK not available"}
 
         # 1. Replay Manufacturing (Symbolic)
-        kernel = SymbolicMachiningKernel(stock_dims=[100, 100, 100])
+        # Get stock dimensions from config
+        if HAS_CONFIG:
+            stock_dims = mitigation_config("verify_stock_dims")
+        else:
+            stock_dims = [100, 100, 100]
+        kernel = SymbolicMachiningKernel(stock_dims=stock_dims)
         
         # Register default tools if needed or assume plan provides them
         # For simplicity, we assume a standard toolset for verification
@@ -187,11 +216,13 @@ class MitigationAgent:
             coords = np.array(pt["coord"])
             sdf = kernel.get_sdf(coords)
             
-            # If expected_surface=True, SDF should be 0.0 (+/- tolerance)
-            # 1nm = 1e-6 mm
-            TOLERANCE_MM = 1e-6 
+            # Get VMK tolerance from config
+            if HAS_CONFIG:
+                tolerance_mm = mitigation_config("vmk_tolerance_mm")
+            else:
+                tolerance_mm = 1e-6  # 1 nanometer in mm
             
-            if abs(sdf) > TOLERANCE_MM:
+            if abs(sdf) > tolerance_mm:
                 failures.append({
                     "point": pt["coord"],
                     "deviation_mm": float(sdf),

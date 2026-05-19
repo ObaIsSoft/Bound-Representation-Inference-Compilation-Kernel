@@ -16,6 +16,12 @@ from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
 import logging
 
+try:
+    from backend.config import get_functional_agent_config
+    HAS_CONFIG = True
+except ImportError:
+    HAS_CONFIG = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -187,9 +193,16 @@ class FeedbackAgent:
         if not geometry:
             return {"summary": "No geometry to analyze"}
         
-        # Determine process type from state or default
-        process_type = state.get("process_type", "cnc_milling")
-        material = state.get("material", "aluminum_6061")
+        # Determine process type from state or default (from config)
+        if HAS_CONFIG:
+            default_process = get_functional_agent_config('feedback_agent', 'default_process_type')
+            default_material = get_functional_agent_config('feedback_agent', 'default_material')
+        else:
+            default_process = "cnc_milling"
+            default_material = "aluminum_6061"
+        
+        process_type = state.get("process_type", default_process)
+        material = state.get("material", default_material)
         
         result = self._dfm.run({
             "geometry_tree": geometry,

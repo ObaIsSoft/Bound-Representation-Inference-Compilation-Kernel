@@ -2,7 +2,6 @@ from typing import Dict, Any, List, Type
 import logging
 from agents.environment_agent import EnvironmentAgent
 from agents.von_neumann_agent import VonNeumannAgent
-from agents.construction_agent import ConstructionAgent
 
 logger = logging.getLogger(__name__)
 
@@ -63,8 +62,7 @@ class SwarmManager:
                 agent = VonNeumannAgent(initial_energy=200.0)
                 self.agents.append(agent)
             elif ag_type_name == "ConstructionAgent":
-                agent = ConstructionAgent(initial_energy=250.0)
-                self.agents.append(agent)
+                logger.warning("ConstructionAgent not available yet — skipping spawn")
                 
         logger.info(f"Swarm Initialized: {len(self.agents)} Agents, {len(self.task_queue)} Tasks")
 
@@ -134,7 +132,7 @@ class SwarmManager:
                 if child_config["type"] == "VonNeumannAgent":
                     baby = VonNeumannAgent(genetics=c_gen, initial_energy=c_eng)
                 elif child_config["type"] == "ConstructionAgent":
-                    baby = ConstructionAgent(genetics=c_gen, initial_energy=c_eng)
+                    logger.warning("ConstructionAgent replication skipped — not available yet")
                 
                 if baby:
                     baby.pos = list(res["pos"])

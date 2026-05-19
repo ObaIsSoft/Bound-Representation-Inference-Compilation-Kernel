@@ -110,7 +110,7 @@ class CostEstimate:
     timestamp: str = field(default_factory=lambda: str(np.datetime64('now')))
 
 
-class ProductionCostAgent:
+class CostAgent:
     """
     Production-grade cost estimation agent.
     
@@ -144,7 +144,7 @@ class ProductionCostAgent:
         # Load external config
         self._load_cycle_time_config()
         
-        logger.info("ProductionCostAgent initialized (services not yet connected)")
+        logger.info("CostAgent initialized (services not yet connected)")
     
     def _load_cycle_time_config(self):
         """Load cycle time estimation config from file."""
@@ -180,7 +180,7 @@ class ProductionCostAgent:
             await self.supabase.initialize()
             
             self._initialized = True
-            logger.info("ProductionCostAgent services initialized")
+            logger.info("CostAgent services initialized")
         except Exception as e:
             logger.error(f"Failed to initialize services: {e}")
             raise RuntimeError(f"CostAgent initialization failed: {e}")
@@ -436,7 +436,7 @@ async def quick_cost_estimate(
     Returns:
         Dictionary with cost estimate
     """
-    agent = ProductionCostAgent(use_ml=False)
+    agent = CostAgent(use_ml=False)
     
     try:
         estimate = await agent.estimate_cost_abc(

@@ -2,7 +2,7 @@
 Structures Domain - Beams, Trusses, Shells, FEA
 
 Handles structural mechanics calculations.
-Integrates with ProductionStructuralAgent for proper FEA.
+Integrates with StructuralAgent for FEA.
 """
 
 import logging
@@ -17,7 +17,7 @@ class StructuresDomain:
     Structural mechanics calculations for beams, trusses, shells.
     
     Provides both analytical calculations and FEA integration through
-    ProductionStructuralAgent.
+    StructuralAgent.
     """
     
     def __init__(self, providers: Dict):
@@ -31,14 +31,14 @@ class StructuresDomain:
         self._structural_agent = None
     
     def _get_structural_agent(self):
-        """Lazy load ProductionStructuralAgent"""
+        """Lazy load StructuralAgent"""
         if self._structural_agent is None:
             try:
-                from backend.agents.structural_agent import ProductionStructuralAgent
-                self._structural_agent = ProductionStructuralAgent()
-                logger.info("ProductionStructuralAgent loaded for FEA")
+                from backend.agents.structural_agent import StructuralAgent
+                self._structural_agent = StructuralAgent()
+                logger.info("StructuralAgent loaded for FEA")
             except Exception as e:
-                logger.warning(f"Could not load ProductionStructuralAgent: {e}")
+                logger.warning(f"Could not load StructuralAgent: {e}")
                 self._structural_agent = False
         return self._structural_agent if self._structural_agent is not False else None
     
@@ -69,7 +69,7 @@ class StructuresDomain:
             # Use analytical beam theory
             return self._analyze_analytical(geometry_model, material, loads)
         
-        # Use ProductionStructuralAgent for FEA
+        # Use StructuralAgent for FEA
         try:
             from backend.agents.structural_agent import FidelityLevel
             

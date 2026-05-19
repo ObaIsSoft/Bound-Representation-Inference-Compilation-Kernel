@@ -1,6 +1,5 @@
 """
-Swarm and Construction Agent Configuration.
-Externalizes constants for ConstructionAgent, SwarmManager, and related entities.
+Swarm configuration — externalizes constants for SwarmManager.
 """
 
 # Construction Agent Defaults

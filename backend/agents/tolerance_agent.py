@@ -174,7 +174,7 @@ class ToleranceAnalysis:
         return bool(rss_passes and mc_passes)
 
 
-class ProductionToleranceAgent:
+class ToleranceAgent:
     """
     Production-grade tolerance analysis agent.
     
@@ -201,7 +201,7 @@ class ProductionToleranceAgent:
         # Load external standards
         self._load_standards()
         
-        logger.info("ProductionToleranceAgent initialized")
+        logger.info("ToleranceAgent initialized")
     
     def _load_standards(self):
         """Load tolerance standards from config."""
@@ -471,7 +471,7 @@ def quick_rss_analysis(
     target_mm: Tuple[float, float]
 ) -> Dict[str, Any]:
     """Quick RSS tolerance stack analysis."""
-    agent = ProductionToleranceAgent()
+    agent = ToleranceAgent()
     
     specs = [
         ToleranceSpec(name, nominal, tolerance)
@@ -508,7 +508,7 @@ def analyze_feature_position(
     mmc_bonus: float = 0.0
 ) -> Dict[str, Any]:
     """Analyze true position per ASME Y14.5."""
-    agent = ProductionToleranceAgent()
+    agent = ToleranceAgent()
     
     actual_deviation = np.sqrt(x_deviation**2 + y_deviation**2)
     total_tolerance = position_tolerance + mmc_bonus

@@ -51,7 +51,6 @@ from backend.nodes import (
     swarm_node,
     doctor_node,
     pvc_node,
-    construction_node,
     # Phase 8: Final Documentation
     final_document_node,
     final_review_node
@@ -84,7 +83,6 @@ import logging
 logger = logging.getLogger(__name__)
 
 # Duplicate import of get_llm_provider removed (A8)
-# MockSurrogateAgent removed — use registry SurrogateCritic (A9)
 
 # Initialize Critics (Global Singleton-ish for now)
 surrogate_critic = SurrogateCritic(window_size=100)
@@ -470,7 +468,7 @@ async def surrogate_physics_node(state: AgentState) -> Dict[str, Any]:
     surrogate = state.get("surrogate_physics")
     # If not in state (lazily init?) or use registry
     if not surrogate:
-        surrogate = registry.get_agent("SurrogateAgent") or registry.get_agent("MockSurrogateAgent") # Fallback
+        surrogate = registry.get_agent("SurrogateAgent")
         
     # Run Prediction
     try:
@@ -686,15 +684,10 @@ async def physics_node(state: AgentState) -> Dict[str, Any]:
             cps_result = await cps_result
     # --- CONTROL LAYER END ---
 
-    # 4. Physics (Flight Dynamics)
-    from backend.agents.physics_agent_v2 import PhysicsAgent
+    # 4. Physics (Flight Dynamics) — PhysicsAgent via registry
     from backend.agents.explainable_agent import create_xai_wrapper
-    
-    # WRAPPED (XAI) - ENHANCED
-    # We create the wrapper using the factory.
-    phys_agent = create_xai_wrapper(PhysicsAgent(), physics_kernel=None)
-    
-    params["mag_force_n"] = elec_result.get("mag_lift_n", 0.0) # Inject Maglev Force
+    phys_agent = create_xai_wrapper(registry.get_agent("PhysicsAgent"), physics_kernel=None)
+    params["mag_force_n"] = elec_result.get("mag_lift_n", 0.0)
     phys_result = await phys_agent.run(env, geo, params)
     
     # --- IMMUTABLE STATE HANDLING ---
@@ -972,8 +965,6 @@ def swarm_node(state: AgentState) -> Dict[str, Any]:
         
         # Configure based on intent (basic parsing)
         agent_types = ["VonNeumannAgent"]
-        if "BUILD" in intent or "CITY" in intent:
-            agent_types.append("ConstructionAgent")
             
         # Pass Environment and Geometry Targets
         manager.init_simulation(
@@ -1049,8 +1040,6 @@ def build_graph():
     workflow.add_node("swarm_agent", swarm_node)
     workflow.add_node("doctor_agent", doctor_node)
     workflow.add_node("pvc_agent", pvc_node)
-    workflow.add_node("construction_agent", construction_node)
-    
     # ========== PHASE 8: FINAL DOCUMENTATION ==========
     workflow.add_node("final_document", final_document_node)
     workflow.add_node("final_review", final_review_node)
@@ -1162,10 +1151,8 @@ def build_graph():
     workflow.add_edge("devops_agent", "swarm_agent")
     workflow.add_edge("swarm_agent", "doctor_agent")
     workflow.add_edge("doctor_agent", "pvc_agent")
-    workflow.add_edge("pvc_agent", "construction_agent")
-    
     # ========== PHASE 8 FLOW: FINAL DOCUMENTATION ==========
-    workflow.add_edge("construction_agent", "final_document")
+    workflow.add_edge("pvc_agent", "final_document")
     workflow.add_edge("final_document", "final_review")
     workflow.add_edge("final_review", END)
     

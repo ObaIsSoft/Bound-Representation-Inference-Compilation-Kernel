@@ -1,5 +1,5 @@
 """
-ProductionThermalAgent - Conjugate heat transfer analysis
+ThermalAgent - Conjugate heat transfer analysis
 REFACTORED VERSION - Uses configuration system instead of hardcoded values
 
 Standards Compliance:
@@ -543,11 +543,7 @@ class RadiationCalculator:
         return A1 * numerator / denominator
 
 
-# ... continue with the rest of the classes (FiPy3DThermalSolver, ThermalStructuralCoupling, ProductionThermalAgent)
-# These would follow the same pattern of using configuration system instead of hardcoded values
-
-
-class ProductionThermalAgent:
+class ThermalAgent:
     """
     Production-grade thermal analysis agent
     
@@ -559,7 +555,7 @@ class ProductionThermalAgent:
     """
     
     def __init__(self, config: Optional[Dict[str, Any]] = None):
-        self.name = "ProductionThermalAgent"
+        self.name = "ThermalAgent"
         self.config = config or {}
         
         # Load numerical settings from config
@@ -577,7 +573,7 @@ class ProductionThermalAgent:
         # Radiation calculator
         self.radiation = RadiationCalculator()
         
-        logger.info(f"ProductionThermalAgent initialized (CoolProp: {self.has_coolprop})")
+        logger.info(f"ThermalAgent initialized (CoolProp: {self.has_coolprop})")
     
     def _get_default_material_properties(self, material_name: str = "aluminum") -> Dict[str, float]:
         """Get material properties from database"""
@@ -597,6 +593,3 @@ class ProductionThermalAgent:
             'thermal_expansion': 12e-6
         }
 
-
-# Legacy compatibility
-ThermalAgent = ProductionThermalAgent

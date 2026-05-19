@@ -725,37 +725,3 @@ def pvc_node(state: Dict[str, Any]) -> Dict[str, Any]:
         }
 
 
-def construction_node(state: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Generate assembly instructions and construction guide.
-    """
-    geometry = state.get("geometry_tree", [])
-    bom = state.get("bom_analysis", {})
-    sourced = state.get("sourced_components", [])
-    
-    try:
-        construction_agent = registry.get_agent("ConstructionAgent")
-        result = construction_agent.generate_instructions(geometry, bom, sourced)
-        
-        logger.info("Construction instructions generated")
-        
-        return {
-            "assembly_instructions": result.get("instructions", ""),
-            "construction_metadata": {
-                "step_count": result.get("step_count"),
-                "estimated_time_hours": result.get("estimated_time_hours")
-            },
-            "messages": [{
-                "type": "artifact",
-                "title": "Assembly Instructions",
-                "content": result.get("instructions", ""),
-                "id": f"assembly-{state.get('project_id')}"
-            }]
-        }
-    except Exception as e:
-        logger.error(f"construction_node failed: {e}")
-        return {
-            "assembly_instructions": f"Error: {e}",
-            "construction_metadata": {"error": str(e)},
-            "errors": state.get("errors", []) + [f"Construction: {e}"]
-        }

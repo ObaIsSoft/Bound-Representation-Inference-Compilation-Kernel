@@ -728,12 +728,12 @@ async def chat_requirements_endpoint(
     
     # 4. Instantiate Agents
     from backend.agents.geometry_estimator import GeometryEstimator
-    from backend.agents.cost_agent import ProductionCostAgent
+    from backend.agents.cost_agent import CostAgent
     from backend.agents.environment_agent import EnvironmentAgent
     from backend.agents.safety_agent import SafetyAgent
     
     geom_estimator = GeometryEstimator()
-    cost_agent = ProductionCostAgent()
+    cost_agent = CostAgent()
     env_agent = EnvironmentAgent()
     safety_agent = SafetyAgent()
     
@@ -1578,8 +1578,8 @@ async def geometry_estimate_endpoint(req: EstimateRequest):
 @app.post("/api/agents/cost/estimate")
 async def cost_estimate_endpoint(req: EstimateRequest):
     """Quick cost estimation."""
-    from backend.agents.cost_agent import ProductionCostAgent
-    agent = ProductionCostAgent()
+    from backend.agents.cost_agent import CostAgent
+    agent = CostAgent()
     params = {
         "material_name": req.material,
         "complexity": req.complexity,
@@ -1908,8 +1908,8 @@ async def analyze_cost(request: CostAnalysisRequest):
     Uses Market Surrogates for dynamic pricing.
     """
     try:
-        from backend.agents.cost_agent import ProductionCostAgent
-        agent = ProductionCostAgent()
+        from backend.agents.cost_agent import CostAgent
+        agent = CostAgent()
         
         params = {
             "mass_kg": request.mass_kg,
@@ -3218,7 +3218,7 @@ def broadcast_orchestrator_error(project_id: str, error: str, details: Optional[
 # COST ESTIMATION API 
 # =============================================================================
 
-from backend.agents.cost_agent import ProductionCostAgent
+from backend.agents.cost_agent import CostAgent
 from pydantic import BaseModel, Field
 
 class CostEstimateRequest(BaseModel):
@@ -3235,7 +3235,7 @@ class SetMaterialPriceRequest(BaseModel):
     source: str = Field(default="manual", description="Price source (manual, supplier_quote)")
 
 # Global CostAgent instance
-cost_agent = ProductionCostAgent()
+cost_agent = CostAgent()
 
 @app.post("/api/cost/estimate")
 async def estimate_cost(req: CostEstimateRequest):

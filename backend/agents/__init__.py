@@ -1,32 +1,25 @@
 """
-BRICK OS Agent System - Production Agents
-
-All agents follow BRICK OS patterns:
-- NO hardcoded values - database-driven configuration
-- NO estimated fallbacks - fail fast with clear errors  
-- Externalized configuration
-- Async/await patterns
-- Proper error handling
+BRICK OS Agent System
 """
 
 # Manufacturing & Cost
 from .manufacturing_agent import ManufacturingAgent
-from .cost_agent import ProductionCostAgent, quick_cost_estimate
-from .tolerance_agent import ProductionToleranceAgent, quick_rss_analysis
+from .cost_agent import CostAgent, quick_cost_estimate
+from .tolerance_agent import ToleranceAgent, quick_rss_analysis
 
 # Physics & Analysis
-from .structural_agent import ProductionStructuralAgent, analyze_structure
-from .thermal_agent import ProductionThermalAgent
+from .structural_agent import StructuralAgent, analyze_structure
+from .thermal_agent import ThermalAgent
 from .fluid_agent import FluidAgent
 from .shell_agent import ShellAgent
 
 # Materials & Chemistry
-from .material_agent import ProductionMaterialAgent
+from .material_agent import MaterialAgent
 from .chemistry_agent import ChemistryAgent
 
 # Quality & Validation
 from .safety_agent import SafetyAgent
-from .dfm_agent import ProductionDfmAgent
+from .dfm_agent import DfmAgent
 from .validator_agent import ValidatorAgent
 from .verification_agent import VerificationAgent
 from .visual_validator_agent import VisualValidatorAgent
@@ -58,50 +51,50 @@ from .forensic_agent import ForensicAgent
 __all__ = [
     # Manufacturing
     "ManufacturingAgent",
-    "ProductionCostAgent",
-    "ProductionToleranceAgent",
-    
+    "CostAgent",
+    "ToleranceAgent",
+
     # Physics
-    "ProductionStructuralAgent",
-    "ProductionThermalAgent",
+    "StructuralAgent",
+    "ThermalAgent",
     "FluidAgent",
     "ShellAgent",
-    
+
     # Materials
-    "ProductionMaterialAgent",
+    "MaterialAgent",
     "ChemistryAgent",
-    
+
     # Quality
     "SafetyAgent",
-    "ProductionDfmAgent",
+    "DfmAgent",
     "ValidatorAgent",
     "VerificationAgent",
     "VisualValidatorAgent",
-    
+
     # Design
     "LatticeSynthesisAgent",
     "OptimizationAgent",
     "TopologicalAgent",
-    
+
     # Standards
     "StandardsAgent",
     "ComplianceAgent",
-    
+
     # Operations
     "NetworkAgent",
     "UserAgent",
     "TrainingAgent",
-    
+
     # Performance
     "PerformanceAgent",
     "SustainabilityAgent",
     "AssetSourcingAgent",
-    
+
     # Specialized
     "ElectronicsAgent",
     "ControlAgent",
     "ForensicAgent",
-    
+
     # Convenience functions
     "quick_cost_estimate",
     "quick_rss_analysis",

@@ -1,5 +1,5 @@
 """
-ProductionGeometryAgent - Multi-kernel geometry engine
+GeometryAgent - Multi-kernel geometry engine
 
 Standards Compliance:
 - ISO 10303 (STEP AP214/AP242) - Product data exchange
@@ -992,7 +992,7 @@ class GDTEngine:
         }
 
 
-class ProductionGeometryAgent:
+class GeometryAgent:
     """
     Production-grade geometry agent with multi-kernel support
     
@@ -1006,7 +1006,7 @@ class ProductionGeometryAgent:
     
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         self.config = config or {}
-        self.name = "ProductionGeometryAgent"
+        self.name = "GeometryAgent"
         
         # Initialize available kernels
         self.kernels: Dict[str, CADKernelInterface] = {}
@@ -1034,7 +1034,7 @@ class ProductionGeometryAgent:
         # GD&T Engine (ASME Y14.5)
         self.gdt_engine = GDTEngine()
         
-        logger.info(f"ProductionGeometryAgent initialized with {self.kernel_name}")
+        logger.info(f"GeometryAgent initialized with {self.kernel_name}")
         logger.info("Geometric constraint solver (DCM) and GD&T engine ready")
     
     def _init_kernels(self):
@@ -1412,7 +1412,7 @@ class ProductionGeometryAgent:
 # Convenience functions
 def create_box(length: float, width: float, height: float) -> Dict[str, Any]:
     """Create a box geometry"""
-    agent = ProductionGeometryAgent()
+    agent = GeometryAgent()
     agent.create_feature(FeatureType.EXTRUDE, {
         "base": "rectangle",
         "width": width,
@@ -1429,7 +1429,7 @@ def create_box(length: float, width: float, height: float) -> Dict[str, Any]:
 
 def export_step(filepath: str, geometry_data: Dict[str, Any]) -> bool:
     """Export geometry to STEP file"""
-    agent = ProductionGeometryAgent()
+    agent = GeometryAgent()
     
     # Create geometry from data
     if geometry_data.get("type") == "box":
@@ -1491,7 +1491,7 @@ if HAS_FASTAPI:
     async def create_geometry(request: GeometryCreateRequest):
         """Create a new geometric feature"""
         try:
-            agent = ProductionGeometryAgent(kernel=request.kernel)
+            agent = GeometryAgent(kernel=request.kernel)
             feature_type = FeatureType(request.feature_type.lower())
             feature_id = agent.create_feature(feature_type, request.parameters)
             
@@ -1508,7 +1508,7 @@ if HAS_FASTAPI:
     async def boolean_operation(request: BooleanRequest):
         """Perform boolean operation on geometries"""
         try:
-            agent = ProductionGeometryAgent()
+            agent = GeometryAgent()
             result_id = agent.boolean_operation(
                 request.operation,
                 request.target_id,
@@ -1525,7 +1525,7 @@ if HAS_FASTAPI:
     async def export_geometry(request: ExportRequest):
         """Export geometry to file"""
         try:
-            agent = ProductionGeometryAgent()
+            agent = GeometryAgent()
             success = False
             
             if request.format.lower() == "step":
@@ -1562,7 +1562,7 @@ if HAS_FASTAPI:
     async def generate_mesh(request: MeshRequest):
         """Generate mesh from geometry"""
         try:
-            agent = ProductionGeometryAgent()
+            agent = GeometryAgent()
             mesh_data = agent.generate_mesh(
                 max_edge_length=request.max_edge_length,
                 min_angle=request.min_angle
@@ -1580,7 +1580,7 @@ if HAS_FASTAPI:
     async def analyze_geometry(parameters: Dict[str, Any]):
         """Analyze geometry properties"""
         try:
-            agent = ProductionGeometryAgent()
+            agent = GeometryAgent()
             
             # Create geometry if specified
             if "feature_type" in parameters:
@@ -1603,7 +1603,7 @@ if HAS_FASTAPI:
     async def run_geometry_agent(params: Dict[str, Any]):
         """Run full geometry agent workflow"""
         try:
-            agent = ProductionGeometryAgent()
+            agent = GeometryAgent()
             result = await agent.run(params)
             return result
         except Exception as e:

@@ -232,7 +232,7 @@ class DfmReport:
         }
 
 
-class ProductionDfmAgent:
+class DfmAgent:
     """
     Production-grade Design for Manufacturability agent.
     
@@ -272,7 +272,7 @@ class ProductionDfmAgent:
         # Load external configurations
         self._load_configurations()
         
-        logger.info("ProductionDfmAgent initialized")
+        logger.info("DfmAgent initialized")
     
     def _load_configurations(self):
         """Load all configuration files."""
@@ -1110,7 +1110,7 @@ def analyze_mesh_file(
         ]
     
     # Analyze
-    agent = ProductionDfmAgent()
+    agent = DfmAgent()
     report = agent.analyze_mesh(mesh, process_enums, gdt_enums)
     
     return report.to_dict()

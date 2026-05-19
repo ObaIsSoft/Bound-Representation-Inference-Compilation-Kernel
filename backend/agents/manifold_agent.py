@@ -1,5 +1,5 @@
 """
-ProductionManifoldAgent - Watertight Mesh Validation and Repair
+ManifoldAgent - Watertight Mesh Validation and Repair
 
 Standards Compliance:
 - ISO 10303-42 (STEP) - Boundary representation
@@ -132,7 +132,7 @@ class MeshRepairResult:
     logs: List[str] = field(default_factory=list)
 
 
-class ProductionManifoldAgent:
+class ManifoldAgent:
     """
     Production Manifold Agent for mesh validation and repair.
     
@@ -635,5 +635,3 @@ class ProductionManifoldAgent:
         return response
 
 
-# Backward compatibility
-ManifoldAgent = ProductionManifoldAgent

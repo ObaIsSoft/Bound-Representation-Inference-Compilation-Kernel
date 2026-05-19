@@ -1,5 +1,5 @@
 """
-ProductionStructuralAgent - FIXED VERSION
+StructuralAgent - FIXED VERSION
 
 Removes the "fallback trap" - no more silent degradation to analytical solutions.
 Implements proper multi-fidelity with explicit error messages.
@@ -440,14 +440,13 @@ class AnalyticalBeamSolver:
         )
 
 
-class ProductionStructuralAgent:
+class StructuralAgent:
     """
-    FIXED ProductionStructuralAgent
-    
-    Changes from original:
-    1. Removed fallback chains - explicit error messages instead
-    2. Fail-fast for FEA mode when CalculiX not available
-    3. Clear separation between analytical and FEA modes
+    FEA-based structural analysis agent.
+
+    - CalculiX integration for full finite element analysis
+    - Euler-Bernoulli beam theory analytical fallback
+    - Clear separation between analytical and FEA modes
     4. Added NAFEMS benchmark validation
     """
     
@@ -676,7 +675,7 @@ async def analyze_structure(
             fidelity="fea"
         )
     """
-    agent = ProductionStructuralAgent()
+    agent = StructuralAgent()
     
     geo_obj = Geometry(
         primitives=geometry.get("primitives", []),
@@ -736,7 +735,7 @@ if HAS_FASTAPI:
     async def simulate_fea(request: FEASimulationRequest):
         """Run FEA simulation"""
         try:
-            agent = ProductionStructuralAgent()
+            agent = StructuralAgent()
             
             # Create geometry
             geometry = Geometry(primitives=[{
@@ -887,7 +886,7 @@ if HAS_FASTAPI:
     async def run_structural_agent(params: Dict[str, Any]):
         """Run full structural agent workflow"""
         try:
-            agent = ProductionStructuralAgent()
+            agent = StructuralAgent()
             
             # Parse geometry
             geometry = Geometry(primitives=params.get("geometry", {}).get("primitives", []))

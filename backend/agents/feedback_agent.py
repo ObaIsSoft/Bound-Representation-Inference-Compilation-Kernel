@@ -7,7 +7,7 @@ and manufacturing feedback into actionable recommendations.
 Integrates:
 - ForensicAgent: Root cause analysis with physics grounding
 - MitigationAgent: Quantitative dimensional fixes
-- ProductionDfmAgent: Manufacturing feasibility feedback
+- DfmAgent: Manufacturing feasibility feedback
 
 No duplicate logic - pure delegation pattern.
 """
@@ -183,11 +183,11 @@ class FeedbackAgent:
         return result.get("fixes", [])
     
     def _get_manufacturing_feedback(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        """Call ProductionDfmAgent for manufacturing considerations."""
-        from backend.agents.dfm_agent import ProductionDfmAgent
+        """Call DfmAgent for manufacturing considerations."""
+        from backend.agents.dfm_agent import DfmAgent
         
         if self._dfm is None:
-            self._dfm = ProductionDfmAgent()
+            self._dfm = DfmAgent()
         
         geometry = state.get("geometry_tree", [])
         if not geometry:

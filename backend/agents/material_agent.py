@@ -1,5 +1,5 @@
 """
-ProductionMaterialAgent - Materials database with empirical validation
+MaterialAgent - Materials database with empirical validation
 
 Key principles:
 1. NEVER return data without provenance tracking
@@ -186,7 +186,7 @@ class Material:
         )
 
 
-class ProductionMaterialAgent:
+class MaterialAgent:
     """
     Production material agent with empirical validation
     
@@ -769,8 +769,6 @@ class ProductionMaterialAgent:
         """List available materials"""
         return sorted(self.materials.keys())
 
-# Alias for backward compatibility
-MaterialAgent = ProductionMaterialAgent
 
 
 

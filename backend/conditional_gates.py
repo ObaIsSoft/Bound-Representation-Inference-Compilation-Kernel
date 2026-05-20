@@ -49,32 +49,28 @@ def check_feasibility(state: Dict[str, Any]) -> Literal[FeasibilityStatus.FEASIB
 def check_user_approval(state: Dict[str, Any]) -> Literal[ApprovalStatus.PLAN_ONLY, ApprovalStatus.APPROVED, ApprovalStatus.REJECTED]:
     """
     Gate 2: User Approval
-    
-    Checks if user has approved the plan before proceeding to execution.
-    
-    Returns:
-        ApprovalStatus.PLAN_ONLY - Stop after showing plan (wait for approval)
-        ApprovalStatus.APPROVED - User approved, continue to execution
-        ApprovalStatus.REJECTED - User rejected, regenerate plan
+
+    Two-phase pipeline handoff:
+      - mode=plan  → pause here, surface plan to user (PLAN_ONLY → END)
+      - mode=execute → user already approved via API; continue to Phase 3 (APPROVED)
+
+    Explicit rejection always loops back to dreamer_node regardless of mode.
     """
     mode = state.get("execution_mode", OrchestratorMode.PLAN)
     approval = state.get("user_approval", None)
-    
-    # If mode is "plan", stop after plan generation
-    if mode == OrchestratorMode.PLAN:
-        logger.info("⏸️  Plan-only mode: Stopping for user review")
-        return ApprovalStatus.PLAN_ONLY
-    
-    # Check approval status
-    if approval == ApprovalStatus.APPROVED:
-        logger.info("✅ User APPROVED plan: Proceeding to execution")
-        return ApprovalStatus.APPROVED
-    elif approval == ApprovalStatus.REJECTED:
+
+    # Explicit rejection always takes priority — loop back to revise
+    if approval == ApprovalStatus.REJECTED or approval == "rejected":
         logger.warning("❌ User REJECTED plan: Regenerating")
         return ApprovalStatus.REJECTED
-    
-    # Default: wait for approval
-    logger.info("⏸️  Waiting for user approval")
+
+    # Execute mode: user approved via the /approve endpoint — continue
+    if mode == OrchestratorMode.EXECUTE or mode == "execute":
+        logger.info("✅ Execute mode: proceeding to Phase 3")
+        return ApprovalStatus.APPROVED
+
+    # Plan mode: pause and surface plan to user
+    logger.info("⏸️  Plan-only mode: Stopping for user review")
     return ApprovalStatus.PLAN_ONLY
 
 

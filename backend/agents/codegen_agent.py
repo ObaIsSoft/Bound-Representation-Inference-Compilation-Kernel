@@ -92,6 +92,15 @@ class GeneratedProject:
     build_config: Dict[str, Any]
 
 
+# Pin name constants (must be defined before CodegenAgent class uses them in PLATFORM_DEFS)
+PA0, PA1, PA2, PA3, PA4, PA5, PA6, PA7 = "PA0", "PA1", "PA2", "PA3", "PA4", "PA5", "PA6", "PA7"
+PA8, PA9, PA10, PA11, PA12, PA13, PA14, PA15 = "PA8", "PA9", "PA10", "PA11", "PA12", "PA13", "PA14", "PA15"
+PB0, PB1, PB2, PB3, PB4, PB5, PB6, PB7 = "PB0", "PB1", "PB2", "PB3", "PB4", "PB5", "PB6", "PB7"
+PB8, PB9, PB10, PB11, PB12, PB13, PB14, PB15 = "PB8", "PB9", "PB10", "PB11", "PB12", "PB13", "PB14", "PB15"
+PC0, PC1, PC2, PC3, PC4, PC5, PC6, PC7, PC8, PC9 = "PC0", "PC1", "PC2", "PC3", "PC4", "PC5", "PC6", "PC7", "PC8", "PC9"
+PC10, PC11, PC12, PC13, PC14, PC15 = "PC10", "PC11", "PC12", "PC13", "PC14", "PC15"
+
+
 class CodegenAgent:
     """
     Production-grade firmware code generation agent.
@@ -699,52 +708,458 @@ class CodegenAgent:
         version: str,
         safety_level: str
     ) -> GeneratedProject:
-        """Generate complete project files."""
-        files = {}
-        libraries = set()
-        
-        # Generate main source file
-        main_code = self._generate_main_cpp(
+        """Dispatch to the correct language generator."""
+        if language == Language.MICROPYTHON:
+            return self._generate_micropython_project(
+                platform, rtos, components, pin_allocations,
+                project_name, author, version, safety_level
+            )
+        elif language == Language.CIRCUITPYTHON:
+            return self._generate_circuitpython_project(
+                platform, rtos, components, pin_allocations,
+                project_name, author, version, safety_level
+            )
+        else:
+            # C++ (default). Rust/Zig not yet implemented — generate C++ with notice.
+            if language in (Language.RUST, Language.ZIG):
+                logger.warning(
+                    f"{language.value} generation not yet implemented. "
+                    f"Generating C++ equivalent with language notice."
+                )
+            return self._generate_cpp_project(
+                platform, language, rtos, components, pin_allocations,
+                project_name, author, version, safety_level
+            )
+
+    def _generate_cpp_project(
+        self,
+        platform: Platform,
+        language: Language,
+        rtos: RTOS,
+        components: List[Component],
+        pin_allocations: Dict,
+        project_name: str,
+        author: str,
+        version: str,
+        safety_level: str
+    ) -> GeneratedProject:
+        """Generate complete C++ / Arduino project files."""
+        files: Dict[str, str] = {}
+        libraries: set = set()
+
+        files["main.cpp"] = self._generate_main_cpp(
             platform, rtos, components, pin_allocations, project_name, author, version, safety_level
         )
-        files["main.cpp"] = main_code
-        
-        # Generate header file
-        header_code = self._generate_header(platform, components, project_name, safety_level)
-        files[f"{project_name}.h"] = header_code
-        
-        # Generate pin configuration
-        pin_config = self._generate_pin_config(pin_allocations)
-        files["pin_config.h"] = pin_config
-        
-        # Generate build files
+        files[f"{project_name}.h"] = self._generate_header(platform, components, project_name, safety_level)
+        files["pin_config.h"] = self._generate_pin_config(pin_allocations)
+
         if platform in [Platform.ESP32, Platform.ESP32_S3]:
             files["platformio.ini"] = self._generate_platformio_ini(platform, components)
         else:
             files["CMakeLists.txt"] = self._generate_cmake(platform, components, project_name)
-        
-        # Collect libraries
+
         for comp in components:
             libraries.update(comp.dependencies)
-            libraries.update(comp.library for lib in [comp.library] if lib)
-        
+            if comp.library:
+                libraries.add(comp.library)
+
         build_config = {
             "platform": platform.value,
+            "language": language.value,
             "framework": "arduino" if platform in [Platform.ESP32, Platform.ARDUINO_MEGA] else "stm32cube",
             "build_flags": ["-Os", "-Wall"],
-            "lib_deps": list(libraries),
+            "lib_deps": sorted(libraries),
         }
-        
         if safety_level != "NONE":
             build_config["build_flags"].extend(["-Werror", "-pedantic"])
-        
+
         return GeneratedProject(
             platform=platform.value,
             language=language.value,
             files=files,
             pinout=pin_allocations,
-            libraries=list(libraries),
+            libraries=sorted(libraries),
             build_config=build_config
+        )
+
+    def _generate_micropython_project(
+        self,
+        platform: Platform,
+        rtos: RTOS,
+        components: List[Component],
+        pin_allocations: Dict,
+        project_name: str,
+        author: str,
+        version: str,
+        safety_level: str
+    ) -> GeneratedProject:
+        """
+        Generate a complete MicroPython project.
+
+        Structure:
+          main.py   — entry point (MicroPython auto-runs this)
+          boot.py   — hardware init and REPL settings
+          config.py — pin constants and tunable settings
+          deploy.sh — mpremote flash script
+        """
+        timestamp = datetime.now().isoformat()
+        use_async = rtos in (RTOS.FREERTOS, RTOS.ZEPHYR) or len(components) > 2
+
+        # --- config.py ---
+        pin_defs = []
+        for comp_name, alloc in pin_allocations.items():
+            prefix = comp_name.replace(" ", "_").replace("-", "_").upper()
+            for pin_name, pin_val in alloc.get("pins", {}).items():
+                pin_defs.append(f"{prefix}_{pin_name.upper()} = {pin_val}")
+        config_py = f'''"""
+Auto-generated pin and settings configuration
+Project: {project_name}  Version: {version}
+"""
+
+# --- Pin assignments ---
+{chr(10).join(pin_defs) or "# No pins allocated"}
+
+# --- Loop timing ---
+LOOP_PERIOD_MS = 10   # Main loop period (ms)
+SENSOR_PERIOD_MS = 20 # Sensor read period (ms)
+'''
+
+        # --- Component initialization blocks ---
+        init_lines: List[str] = []
+        async_tasks: List[str] = []
+
+        for comp in components:
+            alloc = pin_allocations.get(comp.name, {})
+            pins = alloc.get("pins", {})
+            template = comp.code_templates.get("MicroPython") or comp.code_templates.get("C++")
+
+            if template:
+                ctx = {"name": comp.name.replace(" ", "_").lower()}
+                ctx.update(pins)
+                ctx.update({f"pin_{k}": v for k, v in pins.items()})
+                try:
+                    init_code = template.format(**ctx)
+                    init_lines.append(f"# {comp.name}")
+                    init_lines.extend(init_code.split("\n"))
+                except KeyError as e:
+                    init_lines.append(f"# TODO: Configure {comp.name} — missing pin: {e}")
+            else:
+                init_lines.append(f"# {comp.name}: no MicroPython template (add driver manually)")
+
+            # Create an async task for each component if using async
+            if use_async:
+                task_name = comp.name.replace(" ", "_").lower()
+                async_tasks.append(f'''\nasync def task_{task_name}():
+    """Task for {comp.name}"""
+    while True:
+        # TODO: Read / actuate {comp.name}
+        await asyncio.sleep_ms(SENSOR_PERIOD_MS)
+''')
+
+        # --- main.py ---
+        if use_async:
+            # uasyncio coroutine-based (FreeRTOS equivalent for MicroPython)
+            task_creates = "\n".join(
+                f"    asyncio.create_task(task_{c.name.replace(' ','_').lower()}())"
+                for c in components
+            )
+            main_py = f'''"""
+{project_name} — MicroPython Firmware
+Author: {author}
+Version: {version}
+Date: {timestamp}
+Platform: {platform.value}
+Generated by BRICK OS CodegenAgent
+
+Multi-task mode: uasyncio (equivalent to FreeRTOS on MicroPython)
+"""
+
+import asyncio
+import sys
+import time
+from machine import Pin, PWM, I2C, SPI, UART
+from config import *
+
+# --- Component initialisation ---
+{chr(10).join(init_lines)}
+
+
+# --- Async tasks (one per subsystem) ---
+{"".join(async_tasks)}
+
+async def heartbeat():
+    """Status LED / watchdog heartbeat"""
+    while True:
+        # Toggle built-in LED or print status
+        print(f"[{{time.ticks_ms()}}] {project_name} running")
+        await asyncio.sleep_ms(1000)
+
+
+async def main():
+    print("=" * 48)
+    print(f"{project_name}  v{version}")
+    print(f"Platform: {platform.value}")
+    print("=" * 48)
+
+    # Launch all tasks concurrently
+{task_creates}
+    asyncio.create_task(heartbeat())
+
+    # Keep event loop alive
+    while True:
+        await asyncio.sleep_ms(100)
+
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("Stopped by user")
+        sys.exit(0)
+'''
+        else:
+            # Simple sequential loop
+            main_py = f'''"""
+{project_name} — MicroPython Firmware
+Author: {author}
+Version: {version}
+Date: {timestamp}
+Platform: {platform.value}
+Generated by BRICK OS CodegenAgent
+"""
+
+import sys
+import time
+from machine import Pin, PWM, I2C, SPI, UART
+from config import *
+
+# --- Component initialisation ---
+{chr(10).join(init_lines)}
+
+
+def loop():
+    """Main control loop — called every LOOP_PERIOD_MS ms"""
+    # TODO: Add sensor reads and actuator writes here
+    pass
+
+
+def main():
+    print("=" * 48)
+    print(f"{project_name}  v{version}")
+    print(f"Platform: {platform.value}")
+    print("=" * 48)
+
+    while True:
+        t0 = time.ticks_ms()
+        loop()
+        elapsed = time.ticks_diff(time.ticks_ms(), t0)
+        remaining = LOOP_PERIOD_MS - elapsed
+        if remaining > 0:
+            time.sleep_ms(remaining)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("Stopped by user")
+        sys.exit(0)
+'''
+
+        # --- boot.py ---
+        boot_py = f'''"""
+boot.py — Runs before main.py on every power-on / reset
+Configure hardware, disable REPL UART if needed for production.
+"""
+import sys
+
+# Uncomment for production (disables REPL access):
+# import machine
+# machine.freq(240_000_000)  # Max CPU speed for ESP32
+
+print("{project_name} booting...")
+'''
+
+        # --- deploy.sh ---
+        deploy_sh = f'''#!/usr/bin/env bash
+# Deploy {project_name} to MicroPython board
+# Requires: pip install mpremote
+
+set -euo pipefail
+
+PORT="${{1:-/dev/ttyUSB0}}"
+echo "Deploying to $PORT..."
+
+mpremote connect "$PORT" fs cp config.py :config.py
+mpremote connect "$PORT" fs cp boot.py :boot.py
+mpremote connect "$PORT" fs cp main.py :main.py
+
+echo "Done. Resetting board..."
+mpremote connect "$PORT" reset
+'''
+
+        files = {
+            "main.py": main_py,
+            "boot.py": boot_py,
+            "config.py": config_py,
+            "deploy.sh": deploy_sh,
+        }
+
+        libraries_used = sorted({comp.library for comp in components if comp.library})
+        build_config = {
+            "platform": platform.value,
+            "language": "MicroPython",
+            "runtime": "MicroPython >= 1.22",
+            "deploy_tool": "mpremote",
+            "async_mode": use_async,
+            "lib_deps": libraries_used,
+        }
+
+        return GeneratedProject(
+            platform=platform.value,
+            language=Language.MICROPYTHON.value,
+            files=files,
+            pinout=pin_allocations,
+            libraries=libraries_used,
+            build_config=build_config,
+        )
+
+    def _generate_circuitpython_project(
+        self,
+        platform: Platform,
+        rtos: RTOS,
+        components: List[Component],
+        pin_allocations: Dict,
+        project_name: str,
+        author: str,
+        version: str,
+        safety_level: str
+    ) -> GeneratedProject:
+        """
+        Generate a CircuitPython project.
+
+        Structure:
+          code.py          — entry point (CircuitPython auto-runs this)
+          boot.py          — startup configuration
+          settings.toml    — WiFi / secrets (template)
+          requirements.txt — circup dependency list
+        """
+        timestamp = datetime.now().isoformat()
+
+        # Component init blocks using MicroPython templates (CircuitPython is compatible)
+        init_lines: List[str] = []
+        adafruit_imports: set = set()
+        adafruit_imports.add("import board")
+        adafruit_imports.add("import busio")
+        adafruit_imports.add("import digitalio")
+        adafruit_imports.add("import time")
+        adafruit_imports.add("import supervisor")
+
+        for comp in components:
+            alloc = pin_allocations.get(comp.name, {})
+            pins = alloc.get("pins", {})
+            # CircuitPython uses adafruit_ prefixed libraries
+            lib_name = comp.library.replace("_", " ").replace("-", " ")
+            adafruit_imports.add(f"# import adafruit_{comp.library}  # Install via circup")
+
+            template = comp.code_templates.get("MicroPython") or comp.code_templates.get("C++")
+            if template:
+                ctx = {"name": comp.name.replace(" ", "_").lower()}
+                ctx.update(pins)
+                ctx.update({f"pin_{k}": v for k, v in pins.items()})
+                # CircuitPython uses board.GPxx instead of bare integers
+                ctx_cp = {k: f"board.GP{v}" if isinstance(v, int) else v for k, v in ctx.items()}
+                try:
+                    init_code = template.format(**ctx_cp)
+                    init_lines.append(f"# {comp.name}")
+                    init_lines.extend(
+                        line.replace("machine.Pin", "digitalio.DigitalInOut")
+                            .replace("machine.PWM", "pwmio.PWMOut")
+                        for line in init_code.split("\n")
+                    )
+                except KeyError as e:
+                    init_lines.append(f"# TODO: Configure {comp.name} — missing pin: {e}")
+            else:
+                init_lines.append(f"# {comp.name}: add adafruit driver")
+
+        code_py = f'''"""
+{project_name} — CircuitPython Firmware
+Author: {author}
+Version: {version}
+Date: {timestamp}
+Platform: {platform.value}
+Generated by BRICK OS CodegenAgent
+
+CircuitPython reference: https://circuitpython.org
+Install libraries:  circup install <lib_name>
+"""
+
+{chr(10).join(sorted(adafruit_imports))}
+
+# --- Component initialisation ---
+{chr(10).join(init_lines)}
+
+LOOP_PERIOD_S = 0.01  # 100 Hz
+
+print("=" * 48)
+print(f"{project_name}  v{version}")
+print(f"Platform: {platform.value}")
+print("=" * 48)
+
+while True:
+    t0 = time.monotonic()
+
+    # TODO: Read sensors and drive actuators here
+
+    elapsed = time.monotonic() - t0
+    remaining = LOOP_PERIOD_S - elapsed
+    if remaining > 0:
+        time.sleep(remaining)
+'''
+
+        boot_py = f'''"""
+boot.py — CircuitPython startup script
+Runs before code.py on every power-on / reset.
+"""
+import supervisor
+import storage
+
+# Disable auto-reload while developing (comment out for production):
+# supervisor.disable_autoreload()
+
+print("{project_name} boot complete")
+'''
+
+        settings_toml = '''[wifi]
+CIRCUITPY_WIFI_SSID = "YourSSID"
+CIRCUITPY_WIFI_PASSWORD = "YourPassword"
+'''
+
+        lib_names = sorted({comp.library for comp in components if comp.library})
+        requirements_txt = "\n".join(f"adafruit-circuitpython-{lib}" for lib in lib_names)
+
+        files = {
+            "code.py": code_py,
+            "boot.py": boot_py,
+            "settings.toml": settings_toml,
+            "requirements.txt": requirements_txt,
+        }
+
+        build_config = {
+            "platform": platform.value,
+            "language": "CircuitPython",
+            "runtime": "CircuitPython >= 9.0",
+            "deploy_tool": "circup",
+            "lib_deps": lib_names,
+        }
+
+        return GeneratedProject(
+            platform=platform.value,
+            language=Language.CIRCUITPYTHON.value,
+            files=files,
+            pinout=pin_allocations,
+            libraries=lib_names,
+            build_config=build_config,
         )
     
     def _generate_main_cpp(
@@ -1098,12 +1513,3 @@ class CodegenAPI:
             }
         
         return router
-
-
-# Pin name constants (would be platform-specific in reality)
-PA0, PA1, PA2, PA3, PA4, PA5, PA6, PA7 = "PA0", "PA1", "PA2", "PA3", "PA4", "PA5", "PA6", "PA7"
-PA8, PA9, PA10, PA11, PA12, PA13, PA14, PA15 = "PA8", "PA9", "PA10", "PA11", "PA12", "PA13", "PA14", "PA15"
-PB0, PB1, PB2, PB3, PB4, PB5, PB6, PB7 = "PB0", "PB1", "PB2", "PB3", "PB4", "PB5", "PB6", "PB7"
-PB8, PB9, PB10, PB11, PB12, PB13, PB14, PB15 = "PB8", "PB9", "PB10", "PB11", "PB12", "PB13", "PB14", "PB15"
-PC0, PC1, PC2, PC3, PC4, PC5, PC6, PC7, PC8, PC9 = "PC0", "PC1", "PC2", "PC3", "PC4", "PC5", "PC6", "PC7", "PC8", "PC9"
-PC10, PC11, PC12, PC13, PC14, PC15 = "PC10", "PC11", "PC12", "PC13", "PC14", "PC15"

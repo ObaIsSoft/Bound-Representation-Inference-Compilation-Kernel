@@ -464,6 +464,165 @@ class ToleranceAgent:
             "material_condition": material_condition
         }
 
+    def run(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Pipeline entry point — builds ToleranceSpec list from any state dict and
+        runs the full RSS + Monte Carlo + worst-case stack-up analysis.
+
+        Tolerance source priority:
+          1. params["tolerances"] — explicit list of dicts
+          2. params["geometry_tree"] — nodes with tolerance fields
+          3. params["design_parameters"] — generates default specs from dimensions
+        """
+        # --- Extract explicit tolerance specs ---
+        tol_input = params.get("tolerances") or params.get("tolerance_specs") or []
+        specs: List[ToleranceSpec] = []
+
+        if tol_input and isinstance(tol_input, list):
+            for t in tol_input:
+                if isinstance(t, dict):
+                    try:
+                        specs.append(ToleranceSpec(
+                            name=str(t.get("name") or t.get("feature") or "dim"),
+                            nominal=float(t.get("nominal") or t.get("value") or 0.0),
+                            plus=float(t.get("plus") or t.get("tolerance") or t.get("tol") or 0.05),
+                            minus=float(t.get("minus") or t.get("tolerance") or t.get("tol") or 0.05),
+                            distribution=DistributionType(
+                                t.get("distribution", "normal")
+                            ) if t.get("distribution") else DistributionType.NORMAL,
+                        ))
+                    except Exception as e:
+                        logger.warning(f"Skipping tolerance spec {t}: {e}")
+                elif isinstance(t, (list, tuple)) and len(t) >= 3:
+                    specs.append(ToleranceSpec(
+                        name=str(t[0]), nominal=float(t[1]), plus=float(t[2])
+                    ))
+
+        # --- Extract from geometry_tree ---
+        if not specs:
+            tree = params.get("geometry_tree") or []
+            for node in tree[:10]:  # cap at 10 nodes
+                if not isinstance(node, dict):
+                    continue
+                dims = node.get("dimensions") or node.get("params") or {}
+                tols = node.get("tolerances") or {}
+                for key, val in dims.items():
+                    tol = float(tols.get(key, 0.05) if tols else 0.05)
+                    try:
+                        specs.append(ToleranceSpec(
+                            name=f"{node.get('id', 'node')}_{key}",
+                            nominal=float(val),
+                            plus=tol,
+                            minus=tol,
+                        ))
+                    except Exception:
+                        pass
+
+        # --- Derive from design_parameters ---
+        if not specs:
+            dp = params.get("design_parameters") or {}
+            dim_keys = {
+                "length_m": ("length", 0.05),
+                "width_m": ("width", 0.05),
+                "height_m": ("height", 0.03),
+                "diameter_m": ("diameter", 0.025),
+                "thickness_m": ("thickness", 0.02),
+            }
+            for key, (name, default_tol) in dim_keys.items():
+                v = dp.get(key) or dp.get(name.replace("_m", ""))
+                if v is not None:
+                    nominal = float(v)
+                    # Scale tolerance with dimension: ±0.5% of nominal, min 0.01mm
+                    tol = max(nominal * 0.005, 1e-5)
+                    specs.append(ToleranceSpec(name=name, nominal=nominal, plus=tol))
+
+        if not specs:
+            # Absolute fallback: generic 3-dimension assembly
+            specs = [
+                ToleranceSpec("dim_A", 100.0, 0.05),
+                ToleranceSpec("dim_B", 50.0, 0.05),
+                ToleranceSpec("dim_C", 25.0, 0.03),
+            ]
+            logger.warning("ToleranceAgent.run(): no tolerance data found, using generic fallback specs")
+
+        # --- Design target ---
+        target_input = params.get("design_target") or params.get("assembly_gap")
+        if target_input and isinstance(target_input, (list, tuple)) and len(target_input) == 2:
+            design_target: Optional[Tuple[float, float]] = (
+                float(target_input[0]), float(target_input[1])
+            )
+        elif isinstance(target_input, dict):
+            design_target = (
+                float(target_input.get("min", 0.0)),
+                float(target_input.get("max", 1.0)),
+            )
+        else:
+            design_target = None
+
+        # --- Monte Carlo iterations ---
+        mc_iter = params.get("mc_iterations") or params.get("monte_carlo_iterations")
+        mc_iter = int(mc_iter) if mc_iter else None
+
+        # --- Sensitivity coefficients ---
+        sensitivities = params.get("sensitivities")
+        if sensitivities:
+            sensitivities = [float(s) for s in sensitivities]
+
+        # --- Run ---
+        try:
+            stack_desc = params.get("stack_description") or "Assembly tolerance stack"
+            result = self.analyze_stack(
+                tolerances=specs,
+                stack_description=stack_desc,
+                sensitivities=sensitivities,
+                design_target=design_target,
+                mc_iterations=mc_iter,
+            )
+        except Exception as e:
+            logger.error(f"ToleranceAgent.analyze_stack() failed: {e}")
+            return {"status": "error", "error": str(e)}
+
+        # --- Flatten to pipeline dict ---
+        rss = result.rss
+        mc = result.monte_carlo
+        wc = result.worst_case
+
+        return {
+            "status": "success",
+            "stack_description": result.stack_description,
+            "tolerance_count": len(specs),
+            "nominal_stack": round(float(rss.nominal_stack), 6),
+            "rss": {
+                "tolerance": round(float(rss.rss_tolerance), 6),
+                "upper_limit": round(float(rss.upper_limit), 6),
+                "lower_limit": round(float(rss.lower_limit), 6),
+                "cpk": round(float(rss.cpk), 4) if rss.cpk else None,
+                "sigma_level": round(float(rss.sigma_level), 3) if hasattr(rss, "sigma_level") else None,
+            },
+            "monte_carlo": {
+                "mean": round(float(mc.mean), 6),
+                "std_dev": round(float(mc.std_dev), 8),
+                "percent_outside_spec": round(float(mc.percent_outside_limits), 4),
+                "p99": round(float(mc.percentiles.get("99%", wc.upper_limit)), 6),
+                "p1": round(float(mc.percentiles.get("1%", wc.lower_limit)), 6),
+            },
+            "worst_case": {
+                "upper_limit": round(float(wc.upper_limit), 6),
+                "lower_limit": round(float(wc.lower_limit), 6),
+                "total_tolerance": round(float(wc.tolerance_range), 6),
+            },
+            "passes_specification": result.passes_specification,
+            "design_target": design_target,
+            "top_contributors": [
+                {
+                    "name": c.tolerance.name,
+                    "contribution_pct": round(float(c.percent_contribution), 1),
+                    "tolerance": round(float(c.tolerance.tolerance_range), 6),
+                }
+                for c in sorted(rss.contributions, key=lambda x: -x.percent_contribution)[:5]
+            ] if hasattr(rss, "contributions") and rss.contributions else [],
+        }
+
 
 # Convenience functions
 def quick_rss_analysis(

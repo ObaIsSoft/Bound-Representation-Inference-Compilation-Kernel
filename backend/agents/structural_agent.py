@@ -634,6 +634,150 @@ class StructuralAgent:
             "max_displacement_m": max_disp
         }
     
+    async def run(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Pipeline entry point — translates any state dict to analyze() call.
+
+        Accepts params from the orchestrator state (design_parameters, material_properties,
+        geometry_tree, loads, etc.) and dispatches to the correct fidelity path.
+
+        Returns a flat dict compatible with the orchestrator's expected output schema.
+        """
+        # --- Build Material ---
+        mat_input = (
+            params.get("material_properties") or
+            params.get("material") or
+            {}
+        )
+        if isinstance(mat_input, str):
+            # String ID — use structural defaults, geometry will still work
+            mat_dict: Dict[str, Any] = {}
+            mat_name = mat_input
+        else:
+            mat_dict = mat_input if isinstance(mat_input, dict) else {}
+            mat_name = mat_dict.get("name") or mat_dict.get("material_id") or "Steel"
+
+        E_gpa = float(
+            mat_dict.get("elastic_modulus_gpa") or
+            mat_dict.get("E_gpa") or
+            (mat_dict.get("E", 200e9) / 1e9) or
+            200.0
+        )
+        yield_mpa = float(
+            mat_dict.get("yield_strength_mpa") or
+            mat_dict.get("yield_strength") or
+            mat_dict.get("yield_strength_pa", 250e6) / 1e6 or
+            250.0
+        )
+        ult_mpa = float(
+            mat_dict.get("ultimate_strength_mpa") or
+            mat_dict.get("ultimate_strength") or
+            0.0
+        )
+        density = float(mat_dict.get("density_kg_m3") or mat_dict.get("density") or 7850.0)
+
+        material = Material(
+            name=str(mat_name),
+            elastic_modulus=E_gpa,
+            poisson_ratio=float(mat_dict.get("poisson_ratio", 0.3)),
+            yield_strength=yield_mpa,
+            ultimate_strength=ult_mpa,
+            density=density,
+        )
+
+        # --- Build Geometry ---
+        dp = params.get("design_parameters") or {}
+        tree = params.get("geometry_tree") or []
+        mesh_path = params.get("mesh_path") or params.get("stl_path")
+
+        if tree and isinstance(tree, list) and len(tree) > 0:
+            node = tree[0] if isinstance(tree[0], dict) else {}
+            geo_type = node.get("type", "beam")
+            dims = node.get("dimensions") or node.get("params") or {}
+            primitive = {
+                "type": geo_type,
+                "params": {
+                    "length": float(dims.get("length") or dp.get("length_m") or dp.get("length") or 0.5),
+                    "width": float(dims.get("width") or dp.get("width_m") or dp.get("width") or 0.05),
+                    "height": float(dims.get("height") or dp.get("height_m") or dp.get("height") or 0.05),
+                }
+            }
+        else:
+            # Flat design_parameters
+            primitive = {
+                "type": dp.get("geometry_type") or "beam",
+                "params": {
+                    "length": float(dp.get("length_m") or dp.get("length") or 0.5),
+                    "width": float(dp.get("width_m") or dp.get("width") or 0.05),
+                    "height": float(dp.get("height_m") or dp.get("height") or 0.05),
+                    "area": float(dp.get("area_m2") or dp.get("area") or 0.0025),
+                }
+            }
+
+        geometry = Geometry(primitives=[primitive], mesh_path=mesh_path)
+
+        # --- Build Load Cases ---
+        loads_input = params.get("loads") or params.get("forces") or {}
+        if isinstance(loads_input, dict):
+            Fx = float(loads_input.get("Fx") or loads_input.get("force_x") or 0.0)
+            Fy = float(loads_input.get("Fy") or loads_input.get("force_y") or 0.0)
+            Fz = float(loads_input.get("Fz") or loads_input.get("force_z") or loads_input.get("force") or 1000.0)
+            forces_arr = np.array([Fx, Fy, Fz])
+        elif isinstance(loads_input, (list, tuple)) and len(loads_input) == 3:
+            forces_arr = np.array([float(v) for v in loads_input])
+        else:
+            forces_arr = np.array([0.0, 0.0, 1000.0])
+
+        loads = [LoadCase(name="primary", forces=forces_arr)]
+
+        # --- Boundary Conditions ---
+        constraints = params.get("constraints") or [{"type": "fixed", "surface": "x_min"}]
+
+        # --- Fidelity ---
+        fidelity_str = str(params.get("fidelity") or "auto").upper()
+        fidelity_map = {
+            "FEA": FidelityLevel.FEA,
+            "ANALYTICAL": FidelityLevel.ANALYTICAL,
+            "AUTO": FidelityLevel.AUTO,
+        }
+        fidelity = fidelity_map.get(fidelity_str, FidelityLevel.AUTO)
+
+        # --- Run ---
+        try:
+            result = await self.analyze(geometry, material, loads, constraints, fidelity)
+        except Exception as e:
+            logger.error(f"StructuralAgent.analyze() failed: {e}")
+            return {
+                "status": "error",
+                "error": str(e),
+                "max_stress_mpa": 0.0,
+                "max_displacement_mm": 0.0,
+                "safety_factor": 0.0,
+                "gate_value": 0.0,
+            }
+
+        # --- Flatten for pipeline ---
+        sf = result.get("safety_factors", {})
+        val = result.get("validation", {})
+        max_stress = sf.get("max_stress_mpa") or val.get("max_stress_mpa") or 0.0
+        max_disp_m = val.get("max_displacement_m") or 0.0
+
+        return {
+            "status": "unsafe" if sf.get("critical") else "success",
+            "fidelity": result.get("fidelity", fidelity.value),
+            "max_stress_mpa": round(float(max_stress), 4),
+            "max_displacement_mm": round(float(max_disp_m) * 1000, 4),
+            "safety_factor_yield": round(float(sf.get("yielding") or 0.0), 3),
+            "safety_factor_ultimate": round(float(sf.get("ultimate") or 0.0), 3) if sf.get("ultimate") else None,
+            "yield_exceeded": bool(sf.get("critical", False)),
+            "von_mises_max_mpa": round(float(max_stress), 4),
+            "gate_value": round(float(max_stress), 2),  # pipeline gate check
+            "validation_passed": val.get("passed", True),
+            "validation_issues": val.get("issues", []),
+            "material": material.name,
+            "load_n": round(float(np.linalg.norm(forces_arr)), 2),
+        }
+
     # NAFEMS Benchmarks
     def benchmark_le1(self) -> Dict[str, Any]:
         """

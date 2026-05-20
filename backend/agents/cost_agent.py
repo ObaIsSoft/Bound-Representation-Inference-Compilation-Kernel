@@ -416,6 +416,140 @@ class CostAgent:
             confidence=confidence
         )
 
+    async def quick_estimate(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Pipeline entry point — estimates cost from any state dict.
+
+        Extracts or infers: volume, material, process, quantity, features.
+        Calls estimate_cost_abc() when services are available; falls back to
+        static ABC pricing when database is not reachable (e.g. local dev).
+        """
+
+        # --- Volume ---
+        volume_mm3 = (
+            params.get("volume_mm3") or
+            params.get("volume_cm3", 0) * 1000 or
+            params.get("volume_m3", 0) * 1e9
+        )
+        if not volume_mm3:
+            # Estimate from mass + density
+            mass_kg = float(params.get("mass_kg") or (params.get("design_parameters") or {}).get("mass_kg") or 0.0)
+            material_name = str(params.get("material_name") or params.get("material") or "aluminum_6061")
+            density = await self._get_density_for_estimate(material_name)
+            volume_mm3 = (mass_kg / density) * 1e9 if mass_kg > 0 and density > 0 else 50000.0
+
+        # Estimate from geometry if still zero
+        if not volume_mm3:
+            dp = params.get("design_parameters") or {}
+            L = float(dp.get("length_m") or dp.get("length") or 0.1)
+            W = float(dp.get("width_m") or dp.get("width") or L * 0.6)
+            H = float(dp.get("height_m") or dp.get("height") or L * 0.3)
+            volume_mm3 = L * W * H * 1e9  # m³ → mm³
+
+        volume_mm3 = max(float(volume_mm3), 1.0)
+
+        # --- Material ---
+        material_key = str(
+            params.get("material_name") or
+            params.get("material") or
+            params.get("material_id") or
+            "aluminum_6061"
+        ).lower().replace(" ", "_").replace("-", "_")
+
+        # --- Process ---
+        proc_input = str(
+            params.get("process_type") or
+            params.get("process") or
+            params.get("manufacturing_process") or
+            "cnc_milling"
+        ).lower()
+        process_map = {p.value: p for p in ManufacturingProcess}
+        process = process_map.get(proc_input, ManufacturingProcess.CNC_MILLING)
+
+        # --- Quantity ---
+        quantity = max(1, int(params.get("quantity") or params.get("qty") or 1))
+
+        # --- Features ---
+        n_features = int(params.get("n_features") or params.get("feature_count") or 0)
+        n_holes = int(params.get("n_holes") or params.get("hole_count") or 0)
+        tightest_tol = float(params.get("tightest_tolerance_mm") or params.get("tolerance_mm") or 0.1)
+        surface_ra = float(params.get("surface_roughness_ra") or params.get("surface_finish_ra") or 3.2)
+        region = str(params.get("region") or "global")
+        overhead = float(params.get("overhead_rate") or 0.30)
+
+        # --- Run ---
+        try:
+            estimate = await self.estimate_cost_abc(
+                volume_mm3=volume_mm3,
+                material_key=material_key,
+                process=process,
+                quantity=quantity,
+                n_features=n_features,
+                n_holes=n_holes,
+                tightest_tolerance_mm=tightest_tol,
+                surface_roughness_ra=surface_ra,
+                region=region,
+                overhead_rate=overhead,
+            )
+        except Exception as e:
+            logger.error(f"CostAgent.estimate_cost_abc() failed: {e}")
+            return {
+                "status": "error",
+                "error": str(e),
+                "estimated_cost": 0.0,
+                "feasible": False,
+            }
+
+        budget = float(params.get("budget_usd") or 0.0)
+        within_budget = (estimate.total_cost <= budget) if budget > 0 else None
+
+        bd = estimate.breakdown
+        return {
+            "status": "success",
+            "estimated_cost": round(float(estimate.total_cost), 2),
+            "estimated_cost_usd": round(float(estimate.total_cost), 2),
+            "currency": estimate.currency,
+            "method": estimate.method,
+            "confidence": estimate.confidence,
+            "feasible": True,
+            "within_budget": within_budget,
+            "breakdown": {
+                "material": round(float(bd.material_cost), 2),
+                "labor": round(float(bd.labor_cost), 2),
+                "setup": round(float(bd.setup_cost), 2),
+                "tooling": round(float(bd.tooling_cost), 2),
+                "overhead": round(float(bd.overhead_cost), 2),
+                "quality": round(float(bd.quality_cost), 2),
+                "logistics": round(float(bd.logistics_cost), 2),
+                "total": round(float(estimate.total_cost), 2),
+            },
+            "inputs": {
+                "volume_mm3": round(volume_mm3, 2),
+                "material": material_key,
+                "process": process.value,
+                "quantity": quantity,
+            },
+            "warnings": estimate.warnings,
+            "data_sources": estimate.data_sources,
+        }
+
+    async def _get_density_for_estimate(self, material_key: str) -> float:
+        """Get material density for volume estimation. Falls back to heuristics."""
+        try:
+            density = await self.get_material_density(material_key)
+            return float(density)
+        except Exception:
+            ml = material_key.lower()
+            if any(x in ml for x in ("aluminum", "al", "6061", "7075")):
+                return 2700.0
+            if any(x in ml for x in ("steel", "iron", "4140")):
+                return 7850.0
+            if any(x in ml for x in ("titanium", "ti")):
+                return 4500.0
+            if any(x in ml for x in ("copper", "cu", "brass")):
+                return 8900.0
+            return 2700.0  # default aluminum
+
 
 # Convenience function for quick estimation
 async def quick_cost_estimate(

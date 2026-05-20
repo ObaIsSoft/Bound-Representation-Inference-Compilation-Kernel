@@ -1066,6 +1066,118 @@ class DfmAgent:
         
         return edge_radii
 
+    def run(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Pipeline entry point — translates any state dict to analyze_mesh() call.
+
+        Mesh source priority:
+          1. mesh_path / stl_path  → load file with trimesh
+          2. stl_data (bytes)      → trimesh.load from BytesIO
+          3. geometry_tree         → synthesize bounding-box mesh from tree extents
+          4. design_parameters     → synthesize box from explicit dimensions
+        """
+        import io
+
+        # --- Resolve process list ---
+        proc_input = params.get("process_type") or params.get("process") or params.get("processes")
+        if isinstance(proc_input, str):
+            try:
+                processes = [ManufacturingProcess(proc_input)]
+            except ValueError:
+                processes = None  # analyze_mesh will use all
+        elif isinstance(proc_input, list):
+            resolved = []
+            for p in proc_input:
+                try:
+                    resolved.append(ManufacturingProcess(p))
+                except ValueError:
+                    pass
+            processes = resolved or None
+        else:
+            processes = None
+
+        # --- Resolve mesh ---
+        mesh = None
+
+        # Path on disk
+        mesh_path = params.get("mesh_path") or params.get("stl_path")
+        if mesh_path:
+            try:
+                mesh = trimesh.load(str(mesh_path))
+                logger.info(f"DfmAgent: loaded mesh from {mesh_path}")
+            except Exception as e:
+                logger.warning(f"DfmAgent: failed to load mesh from {mesh_path}: {e}")
+
+        # Raw bytes
+        if mesh is None:
+            stl_data = params.get("stl_data")
+            if stl_data:
+                try:
+                    mesh = trimesh.load(io.BytesIO(stl_data), file_type="stl")
+                    logger.info("DfmAgent: loaded mesh from stl_data bytes")
+                except Exception as e:
+                    logger.warning(f"DfmAgent: failed to load stl_data: {e}")
+
+        # Synthesize from geometry_tree bounding box
+        if mesh is None:
+            tree = params.get("geometry_tree") or []
+            if tree and isinstance(tree, list) and len(tree) > 0:
+                node = tree[0] if isinstance(tree[0], dict) else {}
+                bb = node.get("bounding_box")
+                dims = node.get("dimensions") or node.get("params") or {}
+                if bb and len(bb) >= 6:
+                    L = max(abs(float(bb[3]) - float(bb[0])), 1e-3)
+                    W = max(abs(float(bb[4]) - float(bb[1])), 1e-3)
+                    H = max(abs(float(bb[5]) - float(bb[2])), 1e-3)
+                    mesh = trimesh.creation.box([L * 1000, W * 1000, H * 1000])  # mm
+                elif dims:
+                    L = float(dims.get("length") or 0.1) * 1000
+                    W = float(dims.get("width") or 0.06) * 1000
+                    H = float(dims.get("height") or 0.03) * 1000
+                    mesh = trimesh.creation.box([L, W, H])
+
+        # Synthesize from design_parameters
+        if mesh is None:
+            dp = params.get("design_parameters") or {}
+            L_m = float(dp.get("length_m") or dp.get("length") or 0.1)
+            W_m = float(dp.get("width_m") or dp.get("width") or L_m * 0.6)
+            H_m = float(dp.get("height_m") or dp.get("height") or L_m * 0.3)
+            mesh = trimesh.creation.box([L_m * 1000, W_m * 1000, H_m * 1000])  # mm
+            logger.info(f"DfmAgent: synthesised {L_m*1000:.1f}×{W_m*1000:.1f}×{H_m*1000:.1f} mm box")
+
+        # --- Analyze ---
+        try:
+            report = self.analyze_mesh(mesh, processes=processes)
+        except Exception as e:
+            logger.error(f"DfmAgent.analyze_mesh() failed: {e}")
+            return {"status": "error", "error": str(e), "overall_manufacturability_score": 0.0}
+
+        # --- Flatten DfmReport → dict ---
+        critical = [i for i in report.issues if getattr(i, "severity", "low") == "critical"]
+        return {
+            "status": "success",
+            "overall_manufacturability_score": round(float(report.manufacturability_score), 2),
+            "dfm_score": round(float(report.manufacturability_score), 2),
+            "features_detected": len(report.features),
+            "total_issues": len(report.issues),
+            "critical_issues": [i.to_dict() if hasattr(i, "to_dict") else str(i) for i in critical],
+            "critical_issues_count": len(critical),
+            "recommendations": [
+                r.to_dict() if hasattr(r, "to_dict") else str(r)
+                for r in report.recommendations
+            ],
+            "process_recommendations": [
+                p.to_dict() if hasattr(p, "to_dict") else str(p)
+                for p in report.process_recommendations
+            ],
+            "gdt_validations": [
+                g.to_dict() if hasattr(g, "to_dict") else str(g)
+                for g in report.gdt_validations
+            ],
+            "overall_assessment": report.overall_assessment,
+            "step_ap224_features": report.step_ap224_features,
+        }
+
 
 # Convenience functions
 def analyze_mesh_file(

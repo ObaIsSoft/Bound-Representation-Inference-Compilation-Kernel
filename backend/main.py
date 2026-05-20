@@ -31,6 +31,7 @@ try:
 except ImportError:
     from schema import AgentState, BrickProject
 from backend.orchestrator import run_orchestrator, get_agent_registry
+from backend.enums import OrchestratorMode
 from backend.comment_schema import Comment, PlanReview, TextSelection
 # FIX-005: Replaced global plan_reviews with StateManager
 from backend.core.state_manager import (
@@ -92,6 +93,10 @@ app.add_middleware(LatencyMiddleware)
 
 # --- Agent Registry ---
 AGENTS = get_agent_registry()
+
+# Stores Phase 2 plan state keyed by project_id so the approve endpoint can
+# resume Phase 3 with all planning outputs already in state (no re-generation).
+_plan_state_cache: Dict[str, Dict] = {}
 
 # --- Passive XAI Stream (via centralized module to avoid circular imports) ---
 from backend.xai_stream import get_thoughts, inject_thought
@@ -1092,13 +1097,14 @@ async def run_orchestrator_internal(
     project_id: str,
     mode: str = "run",
     focused_pod_id: Optional[str] = None,
-    voice_data = None
+    voice_data = None,
+    initial_state_override: Optional[Dict] = None,
 ):
     """
     Internal orchestrator logic (shared between endpoints).
     """
     logger.info(f"Orchestrator Request: {user_intent} (Mode: {mode}, Voice: {voice_data is not None})")
-    
+
     # 1. Handle Voice Data (Strict Routing to ConversationalAgent)
     transcript = ""
     if voice_data and hasattr(voice_data, "read"):
@@ -1115,7 +1121,8 @@ async def run_orchestrator_internal(
             user_intent=user_intent,
             project_id=project_id,
             mode=mode,
-            focused_pod_id=focused_pod_id
+            focused_pod_id=focused_pod_id,
+            initial_state_override=initial_state_override,
         )
         
         # 3. Generate Standardized Artifacts
@@ -1147,13 +1154,19 @@ async def run_orchestrator_internal(
                 "comments": []
             })
 
+        # After a plan run, cache the state so the approve endpoint can resume
+        # Phase 3 without regenerating the plan from scratch.
+        if mode != OrchestratorMode.EXECUTE and mode != "execute":
+            _plan_state_cache[project_id] = dict(final_state)
+            logger.info(f"[Gate2] Plan state cached for project {project_id}")
+
         return {
             "success": True,
             "project_id": project_id,
             "state": final_state,
             "artifacts": artifacts
         }
-        
+
     except Exception as e:
         import traceback
         logger.error(f"Orchestrator Run Failed: {e}")
@@ -1378,26 +1391,51 @@ class OrchestratorApproveRequest(BaseModel):
     project_id: str
     approved: bool
     user_intent: Optional[str] = None
+    feedback: Optional[str] = None  # Optional rejection feedback
 
 @app.post("/api/orchestrator/approve")
-async def approve_plan_endpoint(
-    req: OrchestratorApproveRequest
-):
+async def approve_plan_endpoint(req: OrchestratorApproveRequest):
     """
-    Handle User Approval Gate.
-    Resumes execution from Phase 3 if approved.
+    Gate 2 resolution endpoint.
+
+    Approved → resumes Phase 3 execution with mode=execute, carrying the cached
+    Phase 2 plan state so geometry/physics agents see the generated plan.
+
+    Rejected → re-runs Phase 2 planning from dreamer_node with user feedback.
     """
+    project_id = req.project_id
+
     if not req.approved:
-         return {"status": "rejected", "message": "Plan rejected by user."}
-         
-    # Resume execution (Phase 3+)
-    # We pass mode="run" to bypass the planning stop
+        # Rejection: re-plan with user's feedback injected into intent
+        feedback_intent = req.user_intent or ""
+        if req.feedback:
+            feedback_intent = f"Revise plan — user feedback: {req.feedback}. Original intent: {feedback_intent}"
+        _plan_state_cache.pop(project_id, None)  # Clear stale plan
+        return await run_orchestrator_internal(
+            user_intent=feedback_intent or "Revise the plan based on user rejection",
+            project_id=project_id,
+            mode="plan",
+            voice_data=None,
+            focused_pod_id=None,
+        )
+
+    # Approval: resume Phase 3 using the cached Phase 2 state
+    cached_state = _plan_state_cache.pop(project_id, None)
+    if cached_state is None:
+        logger.warning(f"[Gate2] No cached plan state for {project_id} — running fresh execute")
+
+    # Merge approval signal into the state override
+    state_override = dict(cached_state) if cached_state else {}
+    state_override["user_approval"] = "approved"
+    state_override["execution_mode"] = OrchestratorMode.EXECUTE
+
     return await run_orchestrator_internal(
-        user_intent=req.user_intent or "Resume execution", 
-        project_id=req.project_id, 
-        mode="run",
+        user_intent=req.user_intent or cached_state.get("user_intent", "Execute approved plan") if cached_state else "Execute approved plan",
+        project_id=project_id,
+        mode=OrchestratorMode.EXECUTE,
         voice_data=None,
-        focused_pod_id=None
+        focused_pod_id=None,
+        initial_state_override=state_override,
     )
 
 class OrchestratorFeedbackRequest(BaseModel):

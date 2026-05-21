@@ -79,7 +79,8 @@ class UserAgent:
         
         try:
             from backend.services import supabase_service
-            self.supabase = supabase_service.supabase
+            await supabase_service.initialize()
+            self.supabase = supabase_service.client
             await self._load_role_permissions()
             self._initialized = True
             logger.info("UserAgent initialized")

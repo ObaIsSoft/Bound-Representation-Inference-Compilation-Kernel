@@ -759,19 +759,28 @@ class StructuralAgent:
         # --- Flatten for pipeline ---
         sf = result.get("safety_factors", {})
         val = result.get("validation", {})
-        max_stress = sf.get("max_stress_mpa") or val.get("max_stress_mpa") or 0.0
-        max_disp_m = val.get("max_displacement_m") or 0.0
+        stresses = result.get("stresses", {})
+        disp = result.get("displacement", {})
+        max_stress = (
+            stresses.get("max") or
+            sf.get("max_stress_mpa") or
+            val.get("max_stress_mpa") or
+            0.0
+        )
+        max_disp_m = disp.get("max") or val.get("max_displacement_m") or 0.0
+        safety_factor = float(sf.get("yielding") or 0.0)
 
         return {
             "status": "unsafe" if sf.get("critical") else "success",
             "fidelity": result.get("fidelity", fidelity.value),
             "max_stress_mpa": round(float(max_stress), 4),
             "max_displacement_mm": round(float(max_disp_m) * 1000, 4),
-            "safety_factor_yield": round(float(sf.get("yielding") or 0.0), 3),
+            "safety_factor": round(safety_factor, 3),
+            "safety_factor_yield": round(safety_factor, 3),
             "safety_factor_ultimate": round(float(sf.get("ultimate") or 0.0), 3) if sf.get("ultimate") else None,
             "yield_exceeded": bool(sf.get("critical", False)),
             "von_mises_max_mpa": round(float(max_stress), 4),
-            "gate_value": round(float(max_stress), 2),  # pipeline gate check
+            "gate_value": round(float(max_stress), 2),
             "validation_passed": val.get("passed", True),
             "validation_issues": val.get("issues", []),
             "material": material.name,

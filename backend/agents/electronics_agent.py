@@ -219,36 +219,251 @@ class ElectronicsAgent:
     async def _simulate_circuit(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """
         Circuit simulation with multi-fidelity support.
-        
+
         Fidelity levels:
-        - SURROGATE: Neural network prediction (<1ms)
-        - SPICE: Full circuit simulation (seconds)
+        - SURROGATE : Neural network prediction (<1 ms)
+        - SPICE     : ngspice full transient/AC/DC simulation (seconds)
+        - ANALYTICAL: Modified Nodal Analysis (MNA) in pure Python — always available
         """
         circuit_data = params.get("circuit", {})
         fidelity = params.get("fidelity", "spice")
-        analysis_type = params.get("analysis_type", "tran")  # dc, ac, tran, op
-        
+        analysis_type = params.get("analysis_type", "op")
+
         # Build circuit object
         circuit = self._parse_circuit(circuit_data)
-        
-        # Try surrogate first for speed
+
+        # 1 — Surrogate (fastest)
         if fidelity == "surrogate" and self._surrogate_available:
             result = await self._surrogate_predict(circuit, analysis_type)
             result["fidelity"] = "surrogate"
             return result
-        
-        # Fall back to SPICE
-        if not self._spice_available:
-            raise RuntimeError(
-                "SPICE simulator not available. "
-                "Install ngspice: apt-get install ngspice "
-                "and PySpice: pip install PySpice"
+
+        # 2 — SPICE (full simulation)
+        if self._spice_available and fidelity in ("spice", "field"):
+            result = await self.spice.simulate(circuit, analysis_type, params)
+            result["fidelity"] = "spice"
+            return result
+
+        # 3 — Analytical MNA (always available, no external deps)
+        return await self._analytical_mna(circuit, analysis_type, params)
+
+    # ------------------------------------------------------------------
+    # Analytical circuit analysis — Modified Nodal Analysis (MNA)
+    # ------------------------------------------------------------------
+
+    async def _analytical_mna(
+        self, circuit: "Circuit", analysis_type: str, params: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Pure-Python MNA solver covering:
+          - DC operating point  (op)
+          - Power budget         (power)
+          - Component-level current/voltage (from params["components"])
+          - Signal integrity estimates
+          - Thermal power dissipation per component
+
+        Falls back to component-list analysis when no explicit netlist is provided.
+        """
+        import numpy as np
+        import time
+        t0 = time.time()
+
+        # ---- Component-list path (orchestrator sends params["components"]) ----
+        raw_components = params.get("components", [])
+        power_supply   = params.get("power_supply", {})
+
+        if raw_components:
+            return await self._power_budget_analysis(raw_components, power_supply, params)
+
+        # ---- Netlist path (circuit object has components dict) ----------------
+        components = circuit.components if hasattr(circuit, "components") else {}
+        if not components:
+            return {
+                "status": "no_circuit",
+                "message": "No components or netlist provided.",
+                "fidelity": "analytical",
+            }
+
+        # Build node list from connections
+        nodes = set()
+        nodes.add("GND")
+        for comp in components.values():
+            for pin in getattr(comp, "connections", {}).values():
+                nodes.add(str(pin))
+        node_list = ["GND"] + sorted(n for n in nodes if n != "GND")
+        n_nodes   = len(node_list)
+        node_idx  = {n: i for i, n in enumerate(node_list)}
+
+        # Conductance matrix G and current vector I (MNA stamp)
+        G = np.zeros((n_nodes, n_nodes))
+        I = np.zeros(n_nodes)
+
+        voltage_sources = []
+        for cid, comp in components.items():
+            ctype = (getattr(comp, "type", "") or "").lower()
+            val   = getattr(comp, "value", 0.0) or 0.0
+            conns = getattr(comp, "connections", {})
+            np_keys = list(conns.keys())
+
+            if ctype == "resistor" and val > 0 and len(np_keys) >= 2:
+                n1 = node_idx.get(str(conns[np_keys[0]]), 0)
+                n2 = node_idx.get(str(conns[np_keys[1]]), 0)
+                g  = 1.0 / val
+                G[n1, n1] += g; G[n2, n2] += g
+                G[n1, n2] -= g; G[n2, n1] -= g
+
+            elif ctype in ("voltage_source", "vdc", "battery") and len(np_keys) >= 2:
+                voltage_sources.append((cid, val, conns, np_keys))
+
+            elif ctype in ("current_source", "idc") and len(np_keys) >= 2:
+                n1 = node_idx.get(str(conns[np_keys[0]]), 0)
+                n2 = node_idx.get(str(conns[np_keys[1]]), 0)
+                I[n1] -= val; I[n2] += val
+
+        # Expand MNA for voltage sources
+        n_vs = len(voltage_sources)
+        if n_vs:
+            size = n_nodes + n_vs
+            A = np.zeros((size, size)); b = np.zeros(size)
+            A[:n_nodes, :n_nodes] = G; b[:n_nodes] = I
+            for k, (cid, vs_val, conns, np_keys) in enumerate(voltage_sources):
+                row = n_nodes + k
+                n1 = node_idx.get(str(conns[np_keys[0]]), 0)
+                n2 = node_idx.get(str(conns[np_keys[1]]), 0)
+                A[row, n1] = 1; A[row, n2] = -1
+                A[n1, row] = 1; A[n2, row] = -1
+                b[row] = vs_val
+            A[0, :] = 0; A[0, 0] = 1; b[0] = 0  # GND = 0 V
+            try:
+                x = np.linalg.solve(A, b)
+                node_voltages = {node_list[i]: round(float(x[i]), 6) for i in range(n_nodes)}
+                vs_currents   = {voltage_sources[k][0]: round(float(x[n_nodes + k]), 6)
+                                 for k in range(n_vs)}
+            except np.linalg.LinAlgError:
+                node_voltages = {n: 0.0 for n in node_list}
+                vs_currents   = {}
+        else:
+            G[0, :] = 0; G[0, 0] = 1; I[0] = 0
+            try:
+                x = np.linalg.solve(G, I)
+                node_voltages = {node_list[i]: round(float(x[i]), 6) for i in range(n_nodes)}
+            except np.linalg.LinAlgError:
+                node_voltages = {n: 0.0 for n in node_list}
+            vs_currents = {}
+
+        # Power dissipation per resistor
+        power_per_comp = {}
+        total_power_w  = 0.0
+        for cid, comp in components.items():
+            ctype = (getattr(comp, "type", "") or "").lower()
+            val   = getattr(comp, "value", 0.0) or 0.0
+            conns = getattr(comp, "connections", {})
+            np_keys = list(conns.keys())
+            if ctype == "resistor" and val > 0 and len(np_keys) >= 2:
+                v1 = node_voltages.get(str(conns[np_keys[0]]), 0.0)
+                v2 = node_voltages.get(str(conns[np_keys[1]]), 0.0)
+                p  = ((v1 - v2) ** 2) / val
+                power_per_comp[cid] = round(p, 6)
+                total_power_w += p
+
+        elapsed_ms = round((time.time() - t0) * 1000, 2)
+        return {
+            "status": "success",
+            "fidelity": "analytical_mna",
+            "analysis_type": analysis_type,
+            "node_voltages": node_voltages,
+            "voltage_source_currents": vs_currents,
+            "power_dissipation_w": power_per_comp,
+            "total_power_w": round(total_power_w, 4),
+            "node_count": n_nodes,
+            "component_count": len(components),
+            "computation_ms": elapsed_ms,
+        }
+
+    async def _power_budget_analysis(
+        self,
+        components: List[Dict],
+        power_supply: Dict,
+        params: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        Power budget + signal integrity analysis for a component list.
+        Used when the orchestrator passes components[] instead of a netlist.
+        """
+        import numpy as np
+
+        supply_voltage = float(power_supply.get("voltage", 5.0))
+        supply_cap_mah = float(power_supply.get("capacity_mah", 0))
+
+        total_current_ma = 0.0
+        total_power_mw   = 0.0
+        comp_results     = []
+        warnings         = []
+
+        for comp in components:
+            name    = comp.get("name", comp.get("type", "unknown"))
+            voltage = float(comp.get("voltage", supply_voltage))
+            current = float(comp.get("current_ma", comp.get("current", 0)))
+            power   = voltage * current  # mW
+
+            # Voltage rail check
+            if voltage > supply_voltage * 1.05:
+                warnings.append(
+                    f"{name}: requires {voltage}V but supply is {supply_voltage}V — "
+                    f"needs regulator/boost converter"
+                )
+
+            total_current_ma += current
+            total_power_mw   += power
+            comp_results.append({
+                "name":       name,
+                "voltage_v":  voltage,
+                "current_ma": current,
+                "power_mw":   round(power, 2),
+            })
+
+        total_power_w = total_power_mw / 1000.0
+
+        # Supply margin
+        supply_current_ma = float(power_supply.get("max_current_ma",
+                                  power_supply.get("current_ma", 0)))
+        if supply_current_ma and total_current_ma > supply_current_ma:
+            warnings.append(
+                f"Total draw {total_current_ma:.0f} mA exceeds supply rating "
+                f"{supply_current_ma:.0f} mA"
             )
-        
-        result = await self.spice.simulate(circuit, analysis_type, params)
-        result["fidelity"] = "spice"
-        
-        return result
+
+        # Battery life estimate
+        battery_life_h = None
+        if supply_cap_mah and total_current_ma:
+            battery_life_h = round(supply_cap_mah / total_current_ma, 2)
+
+        # Signal integrity (interface speed estimates)
+        signal_notes = []
+        for comp in components:
+            iface = (comp.get("interface") or "").upper()
+            if iface == "SPI":
+                signal_notes.append(f"{comp.get('name','?')}: SPI — max trace length ~150 mm at 10 MHz")
+            elif iface == "I2C":
+                signal_notes.append(f"{comp.get('name','?')}: I²C — add 4.7 kΩ pull-ups on SDA/SCL")
+            elif iface == "UART":
+                signal_notes.append(f"{comp.get('name','?')}: UART — ensure common ground, max 15 m at 9600 baud")
+            elif iface in ("PWM", "PWM/PPM"):
+                signal_notes.append(f"{comp.get('name','?')}: PWM — use 100 Ω series resistor to suppress ringing")
+
+        return {
+            "status":              "success",
+            "fidelity":            "analytical_power_budget",
+            "supply_voltage_v":    supply_voltage,
+            "total_current_ma":    round(total_current_ma, 2),
+            "total_power_w":       round(total_power_w, 4),
+            "total_power_mw":      round(total_power_mw, 2),
+            "battery_life_hours":  battery_life_h,
+            "components":          comp_results,
+            "signal_integrity":    signal_notes,
+            "warnings":            warnings,
+            "component_count":     len(components),
+        }
     
     async def _surrogate_predict(self, circuit: Circuit, analysis_type: str) -> Dict[str, Any]:
         """Fast prediction using neural surrogate."""

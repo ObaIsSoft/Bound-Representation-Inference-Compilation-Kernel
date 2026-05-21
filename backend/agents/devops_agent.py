@@ -104,8 +104,8 @@ class DevOpsAgent:
         {"check": "--no-cache", "message": "Optimization: Consider using --no-cache for production builds", "type": "optimization"},
     ]
     
-    # CI/CD Templates
-    GITHUB_ACTIONS_TEMPLATE = """name: CI/CD Pipeline
+    # Firmware CI/CD Templates — PlatformIO-based (C++/C/Rust/Zig firmware projects)
+    PLATFORMIO_GITHUB_ACTIONS = """name: Firmware CI
 
 on:
   push:
@@ -113,138 +113,229 @@ on:
   pull_request:
     branches: [ main ]
 
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
-
 jobs:
-  test:
+  build:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
-    
+
+    - name: Cache PlatformIO
+      uses: actions/cache@v3
+      with:
+        path: ~/.platformio
+        key: ${{ runner.os }}-pio-${{ hashFiles('platformio.ini') }}
+
+    - name: Install PlatformIO
+      run: pip install platformio
+
+    - name: Build firmware
+      run: pio run
+
+    - name: Run native unit tests
+      run: pio test -e native
+
+    - name: Upload firmware artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: firmware-${{ github.sha }}
+        path: .pio/build/*/firmware.*
+        retention-days: 30
+
+  static-analysis:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install cppcheck
+      run: sudo apt-get install -y cppcheck
+
+    - name: Run cppcheck
+      run: cppcheck --error-exitcode=1 --enable=warning,performance,portability src/
+
+    - name: Check for unresolved TODOs
+      run: |
+        count=$(grep -r "TODO\\|FIXME\\|HACK" src/ | wc -l || true)
+        echo "Found $count TODO/FIXME comments"
+"""
+
+    PLATFORMIO_GITLAB_CI = """stages:
+  - build
+  - test
+  - analysis
+
+variables:
+  PIO_CACHE_DIR: "$CI_PROJECT_DIR/.pio"
+
+cache:
+  paths:
+    - .pio/
+    - ~/.platformio/
+
+build:firmware:
+  stage: build
+  image: python:3.11-slim
+  before_script:
+    - pip install platformio
+  script:
+    - pio run
+  artifacts:
+    paths:
+      - .pio/build/*/firmware.*
+    expire_in: 1 week
+
+test:native:
+  stage: test
+  image: python:3.11-slim
+  before_script:
+    - pip install platformio
+  script:
+    - pio test -e native
+
+analysis:cppcheck:
+  stage: analysis
+  image: ubuntu:22.04
+  before_script:
+    - apt-get update -qq && apt-get install -y cppcheck
+  script:
+    - cppcheck --error-exitcode=1 --enable=warning,performance,portability src/
+"""
+
+    MICROPYTHON_GITHUB_ACTIONS = """name: MicroPython CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  syntax-check:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.11'
-    
-    - name: Install dependencies
+
+    - name: Syntax check all .py files
+      run: find . -name "*.py" -not -path "./.git/*" -exec python -m py_compile {} \\;
+
+    - name: Package for mpremote deployment
       run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-    
-    - name: Run tests
-      run: pytest tests/ --cov=src --cov-report=xml
-    
-    - name: Upload coverage
-      uses: codecov/codecov-action@v3
+        mkdir -p dist
+        cp *.py dist/ 2>/dev/null || true
+        echo "Flash: mpremote connect <port> fs cp dist/*.py :" > dist/DEPLOY.txt
 
-  security:
+    - name: Upload flash package
+      uses: actions/upload-artifact@v3
+      with:
+        name: micropython-${{ github.sha }}
+        path: dist/
+        retention-days: 14
+"""
+
+    CIRCUITPYTHON_GITHUB_ACTIONS = """name: CircuitPython CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  check:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
-    
-    - name: Run Bandit
-      uses: PyCQA/bandit@main
-      with:
-        args: "-r src/ -f json -o bandit-report.json"
-    
-    - name: Run Safety
-      run: safety check -r requirements.txt
 
-  build:
-    runs-on: ubuntu-latest
-    needs: [test, security]
-    permissions:
-      contents: read
-      packages: write
-    steps:
-    - uses: actions/checkout@v3
-    
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v2
-    
-    - name: Log in to Container Registry
-      uses: docker/login-action@v2
+    - name: Set up Python
+      uses: actions/setup-python@v4
       with:
-        registry: ${{ env.REGISTRY }}
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
-    
-    - name: Extract metadata
-      id: meta
-      uses: docker/metadata-action@v4
+        python-version: '3.11'
+
+    - name: Syntax check
+      run: find . -name "*.py" -not -path "./.git/*" -exec python -m py_compile {} \\;
+
+    - name: Install circup (library manager)
+      run: pip install circup
+
+    - name: Package deployment
+      run: |
+        mkdir -p dist
+        cp code.py dist/
+        [ -f boot.py ] && cp boot.py dist/ || true
+        [ -f requirements.txt ] && cp requirements.txt dist/ || true
+        echo "Deploy: copy dist/*.py to CIRCUITPY USB drive" > dist/DEPLOY.txt
+
+    - name: Upload deploy package
+      uses: actions/upload-artifact@v3
       with:
-        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-    
-    - name: Build and push
-      uses: docker/build-push-action@v4
-      with:
-        context: .
-        push: true
-        tags: ${{ steps.meta.outputs.tags }}
-        labels: ${{ steps.meta.outputs.labels }}
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
+        name: circuitpython-${{ github.sha }}
+        path: dist/
+        retention-days: 14
 """
-    
-    GITLAB_CI_TEMPLATE = """stages:
-  - test
-  - security
-  - build
-  - deploy
 
-variables:
-  DOCKER_IMAGE: $CI_REGISTRY_IMAGE
-  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
-
-cache:
-  paths:
-    - .cache/pip
-    - venv/
-
-test:
-  stage: test
-  image: python:3.11-slim
-  before_script:
-    - pip install virtualenv
-    - virtualenv venv
-    - source venv/bin/activate
-    - pip install -r requirements.txt
-  script:
-    - pytest tests/ --cov=src --cov-report=xml
-  coverage: '/TOTAL.+ ([0-9]{1,3}%)/'
-  artifacts:
-    reports:
-      coverage_report:
-        coverage_format: cobertura
-        path: coverage.xml
-
-security:
-  stage: security
-  image: python:3.11-slim
-  script:
-    - pip install bandit safety
-    - bandit -r src/ -f json -o bandit-report.json
-    - safety check -r requirements.txt
-  artifacts:
-    reports:
-      sast: bandit-report.json
-    paths:
-      - bandit-report.json
-
-build:
-  stage: build
-  image: docker:latest
-  services:
-    - docker:dind
-  script:
-    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
-    - docker build -t $DOCKER_IMAGE:$CI_COMMIT_SHA .
-    - docker push $DOCKER_IMAGE:$CI_COMMIT_SHA
-    - docker tag $DOCKER_IMAGE:$CI_COMMIT_SHA $DOCKER_IMAGE:latest
-    - docker push $DOCKER_IMAGE:latest
-"""
+    # Per-platform flash instructions keyed by normalized platform name
+    FLASH_INSTRUCTIONS: Dict[str, Dict[str, str]] = {
+        "ESP32": {
+            "tool": "esptool.py",
+            "install": "pip install esptool",
+            "erase": "esptool.py --chip esp32 --port {port} erase_flash",
+            "flash": "esptool.py --chip esp32 --port {port} --baud 460800 write_flash -z 0x1000 firmware.bin",
+            "verify": "esptool.py --chip esp32 --port {port} verify_flash 0x1000 firmware.bin",
+            "port_linux": "/dev/ttyUSB0",
+            "port_mac": "/dev/cu.usbserial-*",
+            "notes": "Hold BOOT button during flashing if device does not auto-enter bootloader mode.",
+        },
+        "ESP8266": {
+            "tool": "esptool.py",
+            "install": "pip install esptool",
+            "erase": "esptool.py --chip esp8266 --port {port} erase_flash",
+            "flash": "esptool.py --chip esp8266 --port {port} --baud 460800 write_flash 0x00000 firmware.bin",
+            "port_linux": "/dev/ttyUSB0",
+            "port_mac": "/dev/cu.usbserial-*",
+            "notes": "GPIO0 must be LOW (GND) during boot to enter flash mode.",
+        },
+        "STM32": {
+            "tool": "OpenOCD or dfu-util",
+            "install": "sudo apt install openocd  # macOS: brew install openocd",
+            "flash_openocd": "openocd -f interface/stlink.cfg -f target/{target}.cfg -c 'program firmware.bin verify reset exit 0x08000000'",
+            "flash_dfu": "dfu-util -d 0483:df11 -a 0 -s 0x08000000:leave -D firmware.bin",
+            "notes": "Use ST-Link V2 for best results. DFU mode: BOOT0=HIGH (3.3V) then RESET.",
+        },
+        "RP2040": {
+            "tool": "UF2 drag-and-drop (no installer needed)",
+            "install": "No installation required for UF2. picotool: brew install picotool",
+            "flash": "Hold BOOTSEL while connecting USB → BOOTFS drive appears → drag firmware.uf2",
+            "flash_picotool": "picotool load firmware.uf2 && picotool reboot",
+            "notes": "PlatformIO build produces .uf2 automatically. elf2uf2 included in toolchain.",
+        },
+        "Arduino": {
+            "tool": "avrdude or arduino-cli",
+            "install": "Included with Arduino IDE, or: sudo apt install avrdude",
+            "flash_avrdude": "avrdude -p atmega328p -c arduino -P {port} -b 115200 -U flash:w:firmware.hex:i",
+            "flash_cli": "arduino-cli upload -p {port} --fqbn arduino:avr:uno .",
+            "notes": "Adjust FQBN (--fqbn) for your specific board variant (Mega, Leonardo, etc.).",
+        },
+        "MicroPython": {
+            "tool": "mpremote + esptool.py (for firmware flash)",
+            "install": "pip install mpremote esptool",
+            "flash_firmware_esp32": "esptool.py --chip esp32 --port {port} write_flash -z 0x1000 micropython-esp32.bin",
+            "deploy_files": "mpremote connect {port} fs cp main.py boot.py :",
+            "run": "mpremote connect {port} run main.py",
+            "repl": "mpremote connect {port}",
+            "notes": "Flash MicroPython .bin firmware first, then copy .py application files.",
+        },
+        "CircuitPython": {
+            "tool": "USB mass storage (no tool needed) + circup",
+            "install": "pip install circup",
+            "deploy": "Copy code.py (and boot.py if present) to the CIRCUITPY USB drive that appears when device is connected",
+            "install_libs": "circup install -r requirements.txt",
+            "notes": "Device auto-runs code.py on startup. Serial REPL available at /dev/ttyACM0.",
+        },
+    }
     
     def __init__(self, llm_provider=None):
         self.name = "DevOpsAgent"
@@ -257,6 +348,245 @@ build:
             "response_time_ms": 1000,
         }
         
+    def generate_deployment_plan(self, code: Any, geometry: Any) -> Dict[str, Any]:
+        """
+        Generate firmware flash plan + CI pipeline + manufacturing handoff for a hardware project.
+
+        Called by devops_node after firmware codegen. Firmware projects never use Docker.
+
+        Args:
+            code: Generated firmware/code artifact — dict with {files, language, platform, environment_type}
+            geometry: Geometry tree from the pipeline (list of nodes or dict)
+
+        Returns:
+            {plan, ci_cd_config, flash_instructions, manufacturing_handoff, compliance_checklist}
+        """
+        language = "cpp"
+        platform_name = "ESP32"
+        environment_type = "GROUND"
+        files: Dict[str, Any] = {}
+
+        if isinstance(code, dict):
+            files = code.get("files", {}) or {}
+            lang_raw = (code.get("language", "") or "").lower()
+            platform_raw = (code.get("platform", "") or "").upper()
+            environment_type = (code.get("environment_type", "GROUND") or "GROUND").upper()
+
+            if "micropython" in lang_raw or "main.py" in files:
+                language = "micropython"
+                platform_name = platform_raw or "ESP32"
+            elif "circuitpython" in lang_raw or "code.py" in files:
+                language = "circuitpython"
+                platform_name = platform_raw or "RP2040"
+            elif "rust" in lang_raw:
+                language = "rust"
+                platform_name = platform_raw or "STM32"
+            elif "zig" in lang_raw:
+                language = "zig"
+                platform_name = platform_raw or "STM32"
+            else:
+                language = "cpp"
+                platform_name = platform_raw or "ESP32"
+
+        platform_key = self._normalize_platform(platform_name)
+        ci_result = self._generate_firmware_ci(language, platform_key)
+        flash = self._get_flash_instructions(language, platform_key)
+        mfg_handoff = self._generate_manufacturing_handoff(geometry, files)
+        compliance = self._generate_compliance_checklist(environment_type)
+
+        n_components = len(geometry) if isinstance(geometry, list) else 0
+
+        plan = {
+            "platform": platform_key,
+            "language": language,
+            "environment_type": environment_type,
+            "geometry_nodes": n_components,
+            "ci_platform": "github",
+            "ci_filename": ci_result.get("filename", ".github/workflows/firmware-ci.yml"),
+            "docker_enabled": False,
+            "steps": ci_result.get("steps", []),
+        }
+
+        return {
+            "plan": plan,
+            "ci_cd_config": {
+                "content": ci_result.get("config", ""),
+                "filename": ci_result.get("filename", ""),
+                "platform": "github",
+            },
+            "flash_instructions": flash,
+            "manufacturing_handoff": mfg_handoff,
+            "compliance_checklist": compliance,
+        }
+
+    def _normalize_platform(self, raw: str) -> str:
+        """Normalize any platform string to a FLASH_INSTRUCTIONS key."""
+        r = raw.upper()
+        if "ESP32" in r or "ESP-IDF" in r:
+            return "ESP32"
+        if "ESP8266" in r:
+            return "ESP8266"
+        if "STM32" in r or "NUCLEO" in r or "DISCO" in r:
+            return "STM32"
+        if "RP2040" in r or "PICO" in r or "RASPBERRY" in r:
+            return "RP2040"
+        if "ARDUINO" in r or "AVR" in r or "NANO" in r or "UNO" in r or "MEGA" in r:
+            return "Arduino"
+        if "MICROPYTHON" in r:
+            return "MicroPython"
+        if "CIRCUITPYTHON" in r:
+            return "CircuitPython"
+        return raw if raw else "ESP32"
+
+    def _generate_firmware_ci(self, language: str, platform: str) -> Dict[str, Any]:
+        """Select the correct firmware CI template for a language/platform combination."""
+        lang = language.lower()
+        if lang == "micropython":
+            return {
+                "config": self.MICROPYTHON_GITHUB_ACTIONS,
+                "filename": ".github/workflows/micropython-ci.yml",
+                "steps": ["syntax_check", "package_deploy", "upload_artifact"],
+                "status": "generated",
+            }
+        if lang == "circuitpython":
+            return {
+                "config": self.CIRCUITPYTHON_GITHUB_ACTIONS,
+                "filename": ".github/workflows/circuitpython-ci.yml",
+                "steps": ["syntax_check", "circup_check", "package_deploy", "upload_artifact"],
+                "status": "generated",
+            }
+        # C++, C, Rust, Zig → PlatformIO
+        return {
+            "config": self.PLATFORMIO_GITHUB_ACTIONS,
+            "filename": ".github/workflows/firmware-ci.yml",
+            "steps": ["platformio_build", "native_unit_tests", "cppcheck", "upload_artifact"],
+            "status": "generated",
+        }
+
+    def _get_flash_instructions(self, language: str, platform: str) -> Dict[str, str]:
+        """Return flash instructions for the given language/platform."""
+        if language == "micropython":
+            return self.FLASH_INSTRUCTIONS.get("MicroPython", {})
+        if language == "circuitpython":
+            return self.FLASH_INSTRUCTIONS.get("CircuitPython", {})
+        return self.FLASH_INSTRUCTIONS.get(platform, self.FLASH_INSTRUCTIONS.get("ESP32", {}))
+
+    def _generate_manufacturing_handoff(self, geometry: Any, files: Dict[str, Any]) -> Dict[str, Any]:
+        """Generate manufacturing handoff checklist from available output files."""
+        file_keys = [k.lower() for k in (files or {}).keys()]
+        has_step = any("step" in f or ".stp" in f for f in file_keys)
+        has_stl = any(f.endswith(".stl") for f in file_keys)
+        has_gcode = any("gcode" in f or f.endswith(".nc") or f.endswith(".ngc") for f in file_keys)
+        has_bom = any("bom" in f or "bill_of_material" in f for f in file_keys)
+        has_asm_drawing = any("assembly" in f or "drawing" in f or "asm" in f for f in file_keys)
+
+        checklist = [
+            {
+                "item": "STEP file (.stp / .step)",
+                "ready": has_step,
+                "required_for": "CNC machining, injection molding, contract manufacturing",
+            },
+            {
+                "item": "STL file",
+                "ready": has_stl,
+                "required_for": "3D printing (FDM, SLA, SLS)",
+            },
+            {
+                "item": "GCode / NC program",
+                "ready": has_gcode,
+                "required_for": "CNC machining — direct machine upload",
+            },
+            {
+                "item": "Bill of Materials CSV",
+                "ready": has_bom,
+                "required_for": "JLCPCB, Digi-Key, Mouser procurement",
+            },
+            {
+                "item": "Assembly drawing (PDF)",
+                "ready": has_asm_drawing,
+                "required_for": "Contract manufacturer assembly instructions",
+            },
+            {
+                "item": "Tolerance callouts",
+                "ready": False,
+                "required_for": "Precision machining — must be added to drawings manually",
+            },
+        ]
+
+        n_ready = sum(1 for c in checklist if c["ready"])
+        return {
+            "checklist": checklist,
+            "ready_count": n_ready,
+            "total_count": len(checklist),
+            "jlcpcb_ready": has_bom,
+            "cnc_ready": has_step and has_gcode,
+            "print_ready": has_stl,
+        }
+
+    def _generate_compliance_checklist(self, environment_type: str) -> Dict[str, Any]:
+        """Generate compliance standards checklist based on deployment environment."""
+        env = (environment_type or "GROUND").upper()
+
+        items = [
+            {"standard": "RoHS 3 (EU 2015/863)", "description": "Restriction of hazardous substances in electrical equipment", "applies": True},
+            {"standard": "WEEE (EU 2012/19/EU)", "description": "Waste electrical and electronic equipment directive", "applies": True},
+        ]
+
+        if env in ("GROUND", "INDOOR", "INDUSTRIAL", "OUTDOOR"):
+            items += [
+                {"standard": "CE Marking", "description": "Conformité Européenne — EU market entry", "applies": True},
+                {"standard": "FCC Part 15", "description": "US electromagnetic emissions for unintentional radiators", "applies": True},
+                {"standard": "IEC 61000 (EMC)", "description": "Electromagnetic compatibility — emissions and immunity", "applies": True},
+            ]
+
+        if env == "INDUSTRIAL":
+            items += [
+                {"standard": "IP54 minimum", "description": "Dust + splash protection per IEC 60529", "applies": True},
+                {"standard": "IEC 60068", "description": "Environmental testing — temperature, humidity, vibration", "applies": True},
+                {"standard": "UL 61010-1", "description": "Safety for measurement, control and laboratory equipment", "applies": True},
+                {"standard": "ATEX / IECEx", "description": "Explosive atmosphere rating (if applicable)", "applies": False},
+            ]
+
+        if env in ("AEROSPACE", "AVIONICS"):
+            items += [
+                {"standard": "DO-178C", "description": "Software considerations in airborne systems certification", "applies": True},
+                {"standard": "RTCA DO-160G", "description": "Environmental conditions and test procedures for airborne equipment", "applies": True},
+                {"standard": "MIL-STD-461G", "description": "EMC requirements for military / aerospace equipment", "applies": True},
+                {"standard": "MIL-STD-810H", "description": "Environmental engineering — temperature, shock, vibration, humidity", "applies": True},
+            ]
+
+        if env == "SPACE":
+            items += [
+                {"standard": "ECSS-E-ST-20C", "description": "Space product assurance — electrical and electronic", "applies": True},
+                {"standard": "NASA-STD-8739.8", "description": "Workmanship standard for crimping, interconnecting cables", "applies": True},
+                {"standard": "NASA SP-R-0022A", "description": "Outgassing requirements for materials in vacuum", "applies": True},
+                {"standard": "MIL-STD-1540E", "description": "Product verification requirements for launch, upper stage, and space vehicles", "applies": True},
+                {"standard": "Total Ionizing Dose (TID) rating", "description": "Radiation hardness for electronics in orbit", "applies": True},
+            ]
+
+        if env == "UNDERWATER":
+            items += [
+                {"standard": "IP68", "description": "Dust-tight + continuous immersion protection per IEC 60529", "applies": True},
+                {"standard": "NEMA 6P", "description": "Waterproof enclosure standard — submersible", "applies": True},
+                {"standard": "DNV GL", "description": "Marine / subsea equipment classification (offshore)", "applies": False},
+            ]
+
+        if env == "MEDICAL":
+            items += [
+                {"standard": "IEC 60601-1", "description": "Medical electrical equipment — general safety requirements", "applies": True},
+                {"standard": "ISO 14971", "description": "Risk management for medical devices", "applies": True},
+                {"standard": "FDA 21 CFR Part 11", "description": "Electronic records and signatures for FDA submissions", "applies": True},
+                {"standard": "IEC 62304", "description": "Medical device software — software life cycle processes", "applies": True},
+            ]
+
+        return {
+            "environment": environment_type,
+            "standards": items,
+            "total": len(items),
+            "mandatory_count": sum(1 for i in items if i["applies"]),
+            "note": "Compliance testing must be performed by an accredited third-party laboratory before market entry.",
+        }
+
     def run(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """
         Execute DevOps diagnostics.
@@ -834,51 +1164,46 @@ build:
         }
     
     def _action_generate_pipeline(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Generate CI/CD pipeline configuration."""
-        platform = params.get("platform", "github")  # github, gitlab, azure, jenkins
-        language = params.get("language", "python")
-        test_framework = params.get("test_framework", "pytest")
-        enable_docker = params.get("enable_docker", True)
-        enable_security = params.get("enable_security", True)
-        enable_deploy = params.get("enable_deploy", False)
-        deploy_target = params.get("deploy_target", "")
-        
-        templates = {
-            "github": self.GITHUB_ACTIONS_TEMPLATE,
-            "gitlab": self.GITLAB_CI_TEMPLATE,
-        }
-        
-        if platform not in templates:
-            # Generate with LLM if available
-            if self.llm_provider:
-                return self._generate_custom_pipeline(params)
-            return {
-                "status": "error",
-                "message": f"Template not available for {platform}",
-                "supported_platforms": list(templates.keys())
-            }
-        
-        template = templates[platform]
-        
-        # Customize template based on parameters
-        if not enable_docker:
-            # Remove Docker-related steps
-            template = re.sub(r'\s+- name: Set up Docker Buildx.*?push: true\n', '', template, flags=re.DOTALL)
-        
-        if not enable_security:
-            # Remove security job
-            template = re.sub(r'\s+security:.*?artifacts:.*?bandit-report\.json\n', '', template, flags=re.DOTALL)
-        
+        """Generate firmware CI/CD pipeline configuration, dispatched by language."""
+        ci_platform = params.get("platform", "github")  # github or gitlab
+        language = (params.get("language", "cpp") or "cpp").lower()
+
+        # Dispatch to the correct firmware CI template by language
+        if language in ("micropython",):
+            if ci_platform == "gitlab":
+                # MicroPython GitLab — syntax check + package job
+                template = self.MICROPYTHON_GITHUB_ACTIONS.replace(
+                    "name: MicroPython CI", "# MicroPython GitLab CI"
+                ).replace(
+                    "uses: actions/checkout@v3", "- git clone"
+                )
+            else:
+                template = self.MICROPYTHON_GITHUB_ACTIONS
+            filename = ".github/workflows/micropython-ci.yml" if ci_platform == "github" else ".gitlab-ci.yml"
+            steps = ["syntax_check", "package_deploy", "upload_artifact"]
+
+        elif language in ("circuitpython",):
+            template = self.CIRCUITPYTHON_GITHUB_ACTIONS
+            filename = ".github/workflows/circuitpython-ci.yml" if ci_platform == "github" else ".gitlab-ci.yml"
+            steps = ["syntax_check", "circup_check", "package_deploy", "upload_artifact"]
+
+        else:
+            # C++, C, Rust, Zig — all go through PlatformIO
+            if ci_platform == "gitlab":
+                template = self.PLATFORMIO_GITLAB_CI
+                filename = ".gitlab-ci.yml"
+            else:
+                template = self.PLATFORMIO_GITHUB_ACTIONS
+                filename = ".github/workflows/firmware-ci.yml"
+            steps = ["platformio_build", "native_unit_tests", "cppcheck", "upload_artifact"]
+
         return {
             "status": "success",
-            "platform": platform,
+            "platform": ci_platform,
+            "language": language,
             "config": template,
-            "filename": ".github/workflows/ci.yml" if platform == "github" else ".gitlab-ci.yml",
-            "customizations": {
-                "docker": enable_docker,
-                "security": enable_security,
-                "deploy": enable_deploy
-            }
+            "filename": filename,
+            "steps": steps,
         }
     
     def _generate_custom_pipeline(self, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -963,9 +1288,9 @@ build:
         }
     
     def _action_monitor_resources(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Monitor system resources over time."""
-        duration_seconds = params.get("duration", 60)
-        interval_seconds = params.get("interval", 5)
+        """Monitor system resources over time. Default 5s to avoid blocking the pipeline."""
+        duration_seconds = params.get("duration", 5)
+        interval_seconds = params.get("interval", 1)
         
         try:
             import psutil
@@ -1034,89 +1359,120 @@ build:
         if scan_type == "dependencies":
             # Check Python dependencies
             if os.path.exists("requirements.txt"):
-                try:
-                    result = subprocess.run(
-                        ["safety", "check", "-r", "requirements.txt", "--json"],
-                        capture_output=True,
-                        text=True,
-                        timeout=60
-                    )
-                    if result.returncode == 0:
-                        safety_data = json.loads(result.stdout)
-                        for vuln in safety_data.get("vulnerabilities", []):
-                            vulnerabilities.append({
-                                "package": vuln.get("package_name"),
-                                "installed_version": vuln.get("vulnerable_spec"),
-                                "vulnerable_spec": vuln.get("vulnerable_spec"),
-                                "CVE": vuln.get("cve"),
-                                "severity": vuln.get("severity", "unknown"),
-                                "advisory": vuln.get("advisory"),
-                            })
-                except FileNotFoundError:
+                if not shutil.which("safety"):
                     vulnerabilities.append({
+                        "type": "tool_missing",
                         "package": "safety",
-                        "error": "safety package not installed",
-                        "fix": "pip install safety"
+                        "error": "safety not installed — dependency vulnerability scan skipped",
+                        "fix": "pip install safety",
+                        "severity": "INFO",
                     })
-                except Exception as e:
-                    vulnerabilities.append({
-                        "package": "scan",
-                        "error": str(e)
-                    })
+                else:
+                    try:
+                        result = subprocess.run(
+                            ["safety", "check", "-r", "requirements.txt", "--json"],
+                            capture_output=True,
+                            text=True,
+                            timeout=60
+                        )
+                        if result.stdout:
+                            safety_data = json.loads(result.stdout)
+                            for vuln in safety_data.get("vulnerabilities", []):
+                                vulnerabilities.append({
+                                    "package": vuln.get("package_name"),
+                                    "installed_version": vuln.get("vulnerable_spec"),
+                                    "vulnerable_spec": vuln.get("vulnerable_spec"),
+                                    "CVE": vuln.get("cve"),
+                                    "severity": vuln.get("severity", "unknown"),
+                                    "advisory": vuln.get("advisory"),
+                                })
+                    except Exception as e:
+                        vulnerabilities.append({
+                            "type": "scan_error",
+                            "package": "safety",
+                            "error": f"safety scan failed: {str(e)}",
+                            "severity": "INFO",
+                        })
             
             # Bandit code scan
             if os.path.exists("src") or os.path.exists("backend"):
-                try:
-                    src_dir = "src" if os.path.exists("src") else "backend"
-                    result = subprocess.run(
-                        ["bandit", "-r", src_dir, "-f", "json"],
-                        capture_output=True,
-                        text=True,
-                        timeout=60
-                    )
-                    bandit_data = json.loads(result.stdout)
-                    for issue in bandit_data.get("results", []):
+                src_dir = "src" if os.path.exists("src") else "backend"
+                if not shutil.which("bandit"):
+                    vulnerabilities.append({
+                        "type": "tool_missing",
+                        "package": "bandit",
+                        "error": "bandit not installed — static code analysis skipped",
+                        "fix": "pip install bandit",
+                        "severity": "INFO",
+                    })
+                else:
+                    try:
+                        result = subprocess.run(
+                            ["bandit", "-r", src_dir, "-f", "json"],
+                            capture_output=True,
+                            text=True,
+                            timeout=60
+                        )
+                        if result.stdout:
+                            bandit_data = json.loads(result.stdout)
+                            for issue in bandit_data.get("results", []):
+                                vulnerabilities.append({
+                                    "type": "code",
+                                    "test_id": issue.get("test_id"),
+                                    "test_name": issue.get("test_name"),
+                                    "severity": issue.get("issue_severity"),
+                                    "confidence": issue.get("issue_confidence"),
+                                    "filename": issue.get("filename"),
+                                    "line": issue.get("line_number"),
+                                    "code": issue.get("code"),
+                                })
+                    except Exception as e:
                         vulnerabilities.append({
-                            "type": "code",
-                            "test_id": issue.get("test_id"),
-                            "test_name": issue.get("test_name"),
-                            "severity": issue.get("issue_severity"),
-                            "confidence": issue.get("issue_confidence"),
-                            "filename": issue.get("filename"),
-                            "line": issue.get("line_number"),
-                            "code": issue.get("code"),
+                            "type": "scan_error",
+                            "package": "bandit",
+                            "error": f"bandit scan failed: {str(e)}",
+                            "severity": "INFO",
                         })
-                except FileNotFoundError:
-                    pass  # Bandit not installed
         
         elif scan_type == "container":
             image = params.get("image")
             if image:
-                try:
-                    result = subprocess.run(
-                        ["trivy", "image", "--format", "json", image],
-                        capture_output=True,
-                        text=True,
-                        timeout=120
-                    )
-                    trivy_data = json.loads(result.stdout)
-                    for result in trivy_data.get("Results", []):
-                        for vuln in result.get("Vulnerabilities", []):
-                            vulnerabilities.append({
-                                "type": "container",
-                                "vulnerability_id": vuln.get("VulnerabilityID"),
-                                "pkg_name": vuln.get("PkgName"),
-                                "installed_version": vuln.get("InstalledVersion"),
-                                "fixed_version": vuln.get("FixedVersion"),
-                                "severity": vuln.get("Severity"),
-                                "title": vuln.get("Title"),
-                            })
-                except FileNotFoundError:
+                if not shutil.which("trivy"):
                     vulnerabilities.append({
-                        "type": "container",
-                        "error": "trivy not installed",
-                        "fix": "Install trivy: https://aquasecurity.github.io/trivy/"
+                        "type": "tool_missing",
+                        "package": "trivy",
+                        "error": "trivy not installed — container scan skipped",
+                        "fix": "Install trivy: https://aquasecurity.github.io/trivy/latest/getting-started/installation/",
+                        "severity": "INFO",
                     })
+                else:
+                    try:
+                        proc = subprocess.run(
+                            ["trivy", "image", "--format", "json", image],
+                            capture_output=True,
+                            text=True,
+                            timeout=120
+                        )
+                        if proc.stdout:
+                            trivy_data = json.loads(proc.stdout)
+                            for scan_result in trivy_data.get("Results", []):
+                                for vuln in (scan_result.get("Vulnerabilities") or []):
+                                    vulnerabilities.append({
+                                        "type": "container",
+                                        "vulnerability_id": vuln.get("VulnerabilityID"),
+                                        "pkg_name": vuln.get("PkgName"),
+                                        "installed_version": vuln.get("InstalledVersion"),
+                                        "fixed_version": vuln.get("FixedVersion"),
+                                        "severity": vuln.get("Severity"),
+                                        "title": vuln.get("Title"),
+                                    })
+                    except Exception as e:
+                        vulnerabilities.append({
+                            "type": "scan_error",
+                            "package": "trivy",
+                            "error": f"trivy scan failed: {str(e)}",
+                            "severity": "INFO",
+                        })
         
         critical = sum(1 for v in vulnerabilities if v.get("severity") == "CRITICAL")
         high = sum(1 for v in vulnerabilities if v.get("severity") == "HIGH")

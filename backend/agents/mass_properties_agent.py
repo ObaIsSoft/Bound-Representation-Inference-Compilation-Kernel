@@ -38,18 +38,17 @@ class MassPropertiesAgent:
         density_g_cm3 = None
         try:
             import asyncio
-            from backend.services import supabase
-            # Try to get material from Supabase
+            from backend.services import supabase_service
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-            mat_data = loop.run_until_complete(supabase.get_material(material_name))
-            if mat_data and mat_data.get("density_kg_m3"):
-                # Convert kg/m3 to g/cm3 (divide by 1000)
-                density_g_cm3 = mat_data["density_kg_m3"] / 1000.0
+            loop.run_until_complete(supabase_service.initialize())
+            mat_data = loop.run_until_complete(supabase_service.get_material(material_name))
             loop.close()
+            if mat_data and mat_data.get("density_kg_m3"):
+                density_g_cm3 = mat_data["density_kg_m3"] / 1000.0
         except Exception as e:
             logger.warning(f"Could not fetch density from Supabase: {e}")
-        
+
         if density_g_cm3 is None:
             return {
                 "error": f"Could not find density for material '{material_name}'",
@@ -185,3 +184,56 @@ class MassPropertiesAgent:
             "center_of_gravity": cg,
             "logs": logs
         }
+
+    def run(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Orchestrator-compatible entry point.
+
+        Accepts the pipeline state dict and dispatches to the positional
+        run(geometry, material_name) method above.  All material properties
+        (density, etc.) come from Supabase — nothing is hardcoded here.
+        """
+        # Extract geometry
+        geometry = (
+            params.get("geometry_tree") or
+            params.get("geometry") or
+            []
+        )
+        if not isinstance(geometry, list):
+            geometry = []
+
+        # Extract material name
+        material_name = (
+            params.get("material_name") or
+            params.get("material") or
+            (params.get("design_parameters") or {}).get("material") or
+            "aluminum_6061"
+        )
+        if isinstance(material_name, dict):
+            material_name = material_name.get("name", "aluminum_6061")
+
+        # If direct volume / density supplied (e.g. from orchestrator fast-path),
+        # bypass Supabase entirely and compute inline — caller already has the data.
+        if "volume_cm3" in params and "material_density" in params:
+            volume_cm3 = float(params["volume_cm3"])
+            density_g_cm3 = float(params["material_density"])
+            bbox = params.get("bounding_box", [10.0, 10.0, 10.0])
+            mass_g = volume_cm3 * density_g_cm3
+            mass_kg = mass_g / 1000.0
+            lx, ly, lz = bbox[0]/100.0, bbox[1]/100.0, bbox[2]/100.0
+            ixx = (mass_kg / 12.0) * (ly**2 + lz**2)
+            iyy = (mass_kg / 12.0) * (lx**2 + lz**2)
+            izz = (mass_kg / 12.0) * (lx**2 + ly**2)
+            pv_mass = create_physical_value(mass_kg, Unit.KILOGRAMS, source=self.name)
+            return {
+                "status": "success",
+                "total_mass_kg": mass_kg,
+                "mass": pv_mass.to_dict(),
+                "inertia_tensor": [ixx, iyy, izz],
+                "center_of_gravity": [0.0, 0.0, 0.0],
+                "logs": [f"Volume: {volume_cm3:.2f} cm³, Density: {density_g_cm3:.2f} g/cm³",
+                         f"Mass: {mass_kg:.4f} kg"],
+            }
+
+        # Full Supabase path
+        return self.run(geometry, material_name)

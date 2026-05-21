@@ -88,7 +88,8 @@ class VerificationAgent:
         
         try:
             from backend.services import supabase_service
-            self.supabase = supabase_service.supabase
+            await supabase_service.initialize()
+            self.supabase = supabase_service.client
             self._initialized = True
             logger.info("VerificationAgent initialized")
         except Exception as e:

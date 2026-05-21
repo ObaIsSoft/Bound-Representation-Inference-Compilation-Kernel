@@ -174,10 +174,10 @@ class CostAgent:
         try:
             from backend.services import pricing_service, supabase_service
             self.pricing_service = pricing_service
-            self.supabase = supabase_service.supabase
-            
+            await supabase_service.initialize()
+            self.supabase = supabase_service.client
+
             await self.pricing_service.initialize()
-            await self.supabase.initialize()
             
             self._initialized = True
             logger.info("CostAgent services initialized")

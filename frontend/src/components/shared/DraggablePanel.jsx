@@ -4,32 +4,57 @@ import { usePanel } from '../../contexts/PanelContext';
 import { GripVertical } from 'lucide-react';
 import { useTheme } from '../../contexts/ThemeContext';
 
+// Minimum pixels of the panel that must remain visible after any drag or resize
+const VISIBLE_MIN = 200;
+
 const DraggablePanel = ({ id, children, className = '', headerContent, zIndex = 50 }) => {
     const { panels, setPosition, setSize } = usePanel();
     const { theme } = useTheme();
     const panelState = panels[id];
     const resizeRef = useRef(null);
     const dragControls = useDragControls();
+    const panelStateRef = useRef(panelState);
+    panelStateRef.current = panelState;
 
     // Local state for resizing to avoid context thrashing
     const [isResizing, setIsResizing] = useState(false);
 
+    // Clamp panel into viewport on mount and on window resize.
+    // Fixes the "console disappears after drag" issue — any position that slipped
+    // off-screen is corrected the next time the panel becomes visible.
+    useEffect(() => {
+        const clamp = () => {
+            const ps = panelStateRef.current;
+            if (!ps?.isOpen || !ps.position || !ps.size) return;
+            const cx = Math.max(
+                -(ps.size.width - VISIBLE_MIN),
+                Math.min(ps.position.x, window.innerWidth - VISIBLE_MIN)
+            );
+            const cy = Math.max(
+                0,
+                Math.min(ps.position.y, window.innerHeight - VISIBLE_MIN)
+            );
+            if (cx !== ps.position.x || cy !== ps.position.y) {
+                setPosition(id, { x: cx, y: cy });
+            }
+        };
+        clamp();
+        window.addEventListener('resize', clamp);
+        return () => window.removeEventListener('resize', clamp);
+    }, [id, setPosition]);
+
     if (!panelState?.isOpen) return null;
 
     const handleDragEnd = (event, info) => {
-        // Update persistent state with the delta
-        // We add the drag delta to the original position
         let newX = panelState.position.x + info.offset.x;
         let newY = panelState.position.y + info.offset.y;
 
-        // Visual viewports bounds
-        // Allow panel to go off screen but keep 50px visible
-        const minX = -panelState.size.width + 50;
-        const maxX = window.innerWidth - 50;
-        const minY = 0; // Don't allow going above top
-        const maxY = window.innerHeight - 50;
+        // Keep at least VISIBLE_MIN px of the panel within the viewport
+        const minX = -(panelState.size.width - VISIBLE_MIN);
+        const maxX = window.innerWidth - VISIBLE_MIN;
+        const minY = 0;
+        const maxY = window.innerHeight - VISIBLE_MIN;
 
-        // Constrain
         newX = Math.max(minX, Math.min(newX, maxX));
         newY = Math.max(minY, Math.min(newY, maxY));
 

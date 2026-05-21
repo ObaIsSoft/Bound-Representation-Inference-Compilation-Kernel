@@ -70,7 +70,22 @@ class SupabaseService:
         """Initialize Supabase and Redis connections"""
         if self._initialized:
             return
-            
+
+        # Load .env from backend/ or project root so credentials are available
+        # regardless of the working directory the process was started from.
+        try:
+            from dotenv import load_dotenv
+            _here = os.path.dirname(os.path.abspath(__file__))
+            for candidate in [
+                os.path.join(_here, "..", ".env"),          # backend/.env
+                os.path.join(_here, "..", "..", ".env"),    # project root .env
+            ]:
+                if os.path.exists(candidate):
+                    load_dotenv(candidate, override=False)
+                    break
+        except ImportError:
+            pass
+
         # Initialize Supabase
         if HAS_SUPABASE:
             url = os.getenv("SUPABASE_URL")
@@ -102,6 +117,11 @@ class SupabaseService:
         
         self._initialized = True
     
+    @property
+    def supabase(self) -> Optional[Any]:
+        """Backward-compat alias — returns the underlying Supabase client."""
+        return self.client
+
     def _ensure_initialized(self):
         """Ensure service is initialized"""
         if not self._initialized:

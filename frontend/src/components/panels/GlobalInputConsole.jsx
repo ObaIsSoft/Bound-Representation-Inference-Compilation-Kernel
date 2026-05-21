@@ -7,6 +7,7 @@ import { Image, Pencil, Mic, History, GitGraph, X, Paperclip, Box, Play, Activit
 import { useDropzone } from 'react-dropzone';
 import { LLM_PROVIDERS } from '../../utils/constants';
 import apiClient from '../../utils/apiClient';
+import useWebSocket from '../../hooks/useWebSocket';
 
 // Spatial toolbar modes - only shown in workspace
 const SPATIAL_MODES = [
@@ -46,9 +47,45 @@ const GlobalInputConsole = () => {
     const [isRecording, setIsRecording] = useState(false);
     const [isTranscribing, setIsTranscribing] = useState(false);
     const [showAttachMenu, setShowAttachMenu] = useState(false);
-    
-    // Spatial mode state - only for workspace
     const [spatialMode, setSpatialMode] = useState('design');
+
+    // Pipeline WebSocket state
+    const [pipelineProjectId, setPipelineProjectId] = useState(null);
+    const pipelineSessionRef = useRef(null); // session ID active when pipeline started
+
+    const pipelineHandlerRef = useRef(null);
+    pipelineHandlerRef.current = (data) => {
+        const sid = pipelineSessionRef.current;
+        if (!sid) return;
+        switch (data.type) {
+            case 'thought':
+                addMessageToSession(sid, 'thought', data.thought || data.content || '', { agent: data.agent });
+                break;
+            case 'agent_progress':
+                // Thought stream overlay handles visual progress; skip chat spam
+                break;
+            case 'completed':
+                addMessageToSession(sid, 'agent', data.result?.summary || 'Design pipeline complete.', { type: 'pipeline_complete' });
+                setIsAgentProcessing(false);
+                setPipelineProjectId(null);
+                pipelineSessionRef.current = null;
+                break;
+            case 'error':
+                addMessageToSession(sid, 'agent', `Pipeline error: ${data.error || 'Unknown error.'}`, { type: 'error' });
+                setIsAgentProcessing(false);
+                setPipelineProjectId(null);
+                pipelineSessionRef.current = null;
+                break;
+            default:
+                break;
+        }
+    };
+
+    useWebSocket({
+        projectId: pipelineProjectId,
+        onMessage: (data) => pipelineHandlerRef.current?.(data),
+        autoReconnect: false,
+    });
 
     const isMainPanelOpen = panels[PANEL_IDS.MAIN]?.isOpen;
     const isWorkspace = location.pathname === '/workspace';
@@ -119,12 +156,8 @@ const GlobalInputConsole = () => {
                 await fetchSessions();
             }
 
-            if (responseData.project_id) {
-                setActiveProjectId(responseData.project_id);
-                setIsAgentProcessing(true);
-            }
-
             const targetSessionId = responseData.session_id || activeSessionId;
+
             if (thoughts && thoughts.length > 0) {
                 thoughts.forEach(t => {
                     addMessageToSession(targetSessionId, 'thought', t.text || t.content, {
@@ -138,6 +171,14 @@ const GlobalInputConsole = () => {
             addMessageToSession(targetSessionId, 'agent', responseData.response, {
                 intent: responseData.intent
             });
+
+            if (responseData.project_id) {
+                setActiveProjectId(responseData.project_id);
+                setIsAgentProcessing(true);
+                pipelineSessionRef.current = targetSessionId;
+                setPipelineProjectId(responseData.project_id);
+                addMessageToSession(targetSessionId, 'agent', 'Running design pipeline — streaming results...', { type: 'pipeline_start' });
+            }
 
         } catch (err) {
             console.error('Chat error:', err);

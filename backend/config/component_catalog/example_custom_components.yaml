@@ -1,0 +1,106 @@
+# Custom component catalog — extend the CodegenAgent without touching Python code.
+#
+# Drop any *.yaml file in this directory. The agent loads all of them at startup.
+# Component IDs must be unique across all files (last-loaded wins on collision).
+#
+# Pin placeholder tokens:
+#   I2C  : {scl} {sda}   (shared bus — Wire.begin() called once for all I2C devices)
+#   SPI  : {sclk} {miso} {mosi} {cs}   (shared bus, unique {cs} per device)
+#   UART : {tx} {rx}
+#   PWM  : {pwm}
+#   GPIO : {pin}  or  {pin_a}, {pin_b} for multi-pin devices
+#
+# {name} is replaced with a sanitised C identifier derived from the component name.
+# All template strings are Python .format() templates.
+
+components:
+
+  # ── Example: MAX31865 RTD amplifier (SPI) ─────────────────────────────────
+  max31865_rtd:
+    name: "MAX31865 RTD Amplifier"
+    category: sensor
+    library: "Adafruit MAX31865"
+    dependencies: ["Adafruit_MAX31865"]
+    required_interfaces: ["SPI"]
+    pins_needed: 4
+    headers: ["<Adafruit_MAX31865.h>"]
+    primary_output: "temperature_{name}"
+    templates:
+      cpp_init: |
+        Adafruit_MAX31865 {name}(MAX31865_3WIRE, &SPI, {cs});
+        {name}.begin(MAX31865_3WIRE);
+      cpp_loop: |
+        float temperature_{name} = {name}.temperature(100.0f, 430.0f);
+        uint8_t fault_{name} = {name}.readFault();
+        if (fault_{name}) {{
+          Serial.printf("{name} fault: 0x%02X\n", fault_{name});
+          {name}.clearFault();
+        }}
+      micropython_init: |
+        import max31865
+        {name} = max31865.MAX31865(spi, cs=Pin({cs}), wires=3)
+      micropython_loop: |
+        temperature_{name} = {name}.temperature
+
+  # ── Example: ADS1115 16-bit ADC (I2C) ─────────────────────────────────────
+  ads1115_adc:
+    name: "ADS1115 16-bit ADC"
+    category: sensor
+    library: "Adafruit ADS1X15"
+    dependencies: ["Adafruit_ADS1X15"]
+    required_interfaces: ["I2C"]
+    pins_needed: 2
+    headers: ["<Adafruit_ADS1x15.h>"]
+    primary_output: "voltage_{name}"
+    templates:
+      cpp_init: |
+        Adafruit_ADS1115 {name};
+        {name}.begin(0x48);
+        {name}.setGain(GAIN_ONE);
+      cpp_loop: |
+        int16_t raw_{name}   = {name}.readADC_SingleEnded(0);
+        float   voltage_{name} = {name}.computeVolts(raw_{name});
+      micropython_init: |
+        import ads1x15
+        {name} = ads1x15.ADS1115(i2c, address=0x48, gain=1)
+      micropython_loop: |
+        voltage_{name} = {name}.read(0) * 0.0000625
+
+  # ── Example: L298N dual H-bridge motor driver (PWM + GPIO) ────────────────
+  l298n_motor:
+    name: "L298N Dual H-Bridge"
+    category: motor
+    library: ""
+    dependencies: []
+    required_interfaces: ["PWM"]
+    pins_needed: 3
+    headers: []
+    primary_output: ""
+    templates:
+      cpp_init: |
+        pinMode({pin_a}, OUTPUT);
+        pinMode({pin_b}, OUTPUT);
+        analogWrite({pwm}, 0);
+      cpp_loop: |
+        // L298N {name}: set direction and speed
+        // speed_{name}: -255 to +255 (negative = reverse)
+        if (speed_{name} >= 0) {{
+          digitalWrite({pin_a}, HIGH); digitalWrite({pin_b}, LOW);
+          analogWrite({pwm}, speed_{name});
+        }} else {{
+          digitalWrite({pin_a}, LOW); digitalWrite({pin_b}, HIGH);
+          analogWrite({pwm}, -speed_{name});
+        }}
+      micropython_init: |
+        from machine import Pin, PWM
+        {name}_a = Pin({pin_a}, Pin.OUT)
+        {name}_b = Pin({pin_b}, Pin.OUT)
+        {name}_pwm = PWM(Pin({pwm}), freq=1000)
+      micropython_loop: |
+        # L298N {name}: speed_{name} in range -65535 to 65535
+        if speed_{name} >= 0:
+            {name}_a.value(1); {name}_b.value(0)
+            {name}_pwm.duty_u16(speed_{name})
+        else:
+            {name}_a.value(0); {name}_b.value(1)
+            {name}_pwm.duty_u16(-speed_{name})

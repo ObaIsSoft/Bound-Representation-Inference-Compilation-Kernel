@@ -1,0 +1,97 @@
+# ESP32-WROOM-32 Hardware Database
+# Family: ESP32 (Xtensa LX6 dual-core)
+# Package: WROOM-32 module (38-pin)
+# Datasheet: https://www.espressif.com/en/products/modules/esp32
+
+mcu: ESP32-WROOM-32
+family: esp32
+clock_mhz: 240
+flash_mb: 4
+sram_kb: 520
+adc_channels: 18
+dac_channels: 2
+
+# Only restricted/special pins listed; all other GPIOs are general-purpose
+pins:
+  GPIO0:  {restrictions: [strapping_pin],    note: "Low on reset = download mode"}
+  GPIO2:  {restrictions: [strapping_pin],    note: "Must be low during flash download"}
+  GPIO5:  {restrictions: [strapping_pin],    note: "SDIO timing — default high"}
+  GPIO6:  {restrictions: [internal_flash],   note: "SPI flash CLK — do not use"}
+  GPIO7:  {restrictions: [internal_flash],   note: "SPI flash D0 — do not use"}
+  GPIO8:  {restrictions: [internal_flash],   note: "SPI flash D1 — do not use"}
+  GPIO9:  {restrictions: [internal_flash],   note: "SPI flash D2 — do not use"}
+  GPIO10: {restrictions: [internal_flash],   note: "SPI flash D3 — do not use"}
+  GPIO11: {restrictions: [internal_flash],   note: "SPI flash CMD — do not use"}
+  GPIO12: {restrictions: [strapping_pin],    note: "VDD_SDIO voltage select"}
+  GPIO15: {restrictions: [strapping_pin],    note: "UART0 log output control"}
+  GPIO34: {restrictions: [input_only],       electrical: {input_only: true}}
+  GPIO35: {restrictions: [input_only],       electrical: {input_only: true}}
+  GPIO36: {restrictions: [input_only],       electrical: {input_only: true}}
+  GPIO39: {restrictions: [input_only],       electrical: {input_only: true}}
+
+peripherals:
+  i2c:
+    - name: I2C0
+      scl: GPIO22
+      sda: GPIO21
+      max_freq_khz: 400
+    - name: I2C1
+      scl: GPIO26
+      sda: GPIO25
+      max_freq_khz: 400
+
+  spi:
+    - name: SPI2
+      sclk: GPIO18
+      miso: GPIO19
+      mosi: GPIO23
+      cs_pool: [GPIO5, GPIO4, GPIO13, GPIO14, GPIO17, GPIO27, GPIO33]
+    - name: SPI3
+      sclk: GPIO14
+      miso: GPIO13
+      mosi: GPIO27
+      cs_pool: [GPIO15, GPIO32, GPIO33, GPIO4]
+
+  uart:
+    - name: UART0
+      tx: GPIO1
+      rx: GPIO3
+    - name: UART1
+      tx: GPIO17
+      rx: GPIO16
+    - name: UART2
+      tx: GPIO32
+      rx: GPIO33
+
+  pwm:
+    name: LEDC
+    channels: 16
+    pins:
+      - GPIO4
+      - GPIO13
+      - GPIO14
+      - GPIO16
+      - GPIO17
+      - GPIO18
+      - GPIO19
+      - GPIO21
+      - GPIO22
+      - GPIO23
+      - GPIO25
+      - GPIO26
+      - GPIO27
+      - GPIO32
+      - GPIO33
+
+  can:
+    - name: TWAI
+      tx: GPIO21
+      rx: GPIO22
+
+  gpio_cs_pool:
+    - GPIO4
+    - GPIO13
+    - GPIO14
+    - GPIO17
+    - GPIO27
+    - GPIO33

@@ -416,6 +416,10 @@ class CostAgent:
             confidence=confidence
         )
 
+    async def run(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Standard pipeline entry point — delegates to quick_estimate."""
+        return await self.quick_estimate(params)
+
     async def quick_estimate(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """
         Pipeline entry point — estimates cost from any state dict.

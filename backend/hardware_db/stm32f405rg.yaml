@@ -1,0 +1,117 @@
+# STM32F405RG Hardware Database
+# Family: STM32F4 (ARM Cortex-M4F, 168 MHz)
+# Package: LQFP64
+# Datasheet: https://www.st.com/resource/en/datasheet/stm32f405rg.pdf
+
+mcu: STM32F405RG
+family: stm32f4
+clock_mhz: 168
+flash_kb: 1024
+sram_kb: 192
+adc_channels: 16
+dac_channels: 2
+
+pins:
+  PA13: {restrictions: [debug_pin], note: "SWDIO — allocating debug-locks the chip"}
+  PA14: {restrictions: [debug_pin], note: "SWCLK — allocating debug-locks the chip"}
+  PB3:  {restrictions: [debug_pin], note: "SWO — trace output (optional to reserve)"}
+  # PA0-PA3, PA6-PA7 are 5V-tolerant on F405
+  PA5:  {electrical: {five_volt_tolerant: false}, note: "ADC input — 3.3V max"}
+
+peripherals:
+  i2c:
+    - name: I2C1
+      scl: PB6
+      sda: PB7
+      alt_scl: PB8
+      alt_sda: PB9
+      max_freq_khz: 400
+    - name: I2C2
+      scl: PB10
+      sda: PB11
+      max_freq_khz: 400
+    - name: I2C3
+      scl: PA8
+      sda: PC9
+      max_freq_khz: 400
+
+  spi:
+    - name: SPI1
+      sclk: PA5
+      miso: PA6
+      mosi: PA7
+      cs_pool: [PA4, PB0, PB1, PC4, PC5]
+    - name: SPI2
+      sclk: PB13
+      miso: PB14
+      mosi: PB15
+      cs_pool: [PB12, PC6, PC7, PC8]
+    - name: SPI3
+      sclk: PC10
+      miso: PC11
+      mosi: PC12
+      cs_pool: [PA15, PB4, PB5]
+
+  uart:
+    - name: USART1
+      tx: PA9
+      rx: PA10
+    - name: USART2
+      tx: PA2
+      rx: PA3
+    - name: USART3
+      tx: PB10
+      rx: PB11
+    - name: UART4
+      tx: PC10
+      rx: PC11
+
+  can:
+    - name: CAN1
+      tx: PA12
+      rx: PA11
+    - name: CAN2
+      tx: PB13
+      rx: PB12
+
+  pwm:
+    name: TIM_PWM
+    # Timers: TIM1(PA8-PA11), TIM2(PA0-PA3,PB10-11), TIM3(PA6-7,PB0-1,PC6-9),
+    #         TIM4(PB6-9), TIM5(PA0-3), TIM8(PC6-9), TIM9(PA2-3), TIM12(PB14-15)
+    # PA13/PA14 excluded (debug). PB10/PB11 excluded (USART3/I2C2 default).
+    pins:
+      - PA0
+      - PA1
+      - PA2
+      - PA3
+      - PA6
+      - PA7
+      - PA8
+      - PA9
+      - PA10
+      - PA11
+      - PA15
+      - PB0
+      - PB1
+      - PB4
+      - PB5
+      - PB6
+      - PB7
+      - PB8
+      - PB9
+      - PB14
+      - PB15
+      - PC6
+      - PC7
+      - PC8
+      - PC9
+
+  gpio_cs_pool:
+    - PA4
+    - PB0
+    - PB1
+    - PB12
+    - PC4
+    - PC5
+    - PC6
+    - PC7

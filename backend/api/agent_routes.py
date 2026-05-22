@@ -151,11 +151,11 @@ async def run_agent(agent_name: str, params: dict):
         raise HTTPException(status_code=404, detail=f"Unknown agent: {agent_name}")
     
     try:
-        module = __import__(agent_runners[agent_name], fromlist=["ProductionAgent", "Agent"])
-        
-        # Try different class naming conventions
+        module = __import__(agent_runners[agent_name], fromlist=["Agent"])
+
+        # Standard naming: {AgentName}Agent, then bare Agent fallback
         agent_class = None
-        for class_name in ["ProductionAgent", f"{agent_name.title()}Agent", "Agent"]:
+        for class_name in [f"{agent_name.title()}Agent", "Agent"]:
             if hasattr(module, class_name):
                 agent_class = getattr(module, class_name)
                 break

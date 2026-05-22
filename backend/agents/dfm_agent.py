@@ -1139,11 +1139,26 @@ class DfmAgent:
         # Synthesize from design_parameters
         if mesh is None:
             dp = params.get("design_parameters") or {}
-            L_m = float(dp.get("length_m") or dp.get("length") or 0.1)
-            W_m = float(dp.get("width_m") or dp.get("width") or L_m * 0.6)
-            H_m = float(dp.get("height_m") or dp.get("height") or L_m * 0.3)
-            mesh = trimesh.creation.box([L_m * 1000, W_m * 1000, H_m * 1000])  # mm
-            logger.info(f"DfmAgent: synthesised {L_m*1000:.1f}×{W_m*1000:.1f}×{H_m*1000:.1f} mm box")
+
+            def _to_mm(dp, *keys, default_mm=100.0):
+                """Extract dimension, auto-detect units: *_mm keys → mm, *_m keys → ×1000, bare key > 10 → mm, ≤ 10 → ×1000."""
+                for k in keys:
+                    v = dp.get(k)
+                    if v is not None:
+                        v = float(v)
+                        if k.endswith("_mm"):
+                            return v
+                        if k.endswith("_m"):
+                            return v * 1000.0
+                        # bare key: heuristic — parts < 10 units are almost certainly meters
+                        return v if v > 10 else v * 1000.0
+                return default_mm
+
+            L_mm = _to_mm(dp, "length_mm", "length_m", "length", default_mm=100.0)
+            W_mm = _to_mm(dp, "width_mm", "width_m", "width", default_mm=L_mm * 0.6)
+            H_mm = _to_mm(dp, "height_mm", "height_m", "height", default_mm=L_mm * 0.3)
+            mesh = trimesh.creation.box([L_mm, W_mm, H_mm])
+            logger.info(f"DfmAgent: synthesised {L_mm:.1f}×{W_mm:.1f}×{H_mm:.1f} mm box")
 
         # --- Analyze ---
         try:
@@ -1153,7 +1168,11 @@ class DfmAgent:
             return {"status": "error", "error": str(e), "overall_manufacturability_score": 0.0}
 
         # --- Flatten DfmReport → dict ---
-        critical = [i for i in report.issues if getattr(i, "severity", "low") == "critical"]
+        critical = [
+            i for i in report.issues
+            if getattr(i, "severity", None) == IssueSeverity.CRITICAL
+            or str(getattr(i, "severity", "")).lower() == "critical"
+        ]
         return {
             "status": "success",
             "overall_manufacturability_score": round(float(report.manufacturability_score), 2),

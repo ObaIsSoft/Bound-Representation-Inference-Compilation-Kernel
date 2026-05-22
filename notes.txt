@@ -1,0 +1,882 @@
+Let me read this revised version carefully, line by line, and assess what's actually changed versus what remains broken.
+
+---
+
+## What Actually Changed (The Good)
+
+| Area | Change | Assessment |
+|------|--------|------------|
+| **Pin safety** | ESP32 excludes strapping pins (0,2,5,12,15), STM32 removes SWDIO/SWCLK from PWM pool | ✅ Real improvement — prevents bricking |
+| **I2C bus sharing** | `_allocate_pins` now tracks `i2c_shared_bus` and `i2c_addresses_used` | ✅ Fixes the critical multi-drop bug |
+| **SPI bus sharing** | Tracks `spi_shared_buses` + `gpio_cs_pool` for per-device CS | ✅ Fixes SPI exclusivity bug |
+| **Dynamic catalogs** | `_load_component_catalogs()` reads YAML from `config/component_catalog/*.yaml` | ✅ Good architectural move |
+| **Skeleton fallback** | `_skeleton_component()` returns compilable TODO stubs instead of `None` | ✅ Graceful degradation |
+| **LLM prompt engineering** | Structured prompt with explicit pin token rules and JSON schema | ⚠️ Better, but still trusts LLM output |
+| **C identifier helper** | `_c_ident()` sanitizes names | ✅ Prevents invalid C variable names |
+| **FreeRTOS queues/mutex** | `sensorQueue`, `i2cMutex`, `SensorData_t` struct with slot mapping | ✅ Real inter-task communication |
+| **Domain-specific PID** | `_pid_gains_for_domain()` with thermal/fluid/motion/electrical/attitude branches | ✅ Replaces generic numerology |
+| **Verilog UART fix** | 4-state receiver with start-bit verification, framing error detection | ✅ Fixes the off-by-one shift bug |
+| **Verilog testbench** | `uart_core_tb.v` with self-checking tasks | ✅ Proper validation |
+| **MicroPython async** | Tasks now render actual loop templates or raw-bus fallback code | ✅ No longer empty coroutines |
+| **User params passthrough** | `comp.user_params` merged into template context (i2c_address, etc.) | ✅ Parameterization works |
+
+---
+
+## What Still Hasn't Changed (The Bad)
+
+### 1. `PLATFORM_DEFS` — Still Hardcoded Python Dicts
+
+```python
+Platform.ESP32: {
+    "pwm_pins": ["GPIO4", "GPIO13", "GPIO14", ...],
+    "i2c_interfaces": [("I2C0", "GPIO21", "GPIO22"), ("I2C1", "GPIO25", "GPIO26")],
+    ...
+}
+```
+
+**Still wrong:**
+- **No package variants.** ESP32-WROOM-32 vs ESP32-WROVER vs ESP32-S2 vs ESP32-C3 have different pinouts, PSRAM configurations, and antenna layouts. The agent treats "ESP32" as one thing.
+- **No alternate function matrices.** STM32F405 `PA0` can be ADC1_IN0, TIM2_CH1, TIM5_CH1, USART2_CTS. The agent knows PWM but not that TIM2_CH1 and TIM5_CH1 are different timers with different capabilities (32-bit vs 16-bit).
+- **No electrical characteristics.** The agent doesn't know that `GPIO34-39` on ESP32 are input-only. It doesn't know that `PA0` on STM32 is 5V-tolerant but `PA1` is not. If you connect a 5V sensor to `PA1`, you fry the ADC.
+
+**What should be done:** External YAML/JSON hardware database with per-package pin matrices, electrical ratings, and errata. Not a Python dict.
+
+### 2. Pin Allocator — Still Greedy, Not a Solver
+
+```python
+available = [p for p in pwm_pins if p not in ap["pwm"]]
+if available:
+    pin = available[0]
+```
+
+**Still wrong:**
+- **No backtracking.** If allocating `GPIO4` for PWM blocks a later I2C device that needs `GPIO4` for SDA (on ESP32, GPIO4 is I2C_SDA for some configurations), the allocator fails instead of trying `GPIO13`.
+- **No cost function.** It picks the first available pin, not the optimal one. On RP2040, `GPIO0` is shared with UART0_RX. If you later add a GPS, you can't because `GPIO0` is already a PWM pin for a servo.
+- **No peripheral conflict awareness.** On STM32F405, TIM2_CH1 (PA0) and TIM5_CH1 (PA0) are the same pin. But TIM2 is a general-purpose 32-bit timer, TIM5 is a 32-bit timer with different DMA channels. If you need two independent PWM frequencies, you can't use the same timer channel twice. The agent doesn't track timer instances.
+
+**What should be done:** Constraint satisfaction problem (CSP) with python-constraint, OR-Tools, or a custom backtracking solver. Define constraints: "this pin must support PWM on TIM2", "these two pins must be on different timers", "this pin must be 5V-tolerant."
+
+### 3. Component Templates — Still String `.format()`
+
+```python
+code = init_tmpl.format(**ctx)
+```
+
+**Still fragile:**
+- **No template validation at load time.** A malformed template in a YAML catalog crashes generation at runtime with `KeyError`.
+- **No type checking.** If `i2c_address` is passed as string `"0x76"` instead of integer `0x76`, the template renders it literally and the C compiler chokes.
+- **No conditional logic.** You can't express "if `i2c_address` is provided, use it; else use default `0x76`" in a `.format()` template. You need Jinja2 or Mako for that.
+
+**What should be done:** Jinja2 templates with schema validation. Load templates, parse them, verify all required variables are declared in the component schema.
+
+### 4. FreeRTOS Integration — Better But Still Shallow
+
+```cpp
+static QueueHandle_t sensorQueue = NULL;
+static SemaphoreHandle_t i2cMutex = NULL;
+```
+
+**Still missing:**
+- **Queue sizing.** `xQueueCreate(1, sizeof(SensorData_t))` — one slot. If the actuator task is blocked on a CAN bus write for 5ms, the sensor task overwrites data. You lose samples.
+- **No queue sets or event groups.** If you have 3 sensor types (IMU at 1kHz, GPS at 10Hz, barometer at 50Hz), they can't all feed the same queue at different rates.
+- **No DMA or interrupt-driven I/O.** The sensor task polls I2C in a loop. Real systems use DMA + interrupt to free the CPU. The generated code will consume 30-40% CPU just waiting for I2C transactions.
+- **No tickless idle.** The generated code uses `vTaskDelayUntil` with fixed periods. It never enters low-power modes. Battery-powered devices will drain in hours.
+
+**What should be done:** Generate DMA + interrupt handlers for I2C/SPI/UART. Use notification-based task waking instead of polling. Generate power management code for tickless idle.
+
+### 5. Safety Level — Still Cosmetic
+
+```cpp
+#define SAFETY_LEVEL "SIL2"
+```
+
+**Still meaningless:**
+- **No watchdog implementation.** `setup_watchdog()` and `feed_watchdog()` are commented-out stubs.
+- **No safe state definition.** What happens when the watchdog fires? The generated code doesn't define a safe state (all motors off, brakes engaged, valves closed).
+- **No redundancy.** SIL2 requires dual-channel or diverse implementation. The agent generates single-threaded code.
+- **No traceability.** ISO 26262 requires every line of safety-critical code to trace back to a hazard and risk assessment (HARA). The agent generates code with no requirements IDs.
+
+**What should be done:** If `safety_level != "NONE"`, generate:
+  - Independent watchdog timer (IWDG) configuration
+  - Safe state handler with hardware interlocks
+  - Redundant sensor voting (if 2+ sensors of same type)
+  - Requirements trace comments (`// REQ-SAF-001: E-stop response < 50ms`)
+
+### 6. ROS2 Generator — Still Hardcoded Node Graph
+
+```cpp
+imu_pub_   = create_publisher<<sensor_msgs::msg::Imu>("/sensors/imu", 10);
+range_pub_ = create_publisher<<sensor_msgs::msg::Range>("/sensors/range", 10);
+```
+
+**Still wrong:**
+- **Publishes IMU and Range regardless of actual components.** If the user specified `gps_neo6m` and `lidar_tfmini`, the sensor node still publishes `sensor_msgs/Imu` and `sensor_msgs/Range` with TODO comments.
+- **No dynamic topic generation.** The control node subscribes to `/sensors/imu` even if no IMU is in the component list.
+- **No parameter server integration.** PID gains are hardcoded as `static constexpr double`. Real ROS2 nodes load parameters from YAML at runtime.
+
+**What should be done:** Generate the node graph from the actual component list. If no IMU, don't publish `/sensors/imu`. Use `declare_parameter()` and `get_parameter()` for all tunable values.
+
+### 7. PLC Generator — Still One State Machine
+
+```pascal
+CASE gSt_State OF
+  0: (* IDLE *)
+  1: (* STARTING *)
+  2: (* RUNNING *)
+  3: (* STOPPING *)
+  4: (* FAULT *)
+```
+
+**Still wrong:**
+- **Same 5-state machine for all processes.** A pump doesn't need a "STARTING" state with a 2-second delay. It needs PRIMING → RUNNING → SHUTDOWN. An oven needs PREHEAT → SOAK → COOLING.
+- **No sequential function chart (SFC).** IEC 61131-3 has SFC as a native language for sequential control. Structured Text is the wrong paradigm for batch processes.
+- **No recipe management.** Industrial ovens, mixers, and reactors run recipes (temperature profiles, timing sequences). The generated code has one fixed setpoint.
+
+**What should be done:** Infer process topology from intent and generate SFC or state machines with domain-specific states. Support recipe/sequence tables.
+
+### 8. Verilog Generator — Better But Still Toy-Level
+
+**The UART fix is genuine** — the 4-state machine with start-bit verification and framing error detection is correct now. But:
+
+- **No CDC (Clock Domain Crossing).** If the FPGA has a 100MHz system clock and a 50MHz ADC interface, the generated code has no synchronizers. Metastability will corrupt data.
+- **No timing constraints for generated modules.** The `constraints.xdc` only constrains the top-level clock. It doesn't constrain `set_max_delay` for cross-clock paths.
+- **No resource estimation.** The agent doesn't estimate LUT count, BRAM usage, or DSP slices. You could generate a 1024-tap FIR filter that doesn't fit in the target device.
+- **No formal verification.** The testbench is simulation-only. Real FPGA workflows use SymbiYosys or Vivado formal verification for protocol compliance.
+
+**What should be done:** Generate CDC synchronizers, resource utilization reports, and formal properties (assertions) for critical interfaces.
+
+### 9. Build System — Still String Templates
+
+```ini
+[env:{platform.value.lower()}]
+platform = {board_cfg['platform']}
+board = {board_cfg['board']}
+```
+
+**Still wrong:**
+- **No dependency locking.** `lib_deps` lists library names but not versions. Six months later, `Adafruit_BMP280` 2.1.0 might have a breaking API change.
+- **No native test integration.** The `[env:native]` section exists but has no actual test files or test runner configuration.
+- **No CI/CD generation.** No GitHub Actions, no GitLab CI, no pre-commit hooks.
+
+**What should be done:** Generate `platformio.ini` with version-pinned libraries. Generate `.github/workflows/ci.yml` with build + test + static analysis stages.
+
+### 10. The LLM Problem — Still Unsolved
+
+```python
+result = self.llm_provider.generate_json(prompt)
+```
+
+**Still dangerous:**
+- **No sandboxed compilation.** The LLM generates code, but the agent doesn't attempt to compile it before returning it to the user. A hallucinated API will crash the build.
+- **No fallback on LLM failure.** If `generate_json` returns malformed JSON, the agent logs a warning and returns `None`, which falls through to the skeleton stub. But the user doesn't know the LLM failed unless they read logs.
+- **No validation of generated templates.** The LLM could generate a template with `{pin}` instead of `{pwm}`, causing `KeyError` at render time.
+
+**What should be done:** Compile-test every LLM-generated template in a sandbox (Docker with cross-compiler) before accepting it. Cache validated templates.
+
+---
+
+## The Honest Scorecard
+
+| Category | v1 Score | v2 Score | Target |
+|----------|----------|----------|--------|
+| Pin allocation correctness | 3/10 | 6/10 | 9/10 |
+| Bus sharing (I2C/SPI) | 2/10 | 7/10 | 9/10 |
+| RTOS integration | 3/10 | 6/10 | 8/10 |
+| Template robustness | 4/10 | 5/10 | 8/10 |
+| Safety-critical features | 1/10 | 2/10 | 9/10 |
+| Hardware model accuracy | 3/10 | 5/10 | 9/10 |
+| ROS2 dynamic generation | 3/10 | 4/10 | 8/10 |
+| PLC domain specificity | 3/10 | 4/10 | 8/10 |
+| FPGA correctness | 4/10 | 6/10 | 8/10 |
+| Build system maturity | 4/10 | 5/10 | 8/10 |
+| LLM safety | 2/10 | 3/10 | 7/10 |
+| **Overall** | **3/10** | **5/10** | **8/10** |
+
+---
+
+## What This Version Actually Is
+
+**v2 is a "competent hobbyist" level.** It won't brick your ESP32 (v1 would), it won't exhaust I2C buses (v1 would), and it generates code that has the right structural bones for FreeRTOS and ROS2. 
+
+But it's still **not production-grade.** The gap between "compiles and runs a demo" and "ships in a product with a warranty" is massive and requires:
+
+1. **External hardware database** (not Python dicts)
+2. **Constraint solver** for pin allocation (not greedy first-fit)
+3. **Jinja2 templates** with schema validation (not `.format()`)
+4. **DMA + interrupt-driven I/O** (not polling loops)
+5. **Real safety implementation** (not `#define SAFETY_LEVEL`)
+6. **Dynamic ROS2/PLC node graphs** from actual components (not hardcoded publishers)
+7. **Sandboxed compilation testing** of LLM output
+8. **Dependency locking and CI/CD generation**
+
+---
+
+## My Recommendation
+
+**Use v2 for:**
+- Rapid prototyping
+- Educational projects
+- Hackathons
+- Proof-of-concept demos
+
+**Do NOT use v2 for:**
+- Commercial products (liability exposure)
+- Safety-critical systems (SIL/ASIL)
+- Aerospace, medical, automotive
+- Anything with a hardware warranty
+
+**Next priority:** Implement the hardware database as external YAML and replace the greedy allocator with a constraint solver. That's the highest-impact change remaining.
+I'll give you a precise, prioritized action plan. No fluff, no "consider" or "maybe" — here's exactly what to build, in order, with file-by-file specificity.
+
+---
+
+## Phase 0: Foundation (Week 1-2)
+
+### File: `hardware_db/` — Replace `PLATFORM_DEFS`
+
+**Current state:** Python dict with fantasy pin lists.
+
+**Target state:** YAML per MCU package, with alternate functions, electrical ratings, and errata.
+
+```yaml
+# hardware_db/stm32f405rg.yaml
+mcu: STM32F405RG
+package: LQFP64
+revision: "Rev 2 / Rev 5 / Rev 7"  # errata differ by revision
+pins:
+  PA0:
+    number: 0
+    port: GPIOA
+    functions:
+      ADC1_IN0: {type: analog, adc_channel: 0}
+      TIM2_CH1: {type: pwm, timer: TIM2, channel: 1, remap: none}
+      TIM5_CH1: {type: pwm, timer: TIM5, channel: 1, remap: none}
+      USART2_CTS: {type: uart, peripheral: USART2}
+    electrical:
+      voltage_range: [0, 3.6]  # V
+      max_sink_ma: 25
+      max_source_ma: 25
+      five_volt_tolerant: false
+    restrictions:
+      - debug: false
+      - boot: false
+      - rtc: false
+    errata:
+      Rev2: "ADC_IN0 sampling must be > 1us after wake from STOP mode"
+  
+  PA13:
+    functions:
+      SWDIO: {type: debug, mandatory: true}
+    restrictions:
+      - debug: true
+      - "PWM allocation prohibited — debug-lock risk"
+      - "Pull-up on boot strapping — do not drive low during reset"
+    electrical:
+      five_volt_tolerant: false
+  
+  PB12:
+    functions:
+      SPI2_NSS: {type: spi, peripheral: SPI2, role: CS}
+      CAN2_RX: {type: can, peripheral: CAN2}
+      I2S2_WS: {type: i2s}
+    restrictions:
+      - "Shared with CAN2 — allocate CAN or SPI, not both"
+
+  # ... all 64 pins
+
+peripherals:
+  TIM2:
+    type: timer
+    bits: 32
+    channels: 4
+    max_freq_mhz: 84
+    dma_channels: [DMA1_Stream5, DMA1_Stream6]
+  
+  I2C1:
+    type: i2c
+    scl_pins: [PB6, PB8]  # PB8 = remap
+    sda_pins: [PB7, PB9]  # PB9 = remap
+    max_freq_khz: 400
+    dma_rx: DMA1_Stream0
+    dma_tx: DMA1_Stream6
+
+  CAN1:
+    type: can
+    tx_pins: [PA12, PB9]
+    rx_pins: [PA11, PB8]
+    filters: 14  # hardware filter banks
+```
+
+**Same structure for every platform.** ESP32, RP2040, nRF52840, etc.
+
+**Parser to build:** `HardwareDB.load("stm32f405rg")` → returns validated dataclass with pin matrix, peripheral instances, and conflict graph.
+
+---
+
+### File: `allocator.py` — Replace Greedy `_allocate_pins`
+
+**Current state:** `available = [p for p in pwm_pins if p not in used]; pin = available[0]`
+
+**Target state:** Constraint solver with backtracking.
+
+```python
+from ortools.constraint_solver import routing_enums_pb2
+from ortools.constraint_solver import pywrapcp
+
+class PinAllocator:
+    def __init__(self, hardware_db: HardwareDB):
+        self.db = hardware_db
+        self.model = cp_model.CpModel()
+        
+    def allocate(self, components: List[Component]) -> AllocationResult:
+        # Variables: for each component, which pin/peripheral assignment
+        # Constraints:
+        #   - Each pin used by at most one component (unless bus-shared)
+        #   - Each peripheral instance used at most once per function
+        #   - Electrical: 5V sensor → 5V-tolerant pin only
+        #   - Remap: if TIM2_CH1 on PA0 taken, TIM2_CH1 on PA15 available via remap
+        #   - Boot/debug restrictions respected
+        
+        # Objective: minimize pin spread (keep related pins close), 
+        #            minimize peripheral fragmentation,
+        #            prefer DMA-capable assignments for high-bandwidth components
+        
+        solver = cp_model.CpSolver()
+        status = solver.Solve(self.model)
+        
+        if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            return self._extract_solution(solver)
+        else:
+            return AllocationResult(
+                status="infeasible",
+                conflicts=self._diagnose_conflicts(),
+                suggestion="Remove component X or add I2C multiplexer"
+            )
+```
+
+**Key constraints to encode:**
+
+| Constraint | How |
+|------------|-----|
+| Pin exclusivity | `AllDifferent` on pin variables, except bus pins |
+| Peripheral exclusivity | TIM2 can be used by one PWM component OR one encoder component, not both |
+| Electrical compatibility | 5V-tolerant flag as boolean constraint |
+| Alternate function remap | If primary pin taken, allow secondary with cost penalty |
+| DMA preference | Add soft constraint: high-bandwidth components prefer DMA-capable pins |
+| Debug pin protection | Hard constraint: PA13/PA14 reserved unless `allow_debug_sacrifice=True` |
+| Boot strapping | ESP32 GPIO0, GPIO2, GPIO5, GPIO12, GPIO15 locked during allocation |
+
+---
+
+## Phase 1: Template Engine (Week 3-4)
+
+### File: `templates/` — Jinja2 with Schema Validation
+
+**Current state:** Python strings with `.format(**ctx)`
+
+**Target state:** External `.j2` files with JSON schema per component.
+
+```
+templates/
+  cpp/
+    base.j2              # #include, setup(), loop() skeleton
+    freertos_base.j2     # task declarations, queue init, mutex init
+    hal/
+      i2c_init.j2        # Wire.begin() / HAL_I2C_Init() abstraction
+      spi_init.j2        # SPI.begin() / HAL_SPI_Init()
+      uart_init.j2       # Serial.begin() / HAL_UART_Init()
+      pwm_init.j2        # analogWrite() / HAL_TIM_PWM_Start()
+      dma_init.j2        # DMA channel config
+  micropython/
+    base.j2
+    async_base.j2
+    raw_bus/
+      i2c_read.j2
+      spi_read.j2
+      uart_read.j2
+  circuitpython/
+    base.j2
+```
+
+**Component schema (per template):**
+
+```yaml
+# config/component_catalog/mpu6050.yaml
+component:
+  id: mpu6050
+  name: "MPU6050 6-Axis IMU"
+  category: sensor
+  
+  parameters:
+    i2c_address:
+      type: hex
+      default: 0x68
+      options: [0x68, 0x69]
+      description: "I2C address. AD0 pin low=0x68, high=0x69"
+    
+    gyro_range:
+      type: enum
+      default: 250
+      options: [250, 500, 1000, 2000]
+      description: "Full-scale gyro range in deg/s"
+      maps_to: "MPU6050_GYRO_FS_250"
+    
+    accel_range:
+      type: enum
+      default: 2
+      options: [2, 4, 8, 16]
+      description: "Full-scale accel range in g"
+  
+  templates:
+    cpp_init:
+      schema: {required: [name, i2c_address, scl, sda]}
+      file: cpp/i2c_sensor_init.j2
+      locals:
+        lib_header: "<MPU6050.h>"
+        class_name: "MPU6050"
+        init_method: "initialize"
+        test_method: "testConnection"
+    
+    cpp_loop:
+      schema: {required: [name]}
+      file: cpp/i2c_sensor_loop.j2
+      locals:
+        read_method: "getMotion6"
+        output_vars: [ax, ay, az, gx, gy, gz]
+        scale_accel: 16384.0  # LSB/g for +/-2g
+        scale_gyro: 131.0     # LSB/(deg/s) for +/-250
+  
+  dependencies:
+    - name: "MPU6050"
+      source: "i2cdevlib"
+      version: ">= 0.5.0"
+      url: "https://github.com/jrowberg/i2cdevlib"
+```
+
+**Template `cpp/i2c_sensor_init.j2`:**
+```jinja2
+#include {{ lib_header }}
+
+{{ class_name }} {{ name }};
+Wire.setSDA({{ sda }});
+Wire.setSCL({{ scl }});
+Wire.begin();
+{{ name }}.{{ init_method }}();
+{{ name }}.setFullScaleGyroRange(MPU6050_GYRO_FS_{{ gyro_range }});
+{{ name }}.setFullScaleAccelRange(MPU6050_ACCEL_FS_{{ accel_range }});
+
+if (!{{ name }}.{{ test_method }}()) {
+    Serial.println("FATAL: {{ name }} not responding at 0x{{ '%02X' % i2c_address }}");
+    // TODO: implement retry or safe-state
+}
+```
+
+**Validation at load time:**
+```python
+def validate_template(template_str: str, schema: dict) -> None:
+    env = jinja2.Environment()
+    ast = env.parse(template_str)
+    required = schema["required"]
+    found = {node.name for node in ast.find_all(jinja2.nodes.Name)}
+    missing = set(required) - found
+    if missing:
+        raise TemplateValidationError(f"Template requires variables not in schema: {missing}")
+```
+
+---
+
+## Phase 2: HAL Abstraction (Week 5-6)
+
+### File: `hal/` — Hardware Abstraction Layer
+
+**Current state:** Arduino `Servo.h`, `Wire.h`, `SPI.h` calls directly in templates.
+
+**Target state:** Generated HAL with swappable backends.
+
+```cpp
+// hal/hal.h — generated per project
+#ifndef HAL_H
+#define HAL_H
+
+#include <Arduino.h>
+
+// Platform: ESP32
+// Framework: Arduino
+// HAL Backend: arduino_esp32
+
+// --- I2C ---
+void HAL_I2C_Init(uint8_t bus_id, int scl_pin, int sda_pin, uint32_t freq_hz);
+int  HAL_I2C_Write(uint8_t bus_id, uint8_t addr, const uint8_t* data, size_t len);
+int  HAL_I2C_Read(uint8_t bus_id, uint8_t addr, uint8_t reg, uint8_t* buf, size_t len);
+
+// --- SPI ---
+void HAL_SPI_Init(uint8_t bus_id, int sclk, int miso, int mosi, uint32_t freq_hz);
+void HAL_SPI_Select(uint8_t bus_id, int cs_pin, bool active);
+int  HAL_SPI_Transfer(uint8_t bus_id, uint8_t* tx, uint8_t* rx, size_t len);
+
+// --- PWM ---
+void HAL_PWM_Init(uint8_t channel, int pin, uint32_t freq_hz);
+void HAL_PWM_SetDuty(uint8_t channel, float duty_0_to_1);
+
+// --- UART ---
+void HAL_UART_Init(uint8_t port, int tx_pin, int rx_pin, uint32_t baud);
+int  HAL_UART_Read(uint8_t port, uint8_t* buf, size_t len, uint32_t timeout_ms);
+int  HAL_UART_Write(uint8_t port, const uint8_t* buf, size_t len);
+
+// --- GPIO ---
+void HAL_GPIO_Init(int pin, bool output, bool pullup);
+void HAL_GPIO_Write(int pin, bool value);
+bool HAL_GPIO_Read(int pin);
+
+// --- DMA ---
+bool HAL_DMA_Available(uint8_t peripheral);
+void HAL_DMA_Start(uint8_t peripheral, void* src, void* dst, size_t len);
+bool HAL_DMA_Complete(uint8_t peripheral);
+
+#endif
+```
+
+**Backends:**
+- `hal_arduino.cpp` — `Wire.begin()`, `analogWrite()`, etc.
+- `hal_stm32cube.cpp` — `HAL_I2C_Init()`, `HAL_TIM_PWM_Start()`, etc.
+- `hal_espidf.cpp` — `i2c_driver_install()`, `ledc_set_duty()`, etc.
+- `hal_rust_embedded.rs` — `embedded-hal` trait implementations
+
+**Why this matters:** Changing from Arduino to STM32Cube doesn't require rewriting component templates. Only the HAL backend changes.
+
+---
+
+## Phase 3: RTOS Real Integration (Week 7-8)
+
+### File: `rtos/` — Real FreeRTOS/Zephyr Generation
+
+**Current state:** 3 hardcoded tasks, `xQueueCreate(1)`, no DMA.
+
+**Target state:** Data flow graph → task topology → DMA + interrupt.
+
+```python
+class RTOSGenerator:
+    def generate(self, components, data_flow_graph):
+        # 1. Analyze data flow: which sensors feed which controllers feed which actuators
+        # 2. Determine task boundaries: sensors → fusion → control → actuators → comms
+        # 3. Assign priorities based on deadline monotonic scheduling
+        # 4. Generate DMA + IRQ handlers for high-bandwidth peripherals
+        # 5. Generate tickless idle config for battery-powered devices
+```
+
+**Generated code structure:**
+
+```cpp
+// main.cpp — FreeRTOS with DMA
+
+#include "FreeRTOS.h"
+#include "task.h"
+#include "queue.h"
+#include "semphr.h"
+#include "timers.h"
+
+#include "hal/hal.h"
+#include "data_flow.h"  // generated from component graph
+
+// --- DMA + Interrupt handlers (generated per peripheral) ---
+void DMA1_Stream0_IRQHandler(void) {
+    // I2C1 RX complete
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    vTaskNotifyGiveFromISR(sensorTaskHandle, &xHigherPriorityTaskWoken);
+    portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+}
+
+// --- Sensor task: event-driven, not polling ---
+void sensorTask(void *pvParameters) {
+    HAL_DMA_Start(I2C1, imu_buf, nullptr, 14);  // 14 bytes MPU6050 burst read
+    
+    for (;;) {
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);  // Wait for DMA complete
+        
+        // Parse IMU data (zero-copy from DMA buffer)
+        SensorData_t data;
+        data.timestamp = xTaskGetTickCount();
+        data.values[0] = (int16_t)(imu_buf[0] << 8 | imu_buf[1]) / 16384.0f;  // ax
+        // ... parse all 6 axes ...
+        
+        xQueueSendToBackFromISR(controlQueue, &data, NULL);
+        
+        // Re-arm DMA for next sample
+        HAL_DMA_Start(I2C1, imu_buf, nullptr, 14);
+    }
+}
+
+// --- Control task: runs when sensor data arrives ---
+void controlTask(void *pvParameters) {
+    SensorData_t sensors;
+    ControlOutput_t output;
+    
+    for (;;) {
+        if (xQueueReceive(controlQueue, &sensors, portMAX_DELAY) == pdPASS) {
+            compute_control(&sensors, &output);
+            xQueueOverwrite(actuatorQueue, &output);
+        }
+    }
+}
+```
+
+**Tickless idle for battery:**
+
+```cpp
+// FreeRTOSConfig.h — generated
+#define configUSE_TICKLESS_IDLE  1
+#define configEXPECTED_IDLE_TIME_BEFORE_SLEEP  2  // ticks
+
+// Override default sleep function
+void vApplicationSleep(TickType_t xExpectedIdleTime) {
+    // Enter STOP mode on STM32, or light sleep on ESP32
+    HAL_PWR_EnterSTOPMode(PWR_LOWPOWERREGULATOR_ON, PWR_STOPENTRY_WFI);
+}
+```
+
+---
+
+## Phase 4: Safety & Certification (Week 9-10)
+
+### File: `safety/` — ASIL/SIL Code Generation
+
+**Current state:** `#define SAFETY_LEVEL "SIL2"` and empty watchdog stubs.
+
+**Target state:** Generated safety cases with traceability.
+
+```yaml
+# safety_config.yaml
+safety_level: ASIL_B
+hazards:
+  - id: HAZ-001
+    description: "Unintended motor activation during maintenance"
+    severity: S3
+    probability: C2
+    asil: ASIL_B
+    mitigation: "E-stop circuit + software interlock + hardware brake"
+    requirements:
+      - REQ-SAF-001: "E-stop response time < 50ms"
+      - REQ-SAF-002: "Motor enable only when safety gate closed AND E-stop released"
+
+  - id: HAZ-002
+    description: "Thermal runaway in battery charging"
+    severity: S2
+    probability: C3
+    asil: ASIL_A
+    requirements:
+      - REQ-SAF-003: "Temperature monitoring every 100ms"
+      - REQ-SAF-004: "Charge termination at 45°C"
+```
+
+**Generated code:**
+
+```cpp
+// safety.c — generated from HARA
+
+#include "safety.h"
+
+// Requirement: REQ-SAF-001
+// Hazard: HAZ-001
+// ASIL: ASIL_B
+// Verification: Unit test test_estop_response_time()
+void SAFETY_EStopHandler(void) {
+    // Hardware interlock: cut motor power via relay (independent of software)
+    HAL_GPIO_Write(PIN_MOTOR_ENABLE, 0);
+    HAL_GPIO_Write(PIN_BRAKE_ENGAGE, 1);
+    
+    // Software safe state
+    gSafetyState.motorArmed = false;
+    gSafetyState.brakeEngaged = true;
+    gSafetyState.faultCode = FAULT_ESTOP;
+    
+    // Log for post-incident analysis
+    SAFETY_LogEvent(EVENT_ESTOP_TRIGGERED, xTaskGetTickCount());
+}
+
+// Requirement: REQ-SAF-003
+// Hazard: HAZ-002
+void SAFETY_ThermalMonitor(void) {
+    float temp = HAL_ADC_Read(ADC_TEMP_BATTERY);
+    if (temp > 45.0f) {
+        SAFETY_EnterSafeState(FAULT_OVERTEMP);
+    }
+}
+```
+
+**Generated tests:**
+
+```cpp
+// test_safety.cpp — GoogleTest, generated
+
+TEST(Safety, EStopResponseTime) {
+    // REQ-SAF-001: E-stop response < 50ms
+    uint32_t t0 = micros();
+    SAFETY_EStopHandler();
+    uint32_t t1 = micros();
+    
+    EXPECT_LT(t1 - t0, 50000);  // 50ms in microseconds
+}
+
+TEST(Safety, MotorDisableOnEStop) {
+    // REQ-SAF-002: Motor enable only when safety gate closed
+    HAL_GPIO_Write(PIN_SAFETY_GATE, 0);  // open
+    HAL_GPIO_Write(PIN_ESTOP, 0);        // pressed
+    
+    // Run control loop
+    controlTask();
+    
+    EXPECT_FALSE(gControlOutput.motorArmed);
+}
+```
+
+---
+
+## Phase 5: Validation Pipeline (Week 11-12)
+
+### File: `validator/` — Post-Generation Verification
+
+**Current state:** Code is returned to user, compilation is manual.
+
+**Target state:** Automatic validation before returning.
+
+```python
+class ValidationPipeline:
+    def __init__(self):
+        self.compilers = {
+            "esp32": DockerCompiler("espressif/idf:latest"),
+            "stm32": DockerCompiler("stm32cubeide:latest"),
+            "rp2040": DockerCompiler("raspberrypi/pico-sdk:latest"),
+        }
+    
+    def validate(self, project: GeneratedProject) -> ValidationReport:
+        report = ValidationReport()
+        
+        # 1. Syntax check
+        for filename, content in project.files.items():
+            if filename.endswith(".cpp"):
+                report.syntax = self._run_clang_syntax_check(content)
+        
+        # 2. Static analysis
+        report.misra = self._run_cppcheck_misra(project.files)
+        report.clang_tidy = self._run_clang_tidy(project.files)
+        
+        # 3. Compilation check (no hardware required)
+        compiler = self.compilers.get(project.platform)
+        if compiler:
+            report.compile = compiler.compile(project.files)
+        
+        # 4. Simulation check (QEMU/Renode)
+        if project.rtos == "FreeRTOS":
+            report.simulation = self._run_renode_simulation(project.files)
+        
+        # 5. Pin allocation verification
+        report.pinout = self._verify_pinout_against_hardware_db(
+            project.pinout, project.platform
+        )
+        
+        return report
+```
+
+**Return to user:**
+
+```json
+{
+  "status": "success",
+  "validation": {
+    "syntax": "pass",
+    "misra": {
+      "violations": 3,
+      "details": ["Rule 11.3: cast from pointer to int", ...]
+    },
+    "compilation": "pass",
+    "simulation": {
+      "status": "pass",
+      "runtime_ms": 5000,
+      "tasks_executed": 15000
+    },
+    "pinout": {
+      "status": "pass",
+      "warnings": ["GPIO4 used for PWM — also available as I2C_SDA if needed later"]
+    }
+  },
+  "files": {...}
+}
+```
+
+---
+
+## Phase 6: LLM Hardening (Ongoing)
+
+### File: `llm_sandbox/` — Controlled Component Generation
+
+**Current state:** `self.llm_provider.generate_json(prompt)` → trust output.
+
+**Target state:** Compile-test every LLM-generated component before acceptance.
+
+```python
+class LLMComponentValidator:
+    def validate_and_cache(self, comp_id: str, llm_output: dict) -> Component:
+        # 1. Schema validation
+        self._validate_json_schema(llm_output, COMPONENT_SCHEMA)
+        
+        # 2. Template syntax validation
+        for lang in ["C++", "MicroPython"]:
+            if lang in llm_output["templates"]:
+                self._validate_jinja2_syntax(llm_output["templates"][lang])
+        
+        # 3. Compile test in sandbox
+        test_project = self._build_minimal_test_project(llm_output)
+        result = self.sandbox_compiler.compile(test_project)
+        
+        if result.status != "success":
+            # Re-prompt LLM with compiler error
+            fixed_output = self.llm_provider.generate_json(
+                prompt + f"\nPrevious attempt failed with: {result.stderr}"
+            )
+            return self.validate_and_cache(comp_id, fixed_output)
+        
+        # 4. Cache validated template
+        self.template_cache.store(comp_id, llm_output, result.binary_hash)
+        
+        return Component.from_dict(llm_output)
+```
+
+---
+
+## Immediate Priority Order
+
+| Priority | Task | Files | Impact | Effort |
+|----------|------|-------|--------|--------|
+| **P0** | Hardware DB YAML + parser | `hardware_db/*.yaml`, `hardware_db.py` | Eliminates pin fantasy | 3 days |
+| **P0** | Constraint solver allocator | `allocator.py` | Fixes allocation failures | 4 days |
+| **P1** | Jinja2 template engine | `templates/`, `template_engine.py` | Eliminates KeyError crashes | 3 days |
+| **P1** | Component YAML schema | `config/component_catalog/*.yaml` | Enables user customization | 2 days |
+| **P2** | HAL abstraction layer | `hal/hal.h`, `hal_*.cpp` | Enables framework portability | 5 days |
+| **P2** | DMA + interrupt generation | `rtos/dma_generator.py` | 10x performance improvement | 4 days |
+| **P3** | Safety code generation | `safety/safety_generator.py` | Enables certified products | 5 days |
+| **P3** | Validation pipeline | `validator/validation_pipeline.py` | Catches errors before user | 4 days |
+| **P4** | LLM sandbox | `llm_sandbox/compiler.py` | Prevents hallucination damage | 3 days |
+
+---
+
+## What NOT To Do (Waste of Time)
+
+| Don't | Why |
+|-------|-----|
+| Add 50 more components to `COMPONENT_LIBRARY` | The template system is broken — more components = more crashes |
+| Add more platforms to `PLATFORM_DEFS` | You're adding more fantasy pin data |
+| Add Rust/Zig generation | The C++ path isn't solid yet — adding languages multiplies bugs |
+| Add cloud deployment features | Local compilation isn't working — cloud is premature |
+| Add GUI/web interface | The backend is the bottleneck, not the frontend |
+
+---
+
+## The Honest Bottom Line
+
+Execute **P0 and P1** (2 weeks). The agent goes from **5/10 to 7/10** — usable for commercial prototyping with manual review.
+
+Execute **P0 through P3** (6 weeks). The agent hits **8/10** — viable for production non-safety products.
+
+Execute **all phases** (10-12 weeks). The agent reaches **8.5/10** — the remaining 1.5 is the irreducible human gap I described earlier.
+
+**Start with the hardware database. Everything else depends on it.**

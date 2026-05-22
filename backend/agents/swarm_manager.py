@@ -1,227 +1,299 @@
-from typing import Dict, Any, List, Type
+"""
+SwarmManager — Von Neumann Distributed Simulation Engine
+
+Runs a population of self-replicating agents (VonNeumannAgent) in a shared
+resource environment. Agents harvest energy, process compute tasks, replicate
+with genetic mutation, and leave pheromone trails (stigmergy).
+
+Primary use: parallel design space exploration — multiple probes explore a
+geometry/parameter landscape concurrently, competing for compute budget,
+replicating the most fit configurations.
+"""
+
+from typing import Dict, Any, List, Optional
 import logging
-from agents.environment_agent import EnvironmentAgent
-from agents.von_neumann_agent import VonNeumannAgent
+import uuid
+import math
+import random
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
+
 class SwarmManager:
     """
-    Orchestrates the Swarm Simulation Loop.
-    Manages Agent Registry, Environment State, and Time-Stepping.
+    Orchestrates the Von Neumann Swarm Simulation Loop.
+    Manages agent registry, environment state, resource field, and time-stepping.
     """
+
     def __init__(self):
-        self.env_agent = EnvironmentAgent()
         self.agents: List[Any] = []
         self.resources: List[Dict] = []
         self.pheromones: Dict[str, float] = {}
+        self.task_queue: List[Dict] = []
+        self.construction_targets: List[Dict] = []
         self.tick_count = 0
-        
-    def init_simulation(self, config: Dict[str, Any], environment: Dict[str, Any] = None, geometry_tree: List[Dict[str, Any]] = None):
-        """
-        Initialize the swarm with seed agents, resources, and tasks.
-        """
-        self.env_agent = EnvironmentAgent()
-        
-        # Physics Kernel Integration
-        from physics.kernel import get_physics_kernel
-        kernel = get_physics_kernel()
-        g_default = kernel.get_constant('g')
-        
-        self.gravity = environment.get("gravity", g_default) if environment else g_default
-        self.construction_targets = geometry_tree if geometry_tree else []
-        
-        # Task Queue for Distributed Compute
-        self.task_queue = []
-        task_count = config.get("task_count", 0)
-        if task_count > 0:
-            logger.info(f"Swarm: Generating {task_count} compute tasks...")
-            for i in range(task_count):
-                self.task_queue.append({
-                    "id": f"task_{i}",
-                    "type": "COMPUTE_HASH",
-                    "effort": 10.0, # Energy required to complete
-                    "status": "pending"
-                })
+        self.gravity = 9.81
 
-        # 1. Setup Environment
-        self.resources = self.env_agent.init_swarm_resources(
-            width=200.0, height=200.0, 
-            count=config.get("resource_count", 20)
-        )
+    # ------------------------------------------------------------------
+    # Public API — pipeline entry point
+    # ------------------------------------------------------------------
+
+    def run(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Standard pipeline entry point.
+
+        Accepts:
+            ticks           int   — simulation steps (default 50)
+            initial_pop     int   — seed agent count (default 4)
+            task_count      int   — compute tasks in queue (default 10)
+            resource_count  int   — resource nodes in environment (default 20)
+            arena_size      float — square arena side length (default 200.0)
+            agent_types     list  — ["VonNeumannAgent"] (only type available)
+            geometry_tree   list  — optional construction targets
+            environment     dict  — optional {gravity: float}
+
+        Returns full simulation metrics dict.
+        """
+        config = {
+            "initial_pop": params.get("initial_pop", 4),
+            "task_count": params.get("task_count", 10),
+            "resource_count": params.get("resource_count", 20),
+            "agent_types": params.get("agent_types", ["VonNeumannAgent"]),
+        }
+        ticks = params.get("ticks", 50)
+        arena_size = params.get("arena_size", 200.0)
+        environment = params.get("environment", {})
+        geometry_tree = params.get("geometry_tree", [])
+
+        self.init_simulation(config, environment, geometry_tree, arena_size)
+        return self.run_simulation(ticks)
+
+    # ------------------------------------------------------------------
+    # Initialisation
+    # ------------------------------------------------------------------
+
+    def init_simulation(
+        self,
+        config: Dict[str, Any],
+        environment: Optional[Dict[str, Any]] = None,
+        geometry_tree: Optional[List[Dict[str, Any]]] = None,
+        arena_size: float = 200.0,
+    ):
+        """Initialise swarm with seed agents, resources, and tasks."""
+        from backend.physics.kernel import get_physics_kernel
+        kernel = get_physics_kernel()
+        self.gravity = (environment or {}).get("gravity", kernel.get_constant("g"))
+        self.construction_targets = geometry_tree or []
+        self.tick_count = 0
+
+        # Task queue
+        self.task_queue = [
+            {"id": f"task_{i}", "type": "COMPUTE_HASH", "effort": 10.0, "status": "pending"}
+            for i in range(config.get("task_count", 10))
+        ]
+
+        # Resource field — randomly scattered nodes in the arena
+        count = config.get("resource_count", 20)
+        self.resources = self._init_resources(arena_size, count)
         self.pheromones = {}
-        
-        # 2. Setup Seed Population
+
+        # Seed population
         agent_names = config.get("agent_types", ["VonNeumannAgent"])
-        count = config.get("initial_pop", 2)
-        
-        for i in range(count):
-            ag_type_name = agent_names[i % len(agent_names)]
-            
-            if ag_type_name == "VonNeumannAgent":
+        pop = config.get("initial_pop", 4)
+
+        from backend.agents.von_neumann_agent import VonNeumannAgent
+        self.agents = []
+        for i in range(pop):
+            ag_type = agent_names[i % len(agent_names)]
+            if ag_type == "VonNeumannAgent":
                 agent = VonNeumannAgent(initial_energy=200.0)
+                # Spread starting positions
+                agent.pos = [
+                    random.uniform(-arena_size / 4, arena_size / 4),
+                    random.uniform(-arena_size / 4, arena_size / 4),
+                ]
                 self.agents.append(agent)
-            elif ag_type_name == "ConstructionAgent":
-                logger.warning("ConstructionAgent not available yet — skipping spawn")
-                
-        logger.info(f"Swarm Initialized: {len(self.agents)} Agents, {len(self.task_queue)} Tasks")
+            else:
+                logger.warning(f"Unknown agent type '{ag_type}' — skipping")
+
+        logger.info(
+            f"Swarm initialised: {len(self.agents)} agents, "
+            f"{len(self.task_queue)} tasks, {len(self.resources)} resources"
+        )
+
+    # ------------------------------------------------------------------
+    # Simulation loop
+    # ------------------------------------------------------------------
 
     def run_simulation(self, ticks: int = 50) -> Dict[str, Any]:
-        """
-        Run the simulation for N ticks.
-        Returns final metrics.
-        """
+        """Run simulation for N ticks and return final metrics."""
+        tick_logs: List[str] = []
         for _ in range(ticks):
-            self.run_tick()
-            
-            # Stop if all tasks done? 
-            # if not self.task_queue: break
-            
-        return self._capture_metrics()
+            log_entry = self.run_tick()
+            if log_entry:
+                tick_logs.append(log_entry)
+            if not self.agents:
+                logger.info("Swarm extinct — stopping early")
+                break
 
-    def run_tick(self):
-        """
-        Execute one simulation step.
-        """
+        metrics = self._capture_metrics()
+        metrics["tick_log_sample"] = tick_logs[-10:]  # last 10 notable events
+        return metrics
+
+    def run_tick(self) -> Optional[str]:
+        """Execute one simulation step. Returns a notable log line or None."""
         self.tick_count += 1
-        
-        # Snapshot state for agents
+
         env_state = {
             "resources": self.resources,
             "pheromones": self.pheromones,
-            "tasks": self.task_queue, # Shared Queue
-            "targets": self.construction_targets
+            "tasks": self.task_queue,
+            "targets": self.construction_targets,
         }
-        
-        new_babies = []
-        dead_ids = set()
-        
-        # A. Agent Decisions
+
+        new_agents: List[Any] = []
+        dead_ids: set = set()
+        notable: List[str] = []
+
         for agent in self.agents:
-            # Pass shared state (Agents modify tasks/resources in place? 
-            # Ideally they return requests, but for Python sim we pass Ref for speed)
-            # To be safe, we let them modify 'tasks' via request?
-            # For simplicity in V1: Agents modify the task object directly if they 'work' on it.
             res = agent.run(env_state)
-            
-            # Handle Task Completion Request
-            if completed_task_id := res.get("completed_task_id"):
-                # Remove from queue
-                original_len = len(self.task_queue)
-                self.task_queue = [t for t in self.task_queue if t["id"] != completed_task_id]
-                if len(self.task_queue) < original_len:
-                    # Grant Energy Bonus for Task?
-                    agent.energy += 20.0 
 
-            
-            # Harvest
+            # Task completion
+            if completed_id := res.get("completed_task_id"):
+                before = len(self.task_queue)
+                self.task_queue = [t for t in self.task_queue if t["id"] != completed_id]
+                if len(self.task_queue) < before:
+                    agent.energy += 20.0
+
+            # Resource harvest
             if req := res.get("harvest_request"):
-                harvested = self.env_agent.consume_resource(self.resources, res["pos"], req["amount"])
+                harvested = self._consume_resource(res["pos"], req["amount"])
                 if harvested > 0 and hasattr(agent, "energy"):
-                   agent.energy += harvested
-                   # Deposite Pheromone (Stigmergy)
-                   self.pheromones[req["target_id"]] = self.pheromones.get(req["target_id"], 0.0) + 1.0
+                    agent.energy += harvested
+                    self.pheromones[req["target_id"]] = (
+                        self.pheromones.get(req["target_id"], 0.0) + 1.0
+                    )
 
-            # Replicate
-            if child_config := res.get("child"):
-                c_gen = child_config["genetics"]
-                c_eng = child_config["energy_grant"]
-                baby = None
-                
-                # Dynamic instantiation based on type string
-                if child_config["type"] == "VonNeumannAgent":
-                    baby = VonNeumannAgent(genetics=c_gen, initial_energy=c_eng)
-                elif child_config["type"] == "ConstructionAgent":
-                    logger.warning("ConstructionAgent replication skipped — not available yet")
-                
-                if baby:
-                    baby.pos = list(res["pos"])
-                    new_babies.append(baby)
-            
+            # Replication
+            if child_cfg := res.get("child"):
+                from backend.agents.von_neumann_agent import VonNeumannAgent
+                if child_cfg.get("type", "VonNeumannAgent") == "VonNeumannAgent":
+                    baby = VonNeumannAgent(
+                        genetics=child_cfg["genetics"],
+                        initial_energy=child_cfg["energy_grant"],
+                    )
+                    baby.pos = list(res.get("pos", [0.0, 0.0]))
+                    new_agents.append(baby)
+                    notable.append(
+                        f"tick={self.tick_count} {agent.id} replicated → gen {child_cfg['genetics'].get('generation', '?')}"
+                    )
+
             # Death
             if res.get("status") == "dead":
                 dead_ids.add(agent.id)
-                
-        # B. Update Lists
-        self.agents = [a for a in self.agents if a.id not in dead_ids] + new_babies
-        
-        # C. Environment Entropy
-        self.pheromones = self.env_agent.update_pheromones(self.pheromones)
-        
-        # D. Phase 3 VMK Safety Check (Collision Detection)
-        collisions = self.check_swarm_collisions(self.agents)
+
+        # Commit state
+        self.agents = [a for a in self.agents if a.id not in dead_ids] + new_agents
+
+        # Pheromone decay (evaporation rate 5% per tick)
+        self.pheromones = {k: v * 0.95 for k, v in self.pheromones.items() if v * 0.95 > 0.01}
+
+        # Collision detection (numpy — no external kernel needed)
+        collisions = self._detect_collisions()
         if collisions:
-            logger.warning(f"Swarm Safety Audit: {len(collisions)} Collisions Detected!")
-            # In future: Revert moves or damage agents.
-        
-    def check_swarm_collisions(self, active_agents: List[Any], margin: float = 0.1) -> List[str]:
+            logger.debug(f"tick={self.tick_count}: {len(collisions)} collisions")
+
+        return notable[-1] if notable else None
+
+    # ------------------------------------------------------------------
+    # Environment helpers
+    # ------------------------------------------------------------------
+
+    def _init_resources(self, arena: float, count: int) -> List[Dict]:
+        """Generate randomly placed resource nodes."""
+        return [
+            {
+                "id": f"res_{uuid.uuid4().hex[:6]}",
+                "x": random.uniform(-arena / 2, arena / 2),
+                "y": random.uniform(-arena / 2, arena / 2),
+                "amount": random.uniform(50.0, 200.0),
+            }
+            for _ in range(count)
+        ]
+
+    def _consume_resource(self, agent_pos: List[float], amount: float, radius: float = 10.0) -> float:
         """
-        Use VMK Math to detect agent-agent overlaps.
-        O(N^2) for MVP.
+        Consume `amount` from the nearest resource within `radius`.
+        Returns amount actually harvested.
         """
-        try:
-            from vmk_kernel import SymbolicMachiningKernel, ToolProfile, VMKInstruction
-            import numpy as np
-        except ImportError:
+        best = None
+        best_dist = radius
+
+        for res in self.resources:
+            if res["amount"] <= 0:
+                continue
+            d = math.hypot(res["x"] - agent_pos[0], res["y"] - agent_pos[1])
+            if d < best_dist:
+                best_dist = d
+                best = res
+
+        if best is None:
+            return 0.0
+
+        harvested = min(amount, best["amount"])
+        best["amount"] -= harvested
+        return harvested
+
+    def _detect_collisions(self, margin: float = 0.1) -> List[str]:
+        """
+        O(N²) pairwise collision detection using numpy.
+        Returns list of overlapping agent-pair strings.
+        """
+        n = len(self.agents)
+        if n < 2:
             return []
 
-        # We can use a kernel to represent one agent, then probe with others.
-        # But simpler: Use the kernel's helper math for analytical shapes?
-        # Or instantiate a kernel for the 'Universe'.
-        
-        # Let's verify pairwise. 
-        # A collision exists if Distance(A, B) < Radius(A) + Radius(B).
-        # We use VMK to support future complex shapes.
-        
-        collisions = []
-        n = len(active_agents)
-        
-        if n < 2: return []
-        
-        # Shared Kernel for math (static helper)
-        # We don't really need a Stock for this, just the SDF functions.
-        # But we must satisfy the class init.
-        kernel = SymbolicMachiningKernel(stock_dims=[1,1,1]) 
+        positions = np.array([a.pos + [0.0] for a in self.agents])  # Nx3
+        radii = np.array([
+            getattr(getattr(a, "genetics", None), "harvest_efficiency", 1.0) * 5.0
+            for a in self.agents
+        ])
 
+        collisions = []
         for i in range(n):
             for j in range(i + 1, n):
-                a1 = active_agents[i]
-                a2 = active_agents[j]
-                
-                # Assume spherical for Phase 3 (Ball Tool)
-                # Future: Could be Box, V-Bit, etc.
-                p1 = np.array(a1.pos + [0.0]) # 2D to 3D
-                p2 = np.array(a2.pos + [0.0])
-                
-                # Get radii (using harvest efficiency as proxy for size in this simulation)
-                r1 = getattr(a1.genetics, "harvest_efficiency", 1.0) * 5.0
-                r2 = getattr(a2.genetics, "harvest_efficiency", 1.0) * 5.0
-                
-                dist = np.linalg.norm(p1 - p2)
-                overlap = dist - (r1 + r2 + margin)
-                
-                # print(f"DEBUG: Check {a1.id} vs {a2.id}. Dist={dist:.2f}, R1={r1}, R2={r2}, Overlap={overlap:.2f}")
-
-                if overlap < 0:
-                    collisions.append(f"{a1.id} <-> {a2.id} (Overlap {abs(overlap):.3f})")
+                dist = float(np.linalg.norm(positions[i] - positions[j]))
+                if dist - (radii[i] + radii[j] + margin) < 0:
+                    collisions.append(f"{self.agents[i].id} <-> {self.agents[j].id}")
 
         return collisions
 
+    # ------------------------------------------------------------------
+    # Metrics
+    # ------------------------------------------------------------------
+
     def _capture_metrics(self) -> Dict[str, Any]:
-        """
-        Aggregate swarm stats.
-        """
-        total_energy = sum([a.energy for a in self.agents if hasattr(a, 'energy')])
-        gens = [a.genetics.generation for a in self.agents if hasattr(a, 'genetics')]
-        structures = sum([a.structures_built for a in self.agents if hasattr(a, 'structures_built')])
-        
+        """Aggregate swarm statistics."""
+        total_energy = sum(getattr(a, "energy", 0.0) for a in self.agents)
+        generations = [
+            a.genetics.generation
+            for a in self.agents
+            if hasattr(a, "genetics") and a.genetics
+        ]
+        structures = sum(getattr(a, "structures_built", 0) for a in self.agents)
+        tasks_done = sum(
+            1 for t in self.task_queue if t.get("status") == "done"
+        )
+
         return {
+            "status": "success",
             "ticks": self.tick_count,
             "population": len(self.agents),
-            "biomass_energy": total_energy,
+            "biomass_energy": round(total_energy, 2),
             "structures_built": structures,
-            "max_generation": max(gens) if gens else 0,
-            "max_generation": max(gens) if gens else 0,
-            "resources_remaining": len([r for r in self.resources if r["amount"] > 1.0]),
-            "tasks_remaining": len(self.task_queue)
+            "max_generation": max(generations) if generations else 0,
+            "resources_remaining": sum(1 for r in self.resources if r["amount"] > 1.0),
+            "tasks_completed": tasks_done,
+            "tasks_remaining": len(self.task_queue),
         }

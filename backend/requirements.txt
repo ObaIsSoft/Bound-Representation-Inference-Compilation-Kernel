@@ -74,6 +74,7 @@ python-multipart
 
 # Additional utilities
 jinja2
+python-constraint>=1.4.2    # CSP pin allocator for CodegenAgent
 
 # Database & API Client (Phase 8 - De-hardcoding)
 supabase>=2.0.0

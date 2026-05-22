@@ -1,0 +1,1425 @@
+# BRICK OS — Electronics Topology Library
+# All design equations are first-principles physics expressions.
+# Parameters are design guidelines from IPC-2221, TI/Analog Devices appnotes — user-overridable.
+# No component values are assumed. R_ds_on, ESR, Q_g come from catalog lookup (Phase 2).
+#
+# Expression namespace (available in every expression):
+#   Inputs:    v_in, v_out, i_out, ripple_v, f_sw, t_amb (ambient temp C)
+#   Params:    all entries under `parameters` by name
+#   Math:      sqrt, log, log10, exp, abs, min, max, pi
+
+topologies:
+
+  # ─── BUCK (Step-Down DC-DC) ───────────────────────────────────────────────
+  buck:
+    name: "Synchronous Buck Converter"
+    description: >
+      Step-down switched-mode power supply. V_out < V_in.
+      Efficiency 85-95%. Preferred over LDO when V_in - V_out > 1V at I_out > 500mA.
+    family: dc_dc
+
+    selection:
+      rules:
+        - "v_out < v_in * (1 - ccm_headroom)"   # need headroom for CCM
+        - "v_out > 0"
+        - "efficiency_min >= 0.75"
+        - "i_out > 0"
+      score: "efficiency_min * 2 - abs((v_out / v_in) - 0.5)"  # prefer mid duty-cycle
+
+    parameters:
+      ccm_headroom:
+        default: 0.05
+        description: "Minimum (V_in - V_out)/V_in to stay in CCM at full load"
+        unit: "dimensionless"
+        source: "TI SLVA477B"
+      ripple_i_ratio:
+        default: 0.30
+        description: "Inductor current ripple as fraction of I_out (20-40% typical)"
+        unit: "dimensionless"
+        source: "TI SLVA477B, Analog Devices AN-1246"
+      input_ripple_ratio:
+        default: 0.01
+        description: "Allowed V_in ripple as fraction of V_in"
+        unit: "dimensionless"
+        source: "IPC-2221A"
+      v_derating_switch:
+        default: 1.25
+        description: "V_DS voltage derating factor (V_rated ≥ V_in × factor)"
+        unit: "dimensionless"
+        source: "MIL-STD-975, IPC-9592"
+      i_derating_switch:
+        default: 1.5
+        description: "I_D current derating (I_rated ≥ I_peak × factor)"
+        unit: "dimensionless"
+        source: "MIL-STD-975"
+      v_derating_cap:
+        default: 1.5
+        description: "Capacitor voltage derating"
+        unit: "dimensionless"
+        source: "IPC-9592"
+      inductor_sat_margin:
+        default: 1.25
+        description: "Inductor saturation current margin"
+        unit: "dimensionless"
+        source: "TI SLVA477B"
+
+    design_equations:
+      # --- Duty cycle (ideal CCM, volt-second balance) ---
+      duty: "v_out / v_in"
+
+      # --- Inductor ---
+      # From volt-second balance on-time: (V_in - V_out) = L * ΔiL / t_on
+      # t_on = duty / f_sw → L = (V_in - V_out) * duty / (ΔiL * f_sw)
+      ripple_i_l: "ripple_i_ratio * i_out"
+      inductance_h: "(v_in - v_out) * duty / (ripple_i_l * f_sw)"
+      # Saturation current rating needed
+      l_i_sat_min: "(i_out + ripple_i_l / 2) * inductor_sat_margin"
+      # E-series target (rounded externally)
+      l_value_uh: "inductance_h * 1e6"
+
+      # --- Output capacitor ---
+      # From charge balance: ΔQ = ΔiL/(8*f_sw) = C*ΔV
+      cap_out_f: "ripple_i_l / (8 * f_sw * ripple_v)"
+      cap_out_v_min: "v_out * v_derating_cap"
+      cap_out_uf: "cap_out_f * 1e6"
+
+      # --- Input capacitor ---
+      # Handles RMS ripple current: I_rms ≈ I_out * sqrt(duty*(1-duty))
+      # ΔV_in = I_out * duty * (1-duty) / (f_sw * C_in)
+      cap_in_f: "i_out * duty * (1 - duty) / (f_sw * v_in * input_ripple_ratio)"
+      cap_in_v_min: "v_in * v_derating_cap"
+
+      # --- MOSFET ratings ---
+      mosfet_vds_min: "v_in * v_derating_switch"
+      mosfet_id_peak: "i_out + ripple_i_l / 2"
+      mosfet_id_min: "mosfet_id_peak * i_derating_switch"
+      # RMS current (for conduction loss — actual R_ds_on comes from catalog)
+      mosfet_hs_irms: "mosfet_id_peak * sqrt(duty)"
+      mosfet_ls_irms: "mosfet_id_peak * sqrt(1 - duty)"
+
+      # --- Load (for SPICE) ---
+      r_load: "v_out / i_out"
+
+    # Phase 1 SPICE: ideal switches, validates topology and L/C sizing
+    # Dual-PWM approach: Vpwm_hs (0→Vin) controls HS; Vpwm_ls (Vin→0) controls LS.
+    # Both models share the same SW model with Vt=vin/2 (vin_half from context).
+    # All {var} are Python format substitutions with computed numeric values.
+    spice_phase1: |
+      * BRICK OS Buck Converter — Phase 1 (ideal switches)
+      * {project_name}
+      * V_in={vin:.4f}V  V_out={vout:.4f}V  I_out={iout:.4f}A
+      * L={l_uh:.3f}uH  C_out={c_out_uf:.3f}uF  f_sw={fsw_khz:.0f}kHz  D={duty:.4f}
+      *
+      Vin in 0 DC {vin:.6g}
+      *
+      * High-side PWM: 0→Vin (switch ON when V > vin_half)
+      Vpwm_hs pwm_hs 0 PULSE(0 {vin:.6g} 0 1e-9 1e-9 {t_on:.11g} {t_period:.11g})
+      * Low-side PWM: Vin→0 (complementary — switch ON when V > vin_half)
+      Vpwm_ls pwm_ls 0 PULSE({vin:.6g} 0 0 1e-9 1e-9 {t_on:.11g} {t_period:.11g})
+      *
+      * High-side ideal switch
+      Shs in sw pwm_hs 0 SWMOD
+      * Low-side ideal switch
+      Sls sw 0 pwm_ls 0 SWMOD
+      .model SWMOD SW(Ron=1e-4 Roff=1e8 Vt={vin_half:.6g} Vh=0.0)
+      *
+      * Inductor (ideal — DCR added in Phase 2): SW → OUT
+      * IC = I_valley (I_avg - ΔI/2): exact steady-state value at HS turn-on instant
+      L1 sw out {l_h:.11g} IC={il_valley:.6g}
+      *
+      * Output capacitor (ideal, shunt to GND — ESR added in Phase 2)
+      Cout out 0 {c_out_f:.11g} IC={vout:.6g}
+      *
+      * Input capacitor
+      Cin in 0 {c_in_f:.11g}
+      *
+      * Load
+      Rload out 0 {r_load:.6g}
+      *
+      * UIC: use IC= values from components (skip DC OP, start from design point)
+      .tran {t_step:.11g} {t_end:.9g} 0 {t_step:.11g} UIC
+      .meas tran VOUT_AVG  avg  v(out) from={t_meas:.9g} to={t_end:.9g}
+      .meas tran VOUT_PP   pp   v(out) from={t_meas:.9g} to={t_end:.9g}
+      .meas tran IL_AVG    avg  i(L1)  from={t_meas:.9g} to={t_end:.9g}
+      .meas tran IL_PP     pp   i(L1)  from={t_meas:.9g} to={t_end:.9g}
+      .meas tran IL_MIN    min  i(L1)  from={t_meas:.9g} to={t_end:.9g}
+      .end
+
+    # Phase 2 SPICE: real component parameters from catalog
+    # Extra vars added: ron_hs, ron_ls, dcr_l, esr_cout (all from datasheet)
+    spice_phase2: |
+      * BRICK OS Buck Converter — Phase 2 (real components)
+      * {project_name}
+      * MPN_HS={mpn_hs}  MPN_LS={mpn_ls}  MPN_L={mpn_l}  MPN_C={mpn_cout}
+      *
+      Vin in 0 DC {vin:.6g}
+      Vpwm_hs pwm_hs 0 PULSE(0 {vin:.6g} 0 1e-9 1e-9 {t_on:.11g} {t_period:.11g})
+      Vpwm_ls pwm_ls 0 PULSE({vin:.6g} 0 0 1e-9 1e-9 {t_on:.11g} {t_period:.11g})
+      *
+      * High-side MOSFET (R_ds_on from datasheet)
+      Shs in sw pwm_hs 0 SWHS
+      .model SWHS SW(Ron={ron_hs:.6g} Roff=1e8 Vt={vin_half:.6g} Vh=0.0)
+      *
+      * Low-side MOSFET (R_ds_on from datasheet)
+      Sls sw 0 pwm_ls 0 SWLS
+      .model SWLS SW(Ron={ron_ls:.6g} Roff=1e8 Vt={vin_half:.6g} Vh=0.0)
+      *
+      * Inductor with DCR: SW → Ldcr_node → lx
+      L1 sw Ldcr_node {l_h:.11g} IC={il_valley:.6g}
+      Rdcr Ldcr_node lx {dcr_l:.6g}
+      *
+      * Output capacitor with ESR: lx → out (ESR series), Cout out to GND
+      Resr lx out {esr_cout:.6g}
+      Cout out 0 {c_out_f:.11g} IC={vout:.6g}
+      *
+      Cin in 0 {c_in_f:.11g}
+      Rload out 0 {r_load:.6g}
+      *
+      .tran {t_step:.11g} {t_end:.9g} 0 {t_step:.11g} UIC
+      .meas tran VOUT_AVG  avg  v(out) from={t_meas:.9g} to={t_end:.9g}
+      .meas tran VOUT_PP   pp   v(out) from={t_meas:.9g} to={t_end:.9g}
+      .meas tran IL_AVG    avg  i(L1)  from={t_meas:.9g} to={t_end:.9g}
+      .meas tran IL_PP     pp   i(L1)  from={t_meas:.9g} to={t_end:.9g}
+      .meas tran IL_MIN    min  i(L1)  from={t_meas:.9g} to={t_end:.9g}
+      .meas tran P_IN      avg  v(in)*i(Vin) from={t_meas:.9g} to={t_end:.9g}
+      .meas tran P_OUT     avg  v(out)*v(out)/{r_load:.6g} from={t_meas:.9g} to={t_end:.9g}
+      .end
+
+    validation:
+      v_out_error_pct:
+        expr: "abs(vout_avg - v_out) / v_out * 100"
+        max: 5.0
+        unit: "%"
+        action_on_fail: "adjust_duty"
+      ripple_mv:
+        expr: "vout_pp * 1000"
+        max_from_goal: "ripple_v * 1000"
+        unit: "mV"
+        action_on_fail: "increase_cap_out"
+      ccm_check:
+        expr: "il_min"
+        min: 0.0
+        unit: "A"
+        action_on_fail: "increase_inductance"
+
+    bom_roles:
+      - role: mosfet_hs
+        type: mosfet
+        ref: Q1
+        description: "High-side N-channel MOSFET"
+        v_rated_var: mosfet_vds_min
+        i_rated_var: mosfet_id_min
+        search_keywords: "N-channel MOSFET {vds:.0f}V {id:.1f}A low Rds(on) synchronous buck"
+        datasheet_fields: [rds_on_mohm, qg_nc, v_th_v]
+
+      - role: mosfet_ls
+        type: mosfet
+        ref: Q2
+        description: "Low-side N-channel MOSFET (synchronous)"
+        v_rated_var: mosfet_vds_min
+        i_rated_var: mosfet_id_min
+        search_keywords: "N-channel MOSFET {vds:.0f}V {id:.1f}A low Rds(on) synchronous buck"
+        datasheet_fields: [rds_on_mohm, qg_nc, v_th_v]
+
+      - role: inductor
+        type: inductor
+        ref: L1
+        description: "Shielded power inductor"
+        value_var: inductance_h
+        i_sat_var: l_i_sat_min
+        search_keywords: "power inductor {val_uh:.1f}uH {isat:.1f}A shielded SMD"
+        datasheet_fields: [dcr_mohm, i_sat_a, i_rms_a]
+
+      - role: cap_out
+        type: capacitor
+        ref: C1
+        description: "Output filter capacitor X7R"
+        value_var: cap_out_f
+        v_rated_var: cap_out_v_min
+        search_keywords: "capacitor {val_uf:.1f}uF {vrated:.0f}V X7R ceramic SMD"
+        datasheet_fields: [esr_mohm, capacitance_uf]
+
+      - role: cap_in
+        type: capacitor
+        ref: C2
+        description: "Input decoupling capacitor X7R"
+        value_var: cap_in_f
+        v_rated_var: cap_in_v_min
+        search_keywords: "capacitor {val_uf:.1f}uF {vrated:.0f}V X7R ceramic SMD"
+        datasheet_fields: [esr_mohm, capacitance_uf]
+
+
+  # ─── BOOST (Step-Up DC-DC) ────────────────────────────────────────────────
+  boost:
+    name: "Boost Converter"
+    description: >
+      Step-up switched-mode power supply. V_out > V_in.
+      Efficiency 80-93%. Input current is continuous (lower EMI than flyback).
+    family: dc_dc
+
+    selection:
+      rules:
+        - "v_out > v_in * 1.1"
+        - "v_out > 0"
+        - "efficiency_min >= 0.70"
+        - "i_out > 0"
+      score: "efficiency_min"
+
+    parameters:
+      ripple_i_ratio:
+        default: 0.30
+        description: "Inductor current ripple as fraction of input current"
+        unit: "dimensionless"
+        source: "TI SLVA372C"
+      input_ripple_ratio:
+        default: 0.02
+        description: "Allowed V_in ripple fraction"
+        unit: "dimensionless"
+        source: "IPC-2221A"
+      v_derating_switch:
+        default: 1.25
+        unit: "dimensionless"
+        source: "MIL-STD-975"
+      i_derating_switch:
+        default: 1.5
+        unit: "dimensionless"
+        source: "MIL-STD-975"
+      v_derating_cap:
+        default: 1.5
+        unit: "dimensionless"
+        source: "IPC-9592"
+      inductor_sat_margin:
+        default: 1.25
+        unit: "dimensionless"
+        source: "TI SLVA372C"
+
+    design_equations:
+      # Duty cycle from ideal boost conversion ratio: V_out = V_in / (1 - D)
+      duty: "1 - v_in / v_out"
+      # Input current = inductor average current
+      i_in_avg: "i_out / (1 - duty)"
+      # Inductor ripple current
+      ripple_i_l: "ripple_i_ratio * i_in_avg"
+      # Inductance: L = V_in * D / (ΔiL * f_sw)
+      inductance_h: "v_in * duty / (ripple_i_l * f_sw)"
+      l_i_sat_min: "(i_in_avg + ripple_i_l / 2) * inductor_sat_margin"
+      l_value_uh: "inductance_h * 1e6"
+      # Output capacitor: C = I_out * D / (ΔV * f_sw)
+      cap_out_f: "i_out * duty / (ripple_v * f_sw)"
+      cap_out_v_min: "v_out * v_derating_cap"
+      cap_out_uf: "cap_out_f * 1e6"
+      # Input capacitor
+      cap_in_f: "i_in_avg * duty * (1 - duty) / (f_sw * v_in * input_ripple_ratio)"
+      cap_in_v_min: "v_in * v_derating_cap"
+      # MOSFET: switch sees V_out during off-time
+      mosfet_vds_min: "v_out * v_derating_switch"
+      mosfet_id_peak: "i_in_avg + ripple_i_l / 2"
+      mosfet_id_min: "mosfet_id_peak * i_derating_switch"
+      mosfet_irms: "mosfet_id_peak * sqrt(duty)"
+      # Diode (or sync rectifier)
+      diode_v_min: "v_out * v_derating_switch"
+      diode_i_avg: "i_out"
+      r_load: "v_out / i_out"
+
+    spice_phase1: |
+      * BRICK OS Boost Converter — Phase 1 (ideal switches)
+      * {project_name}
+      * V_in={vin:.4f}V  V_out={vout:.4f}V  I_out={iout:.4f}A
+      * L={l_uh:.3f}uH  C_out={c_out_uf:.3f}uF  f_sw={fsw_khz:.0f}kHz  D={duty:.4f}
+      *
+      Vin in 0 DC {vin:.6g}
+      * Switch PWM: 0→Vin (switch ON when V > vin_half)
+      Vpwm_sw pwm_sw 0 PULSE(0 {vin:.6g} 0 1e-9 1e-9 {t_on:.11g} {t_period:.11g})
+      * Diode PWM: Vin→0 (diode switch ON when V > vin_half, i.e. when main switch OFF)
+      Vpwm_d pwm_d 0 PULSE({vin:.6g} 0 0 1e-9 1e-9 {t_on:.11g} {t_period:.11g})
+      *
+      * Boost switch (low-side, connects in to GND during ON-time)
+      Ssw in 0 pwm_sw 0 SWMOD
+      .model SWMOD SW(Ron=1e-4 Roff=1e8 Vt={vin_half:.6g} Vh=0.0)
+      *
+      * Inductor IC = I_peak_boost (I_in_avg + ΔI/2): steady state at start of Sd-ON period
+      L1 in lx {l_h:.11g} IC={il_peak_boost:.6g}
+      *
+      * Ideal diode (synchronous rectifier — ON when switch is OFF)
+      Sd lx out pwm_d 0 SDMOD
+      .model SDMOD SW(Ron=1e-4 Roff=1e8 Vt={vin_half:.6g} Vh=0.0)
+      *
+      Cout out 0 {c_out_f:.11g} IC={vout:.6g}
+      Cin in 0 {c_in_f:.11g}
+      Rload out 0 {r_load:.6g}
+      *
+      .tran {t_step:.11g} {t_end:.9g} 0 {t_step:.11g} UIC
+      .meas tran VOUT_AVG  avg  v(out) from={t_meas:.9g} to={t_end:.9g}
+      .meas tran VOUT_PP   pp   v(out) from={t_meas:.9g} to={t_end:.9g}
+      .meas tran IL_AVG    avg  i(L1)  from={t_meas:.9g} to={t_end:.9g}
+      .meas tran IL_PP     pp   i(L1)  from={t_meas:.9g} to={t_end:.9g}
+      .meas tran IL_MIN    min  i(L1)  from={t_meas:.9g} to={t_end:.9g}
+      .end
+
+    spice_phase2: |
+      * BRICK OS Boost Converter — Phase 2 (real components)
+      * {project_name}  MPN_SW={mpn_sw}  MPN_D={mpn_d}  MPN_L={mpn_l}
+      *
+      Vin in 0 DC {vin:.6g}
+      Vpwm_sw pwm_sw 0 PULSE(0 {vin:.6g} 0 1e-9 1e-9 {t_on:.11g} {t_period:.11g})
+      Vpwm_d pwm_d 0 PULSE({vin:.6g} 0 0 1e-9 1e-9 {t_on:.11g} {t_period:.11g})
+      Ssw in 0 pwm_sw 0 SWMOD
+      .model SWMOD SW(Ron={ron_sw:.6g} Roff=1e8 Vt={vin_half:.6g} Vh=0.0)
+      L1 in Ldcr {l_h:.11g} IC={il_peak_boost:.6g}
+      Rdcr Ldcr lx {dcr_l:.6g}
+      Sd lx out pwm_d 0 SDMOD
+      .model SDMOD SW(Ron={ron_d:.6g} Roff=1e8 Vt={vin_half:.6g} Vh=0.0)
+      Resr lx out {esr_cout:.6g}
+      Cout out 0 {c_out_f:.11g} IC={vout:.6g}
+      Cin in 0 {c_in_f:.11g}
+      Rload out 0 {r_load:.6g}
+      *
+      .tran {t_step:.11g} {t_end:.9g} 0 {t_step:.11g} UIC
+      .meas tran VOUT_AVG  avg  v(out) from={t_meas:.9g} to={t_end:.9g}
+      .meas tran VOUT_PP   pp   v(out) from={t_meas:.9g} to={t_end:.9g}
+      .meas tran IL_AVG    avg  i(L1)  from={t_meas:.9g} to={t_end:.9g}
+      .meas tran IL_PP     pp   i(L1)  from={t_meas:.9g} to={t_end:.9g}
+      .meas tran IL_MIN    min  i(L1)  from={t_meas:.9g} to={t_end:.9g}
+      .meas tran P_IN      avg  v(in)*i(Vin) from={t_meas:.9g} to={t_end:.9g}
+      .meas tran P_OUT     avg  v(out)*v(out)/{r_load:.6g} from={t_meas:.9g} to={t_end:.9g}
+      .end
+
+    validation:
+      v_out_error_pct:
+        expr: "abs(vout_avg - v_out) / v_out * 100"
+        max: 5.0
+        unit: "%"
+        action_on_fail: "adjust_duty"
+      ripple_mv:
+        expr: "vout_pp * 1000"
+        max_from_goal: "ripple_v * 1000"
+        unit: "mV"
+        action_on_fail: "increase_cap_out"
+      ccm_check:
+        expr: "il_min"
+        min: 0.0
+        unit: "A"
+        action_on_fail: "increase_inductance"
+
+    bom_roles:
+      - role: mosfet_sw
+        type: mosfet
+        ref: Q1
+        description: "N-channel MOSFET switch"
+        v_rated_var: mosfet_vds_min
+        i_rated_var: mosfet_id_min
+        search_keywords: "N-channel MOSFET {vds:.0f}V {id:.1f}A low Rds(on) boost"
+        datasheet_fields: [rds_on_mohm, qg_nc]
+
+      - role: diode
+        type: schottky_diode
+        ref: D1
+        description: "Schottky rectifier diode"
+        v_rated_var: diode_v_min
+        i_rated_var: diode_i_avg
+        search_keywords: "Schottky diode {vr:.0f}V {iavg:.1f}A SMD"
+        datasheet_fields: [v_forward_v, i_rms_a]
+
+      - role: inductor
+        type: inductor
+        ref: L1
+        value_var: inductance_h
+        i_sat_var: l_i_sat_min
+        search_keywords: "power inductor {val_uh:.1f}uH {isat:.1f}A shielded SMD"
+        datasheet_fields: [dcr_mohm, i_sat_a]
+
+      - role: cap_out
+        type: capacitor
+        ref: C1
+        value_var: cap_out_f
+        v_rated_var: cap_out_v_min
+        search_keywords: "capacitor {val_uf:.1f}uF {vrated:.0f}V X7R ceramic SMD"
+        datasheet_fields: [esr_mohm]
+
+      - role: cap_in
+        type: capacitor
+        ref: C2
+        value_var: cap_in_f
+        v_rated_var: cap_in_v_min
+        search_keywords: "capacitor {val_uf:.1f}uF {vrated:.0f}V X7R ceramic SMD"
+        datasheet_fields: [esr_mohm]
+
+
+  # ─── LDO (Linear Regulator) ───────────────────────────────────────────────
+  ldo:
+    name: "LDO Linear Regulator"
+    description: >
+      Linear voltage regulator. V_out < V_in. Low noise. No switching.
+      Preferred when V_in - V_out < 1V or noise is critical (ADC, RF).
+      Avoid at high current with large dropout: waste heat = (V_in - V_out) * I_out.
+    family: linear
+
+    selection:
+      rules:
+        - "v_out < v_in"
+        - "v_out > 0"
+        - "i_out > 0"
+        # Warn if power dissipation is high — prefer buck above threshold
+        - "(v_in - v_out) * i_out < max_ldo_dissipation_w"
+      score: "1.0 / max(0.01, (v_in - v_out) * i_out)"  # prefer low dropout
+
+    parameters:
+      max_ldo_dissipation_w:
+        default: 2.0
+        description: "Maximum acceptable power dissipation in LDO (beyond this, use buck)"
+        unit: "W"
+        source: "Thermal design guideline"
+      v_derating_cap:
+        default: 1.5
+        unit: "dimensionless"
+        source: "IPC-9592"
+      output_cap_min_uf:
+        default: 1.0
+        description: "Minimum output cap for LDO loop stability (per datasheet)"
+        unit: "uF"
+        source: "TI SLVA71B — LDO stability requirements"
+      input_cap_min_uf:
+        default: 0.1
+        description: "Minimum input bypass cap"
+        unit: "uF"
+        source: "TI SLVA71B"
+
+    design_equations:
+      # Dropout voltage — actual V_do comes from IC datasheet
+      v_dropout: "v_in - v_out"
+      # Power dissipated as heat
+      p_dissipated: "(v_in - v_out) * i_out"
+      # Efficiency (upper bound, ignores quiescent current)
+      efficiency_ideal: "v_out / v_in"
+      # Minimum output capacitor (stability floor from params; IC may need more)
+      cap_out_f: "output_cap_min_uf * 1e-6"
+      cap_out_v_min: "v_out * v_derating_cap"
+      cap_in_f: "input_cap_min_uf * 1e-6"
+      cap_in_v_min: "v_in * v_derating_cap"
+      # IC ratings needed
+      ic_v_in_min: "v_in * 1.1"
+      ic_i_out_min: "i_out * 1.2"
+      r_load: "v_out / i_out"
+
+    spice_phase1: |
+      * BRICK OS LDO — Phase 1
+      * {project_name}
+      * V_in={vin:.4f}V  V_out={vout:.4f}V  I_out={iout:.4f}A
+      * P_diss={p_diss:.3f}W  Efficiency={eff_pct:.1f}%
+      *
+      Vin in 0 DC {vin:.6g}
+      *
+      * Ideal voltage regulator (voltage-controlled voltage source)
+      * Phase 2 replaces with real LDO subcircuit from datasheet SPICE model
+      Eldo out 0 in 0 {v_ratio:.8g}
+      *
+      Cout out 0 {c_out_f:.11g}
+      Cin in 0 {c_in_f:.11g}
+      Rload out 0 {r_load:.6g}
+      *
+      .op
+      .meas op VOUT_VAL find v(out)
+      .meas op P_DISS   find (({vin:.6g})-v(out))*v(out)/{r_load:.6g}
+      .end
+
+    spice_phase2: |
+      * BRICK OS LDO — Phase 2 (behavioral model — no manufacturer .lib required)
+      * {project_name}
+      * V_in={vin:.4f}V  V_out={vout:.4f}V  I_out={iout:.4f}A
+      * V_dropout={v_do:.3f}V  I_quiescent={i_q_ua:.1f}uA  ESR={esr_cout_mohm:.1f}mΩ
+      *
+      * Behavioral subcircuit: dropout-clamping VCVS models pass transistor.
+      * V_out = min(V_in - V_do, V_out_nom). R_out=10mΩ from pass element.
+      * Ref: Analog Devices MT-088; TI SLVA71B §4 "SPICE behavioural LDO"
+      .SUBCKT ldo_behav IN OUT AGND
+      Ereg   outreg AGND VALUE = {{ MIN(V(IN,AGND) - {v_do:.6g}, {vout:.6g}) }}
+      Rpass  outreg OUT  0.010
+      Iq     IN     AGND DC {i_q:.11g}
+      .ENDS ldo_behav
+      *
+      Vin    vin_n  0      DC {vin:.6g}
+      Cin    vin_n  0      {c_in_f:.11g}
+      Xldo   vin_n  vout_n 0  ldo_behav
+      Cout   vout_n cout_n {c_out_f:.11g}
+      Resr   cout_n 0      {esr_cout:.11g}
+      Rload  vout_n 0      {r_load:.6g}
+      *
+      .op
+      .tran 1e-7 5e-4
+      .meas tran VOUT_AVG avg v(vout_n) from=2.5e-4 to=5e-4
+      .meas tran VOUT_PP  pp  v(vout_n) from=2.5e-4 to=5e-4
+      .meas tran IIN_AVG  avg I(Vin)    from=2.5e-4 to=5e-4
+      .end
+
+    validation:
+      v_out_error_pct:
+        expr: "abs(vout_avg - v_out) / v_out * 100"
+        max: 3.0
+        unit: "%"
+      dissipation_w:
+        expr: "p_dissipated"
+        max_from_goal: "max_ldo_dissipation_w"
+        unit: "W"
+
+    bom_roles:
+      - role: ldo_ic
+        type: ldo_ic
+        ref: U1
+        description: "LDO regulator IC"
+        v_in_var: ic_v_in_min
+        i_out_var: ic_i_out_min
+        v_out_target: v_out
+        search_keywords: "LDO regulator {vin:.1f}V {vout:.2f}V {iout:.1f}A fixed"
+        datasheet_fields: [v_dropout_v, i_quiescent_ua, theta_ja_c_per_w, spice_model_url]
+
+      - role: cap_out
+        type: capacitor
+        ref: C1
+        value_var: cap_out_f
+        v_rated_var: cap_out_v_min
+        search_keywords: "capacitor {val_uf:.1f}uF {vrated:.0f}V X7R ceramic SMD"
+        datasheet_fields: [esr_mohm]
+
+      - role: cap_in
+        type: capacitor
+        ref: C2
+        value_var: cap_in_f
+        v_rated_var: cap_in_v_min
+        search_keywords: "capacitor {val_uf:.1f}uF {vrated:.0f}V X7R ceramic SMD"
+        datasheet_fields: [esr_mohm]
+
+
+  # ─── H-BRIDGE (Motor Driver) ──────────────────────────────────────────────
+  h_bridge:
+    name: "H-Bridge Motor Driver"
+    description: >
+      Full H-bridge for bidirectional DC motor control.
+      4 MOSFETs in H configuration with PWM speed control.
+      Dead-time insertion prevents shoot-through.
+    family: motor_driver
+
+    selection:
+      rules:
+        - "i_out > 0"
+        - "v_out > 0"
+        - "goal_type == 'motor_driver'"
+      score: "1.0"
+
+    parameters:
+      v_derating_switch:
+        default: 1.3
+        unit: "dimensionless"
+        source: "MIL-STD-975"
+      i_derating_switch:
+        default: 2.0
+        description: "Motor peak current derating (motors have high inrush)"
+        unit: "dimensionless"
+        source: "Motor drive design guide"
+      supply_ripple_ratio:
+        default: 0.05
+        description: "Allowed supply ripple during motor transient"
+        unit: "dimensionless"
+        source: "Motor drive design guide"
+      transient_duration_ms:
+        default: 10.0
+        description: "Motor acceleration transient duration"
+        unit: "ms"
+        source: "Typical BLDC/DC motor spec"
+      dead_time_ns:
+        default: 100.0
+        description: "Gate dead-time to prevent shoot-through (ns)"
+        unit: "ns"
+        source: "Gate drive application note — actual value from MOSFET t_fall spec"
+
+    design_equations:
+      # Supply voltage = V_in for motor driver
+      v_supply: "v_in"
+      v_motor: "v_out"
+      i_motor_cont: "i_out"
+      i_motor_peak: "i_out * 3"  # motor startup inrush ~ 3x continuous
+      # MOSFET: sees full supply voltage, carries peak motor current
+      mosfet_vds_min: "v_supply * v_derating_switch"
+      mosfet_id_min: "i_motor_peak * i_derating_switch"
+      # Bulk capacitor: supplies transient energy during motor acceleration
+      # E = I * dt → C * ΔV = I_peak * t_transient
+      # C = I_peak * t_transient / ΔV_supply
+      bulk_cap_f: "i_motor_peak * (transient_duration_ms * 1e-3) / (v_supply * supply_ripple_ratio)"
+      bulk_cap_v_min: "v_supply * v_derating_switch"
+      bulk_cap_uf: "bulk_cap_f * 1e6"
+      # Gate drive power (all 4 MOSFETs) — Q_g from datasheet
+      # p_gate = 4 * Q_g * V_gs * f_pwm  (populated after catalog lookup)
+      # Bootstrap cap for high-side drive: C_boot = Q_g * 10 / V_boot
+      # (simplified — actual from gate driver datasheet)
+      r_load: "v_out / max(0.001, i_out)"
+
+    spice_phase1: |
+      * BRICK OS H-Bridge — Phase 1 (ideal switches)
+      * {project_name}
+      * V_supply={vsupply:.4f}V  I_motor={imotor:.4f}A  f_pwm={fsw_khz:.0f}kHz
+      *
+      Vsupply supply 0 DC {vsupply:.6g}
+      *
+      * PWM signal (forward direction)
+      Vpwm_a pwm_a 0 PULSE(0 {vsupply:.6g} 0 1e-9 1e-9 {t_on:.11g} {t_period:.11g})
+      Vpwm_b pwm_b 0 PULSE({vsupply:.6g} 0 0 1e-9 1e-9 {t_on:.11g} {t_period:.11g})
+      *
+      * High-side left (Q1)
+      Sq1 supply ma pwm_a 0 SWMOD
+      * Low-side right (Q2)
+      Sq2 mb 0 pwm_a 0 SWMOD
+      * High-side right (Q3) — off in forward mode
+      Sq3 supply mb pwm_b 0 SWMOD
+      * Low-side left (Q4)
+      Sq4 ma 0 pwm_b 0 SWMOD
+      *
+      .model SWMOD SW(Ron=1e-4 Roff=1e8 Vt=0.5 Vh=0.0)
+      *
+      * Motor model: R + L (back-EMF ignored in Phase 1)
+      Rmotor ma mb {r_motor:.6g}
+      Lmotor ma mb_l {l_motor:.9g} IC=0
+      Vemf mb_l mb DC 0
+      *
+      Cbulk supply 0 {bulk_cap_f:.11g} IC={vsupply:.6g}
+      *
+      .tran {t_step:.11g} {t_end:.9g} 0 {t_step:.11g} UIC
+      .meas tran IMOTOR_AVG avg i(Rmotor) from={t_meas:.9g} to={t_end:.9g}
+      .meas tran IMOTOR_PP  pp  i(Rmotor) from={t_meas:.9g} to={t_end:.9g}
+      .meas tran VSUPPLY_PP pp  v(supply) from={t_meas:.9g} to={t_end:.9g}
+      .end
+
+    spice_phase2: |
+      * BRICK OS H-Bridge — Phase 2 (real MOSFET R_ds_on)
+      * {project_name}  MPN_Q={mpn_q}
+      *
+      Vsupply supply 0 DC {vsupply:.6g}
+      Vpwm_a pwm_a 0 PULSE(0 {vsupply:.6g} 0 1e-9 1e-9 {t_on:.11g} {t_period:.11g})
+      Vpwm_b pwm_b 0 PULSE({vsupply:.6g} 0 0 1e-9 1e-9 {t_on:.11g} {t_period:.11g})
+      Sq1 supply ma pwm_a 0 SWMOD
+      Sq2 mb 0 pwm_a 0 SWMOD
+      Sq3 supply mb pwm_b 0 SWMOD
+      Sq4 ma 0 pwm_b 0 SWMOD
+      .model SWMOD SW(Ron={ron:.6g} Roff=1e8 Vt=0.5 Vh=0.0)
+      Rmotor ma mb {r_motor:.6g}
+      Lmotor ma mb_l {l_motor:.9g} IC=0
+      Vemf mb_l mb DC 0
+      Cbulk supply 0 {bulk_cap_f:.11g} IC={vsupply:.6g}
+      *
+      .tran {t_step:.11g} {t_end:.9g} 0 {t_step:.11g} UIC
+      .meas tran IMOTOR_AVG avg i(Rmotor) from={t_meas:.9g} to={t_end:.9g}
+      .meas tran IMOTOR_PP  pp  i(Rmotor) from={t_meas:.9g} to={t_end:.9g}
+      .meas tran VSUPPLY_PP pp  v(supply) from={t_meas:.9g} to={t_end:.9g}
+      .meas tran P_COND     avg 4*i(Rmotor)*i(Rmotor)*{ron:.6g} from={t_meas:.9g} to={t_end:.9g}
+      .end
+
+    validation:
+      supply_ripple_mv:
+        expr: "vsupply_pp * 1000"
+        max_from_goal: "v_in * supply_ripple_ratio * 1000"
+        unit: "mV"
+        action_on_fail: "increase_bulk_cap"
+      motor_current_a:
+        expr: "imotor_avg"
+        min: 0.0
+        unit: "A"
+
+    bom_roles:
+      - role: mosfet_q1234
+        type: mosfet
+        ref: Q1-Q4
+        count: 4
+        description: "H-bridge N-channel MOSFETs (all identical)"
+        v_rated_var: mosfet_vds_min
+        i_rated_var: mosfet_id_min
+        search_keywords: "N-channel MOSFET {vds:.0f}V {id:.1f}A low Rds(on) H-bridge"
+        datasheet_fields: [rds_on_mohm, qg_nc, t_fall_ns]
+
+      - role: cap_bulk
+        type: capacitor
+        ref: C1
+        description: "Bulk supply decoupling capacitor"
+        value_var: bulk_cap_f
+        v_rated_var: bulk_cap_v_min
+        search_keywords: "electrolytic capacitor {val_uf:.0f}uF {vrated:.0f}V"
+        datasheet_fields: [esr_mohm, capacitance_uf]
+
+
+  # ─── FLYBACK (Isolated Step-Down/Step-Up) ─────────────────────────────────
+  flyback:
+    name: "Flyback Converter"
+    description: >
+      Isolated switched-mode supply. V_out can be above or below V_in.
+      Transformer provides galvanic isolation. Typical power range 5–150W.
+      Uses energy stored in primary inductor (magnetising inductance).
+    family: dc_dc_isolated
+
+    selection:
+      rules:
+        - "v_out > 0"
+        - "v_in > 0"
+        - "i_out > 0"
+        - "efficiency_min >= 0.70"
+      score: "0.5 * efficiency_min"   # lower score — prefer non-isolated topologies
+
+    parameters:
+      duty_nom:
+        default: 0.45
+        description: "Nominal duty cycle at nominal Vin (keep ≤0.5 for DCM margin)"
+        unit: "dimensionless"
+        source: "TI SLUA119"
+      coupling:
+        default: 0.999
+        description: "Transformer coupling coefficient (ideal = 1)"
+        unit: "dimensionless"
+        source: "Murata transformer datasheets"
+      ripple_i_ratio:
+        default: 0.40
+        description: "Magnetising current ripple as fraction of reflected output current"
+        unit: "dimensionless"
+        source: "TI SLUA119"
+      v_derating_switch:
+        default: 1.5
+        description: "MOSFET VDS derating (must handle Vin + Vout/n)"
+        unit: "dimensionless"
+        source: "MIL-STD-975"
+      v_derating_cap:
+        default: 1.5
+        unit: "dimensionless"
+        source: "IPC-9592"
+
+    design_equations:
+      # Turns ratio: n = Vout / (Vin * D / (1-D))  → rearranged for given duty_nom
+      turns_ratio: "v_out * (1 - duty_nom) / (v_in * duty_nom)"
+      duty: "duty_nom"
+
+      # Primary (magnetising) inductance: L_m = Vin * D / (ΔI_m * f_sw)
+      # ΔI_m = ripple_i_ratio * reflected peak secondary current
+      i_sec_peak: "(i_out / (1 - duty)) / turns_ratio"
+      ripple_i_m: "ripple_i_ratio * i_sec_peak"
+      lp_h: "v_in * duty / (ripple_i_m * f_sw)"
+      lp_uh: "lp_h * 1e6"
+
+      # Secondary inductance from turns ratio
+      ls_h: "lp_h * (turns_ratio ** 2)"
+      ls_uh: "ls_h * 1e6"
+
+      # Peak primary current
+      ip_peak: "i_sec_peak / turns_ratio + ripple_i_m / 2"
+
+      # Output capacitor: hold-up + ripple
+      cap_out_f: "i_out * duty / (ripple_v * f_sw)"
+      cap_out_uf: "cap_out_f * 1e6"
+      cap_out_v_min: "v_out * v_derating_cap"
+
+      # Input capacitor
+      cap_in_f: "i_out * duty / (v_in * 0.01 * f_sw)"
+      cap_in_v_min: "v_in * v_derating_cap"
+
+      # MOSFET: sees Vin + reflected Vout when switch off
+      mosfet_vds_min: "(v_in + v_out / turns_ratio) * v_derating_switch"
+      mosfet_id_min: "ip_peak * 1.5"
+
+      # Load resistance (SPICE)
+      r_load: "v_out / i_out"
+
+    # Flyback Phase 1: ideal transformer via coupled inductors (K≈1)
+    # Primary dot at lp- (connected to GND through primary switch).
+    # Secondary dot at ls+ → diode forward → output.
+    # Dual-PWM: primary switch ON during t_on; secondary rect ON during t_off.
+    spice_phase1: |
+      * BRICK OS Flyback Converter — Phase 1 (ideal transformer, K≈1)
+      * {project_name}
+      * V_in={vin:.4f}V  V_out={vout:.4f}V  I_out={iout:.4f}A  n={turns_ratio:.3f}
+      * Lp={lp_uh:.2f}µH  Ls={ls_uh:.2f}µH  D={duty:.4f}
+      *
+      Vin vin 0 DC {vin:.6g}
+      Cin vin 0 {c_in_f:.11g}
+      *
+      * Primary MOSFET: vin → drain_p, controlled by pwm_p (ON during t_on)
+      Vpwm_p pwm_p 0 PULSE(0 {vin:.6g} 0 1e-9 1e-9 {t_on:.11g} {t_period:.11g})
+      Sqp vin drain_p pwm_p 0 SWMOD
+      .model SWMOD SW(Ron=1e-4 Roff=1e8 Vt={vin_half:.6g} Vh=0.0)
+      *
+      * Primary magnetising inductor (dot at drain_p = node 1)
+      Lp drain_p 0 {lp_h:.11g} IC=0
+      *
+      * Secondary inductor (dot at 0/GND = node 1, anode_s = node 2)
+      Ls 0 anode_s {ls_h:.11g} IC=0
+      *
+      * Ideal transformer coupling
+      K1 Lp Ls {coupling:.6g}
+      *
+      * Secondary synchronous rectifier (ON during t_off: pwm_n goes HIGH)
+      Vpwm_n pwm_n 0 PULSE({vin:.6g} 0 0 1e-9 1e-9 {t_on:.11g} {t_period:.11g})
+      Sqs anode_s vout pwm_n 0 SDMOD
+      .model SDMOD SW(Ron=1e-4 Roff=1e8 Vt={vin_half:.6g} Vh=0.0)
+      *
+      * Output capacitor (shunt to GND) and load
+      Cout vout 0 {c_out_f:.11g} IC={vout:.6g}
+      Rload vout 0 {r_load:.6g}
+      *
+      .tran {t_step:.11g} {t_end:.9g} 0 {t_step:.11g} UIC
+      .meas tran VOUT_AVG avg v(vout) from={t_meas:.9g} to={t_end:.9g}
+      .meas tran VOUT_PP  pp  v(vout) from={t_meas:.9g} to={t_end:.9g}
+      .meas tran IP_AVG   avg i(Lp)   from={t_meas:.9g} to={t_end:.9g}
+      .meas tran IP_PEAK  max i(Lp)   from={t_meas:.9g} to={t_end:.9g}
+      .end
+
+    validation:
+      v_out_error_pct:
+        expr: "abs(vout_avg - v_out) / v_out * 100"
+        max: 10.0
+        unit: "%"
+        action_on_fail: "adjust_duty"
+      ripple_mv:
+        expr: "vout_pp * 1000"
+        max_from_goal: "ripple_v * 1000"
+        unit: "mV"
+        action_on_fail: "increase_cap_out"
+
+    bom_roles:
+      - role: mosfet_primary
+        type: mosfet
+        ref: Q1
+        description: "Primary N-channel MOSFET"
+        v_rated_var: mosfet_vds_min
+        i_rated_var: mosfet_id_min
+        search_keywords: "N-channel MOSFET {vds:.0f}V {id:.1f}A flyback primary"
+        datasheet_fields: [rds_on_mohm, qg_nc, v_th_v]
+
+
+  # ─── SEPIC (Single-Ended Primary Inductance Converter) ────────────────────
+  sepic:
+    name: "SEPIC Converter"
+    description: >
+      Non-inverting buck-boost. V_out can be above or below V_in.
+      V_out/V_in = D/(1-D). Two coupled or independent inductors.
+      Lower EMI than inverting boost. Used in battery-powered applications.
+    family: dc_dc
+
+    selection:
+      rules:
+        - "v_out > 0"
+        - "v_in > 0"
+        - "i_out > 0"
+        - "efficiency_min >= 0.70"
+        - "abs(v_out - v_in) / v_in > 0.05"  # use LDO if < 5% difference
+      score: "0.7 * efficiency_min - 0.1"     # slight penalty vs. buck or boost
+
+    parameters:
+      ripple_i_ratio:
+        default: 0.30
+        description: "Inductor current ripple fraction of I_out"
+        unit: "dimensionless"
+        source: "TI SLVA061"
+      input_ripple_ratio:
+        default: 0.02
+        unit: "dimensionless"
+        source: "IPC-2221A"
+      v_derating_switch:
+        default: 1.3
+        unit: "dimensionless"
+        source: "MIL-STD-975"
+      v_derating_cap:
+        default: 1.5
+        unit: "dimensionless"
+        source: "IPC-9592"
+
+    design_equations:
+      # SEPIC conversion: V_out = V_in * D / (1-D)
+      duty: "v_out / (v_in + v_out)"
+
+      # Both inductors carry average input current
+      i_in_avg: "i_out / (1 - duty)"
+
+      # Inductor sizing — each inductor: L = Vin*D / (ΔiL*f_sw)
+      ripple_i_l1: "ripple_i_ratio * i_in_avg"
+      inductance_h: "v_in * duty / (ripple_i_l1 * f_sw)"
+      l_value_uh: "inductance_h * 1e6"
+
+      # Coupling capacitor: Cs charged to Vin, ripple = I_out / (f_sw * Cs)
+      # Choose Cs so ripple < 1% of Vin
+      cs_f: "i_out / (f_sw * 0.01 * v_in)"
+      cs_uf: "cs_f * 1e6"
+
+      # Output capacitor: same as boost
+      cap_out_f: "i_out * duty / (ripple_v * f_sw)"
+      cap_out_uf: "cap_out_f * 1e6"
+      cap_out_v_min: "v_out * v_derating_cap"
+
+      cap_in_f: "i_in_avg * duty * (1 - duty) / (f_sw * v_in * input_ripple_ratio)"
+      cap_in_v_min: "v_in * v_derating_cap"
+
+      # Switch: sees V_in + V_out during off-time
+      mosfet_vds_min: "(v_in + v_out) * v_derating_switch"
+      mosfet_id_min: "(i_in_avg + i_out) * 1.5"
+
+      r_load: "v_out / i_out"
+      il1_avg: "i_in_avg"
+      il2_avg: "i_out"
+
+    spice_phase1: |
+      * BRICK OS SEPIC Converter — Phase 1
+      * {project_name}
+      * V_in={vin:.4f}V  V_out={vout:.4f}V  I_out={iout:.4f}A
+      * L={l_uh:.2f}µH  Cs={cs_uf:.2f}µF  D={duty:.4f}
+      *
+      Vin in 0 DC {vin:.6g}
+      *
+      * Switch PWM (ON during t_on)
+      Vpwm_s pwm_s 0 PULSE(0 {vin:.6g} 0 1e-9 1e-9 {t_on:.11g} {t_period:.11g})
+      * Diode PWM (ON during t_off — complementary)
+      Vpwm_d pwm_d 0 PULSE({vin:.6g} 0 0 1e-9 1e-9 {t_on:.11g} {t_period:.11g})
+      *
+      * L1: input → node_a (inductor 1)
+      L1 in node_a {l_h:.11g} IC={il1_avg:.6g}
+      *
+      * Main switch: node_a → GND (ON during t_on)
+      Qs node_a 0 pwm_s 0 SWMOD
+      .model SWMOD SW(Ron=1e-4 Roff=1e8 Vt={vin_half:.6g} Vh=0.0)
+      *
+      * Coupling capacitor (charged to Vin in steady state)
+      Cs node_a node_b {cs_f:.11g} IC={vin:.6g}
+      *
+      * L2: node_b → node_c (inductor 2)
+      L2 node_b node_c {l_h:.11g} IC={il2_avg:.6g}
+      *
+      * Diode (synchronous rectifier): node_c → out (ON during t_off)
+      Sd node_c out pwm_d 0 SDMOD
+      .model SDMOD SW(Ron=1e-4 Roff=1e8 Vt={vin_half:.6g} Vh=0.0)
+      *
+      Cout out 0 {c_out_f:.11g} IC={vout:.6g}
+      Cin in 0 {c_in_f:.11g}
+      Rload out 0 {r_load:.6g}
+      *
+      .tran {t_step:.11g} {t_end:.9g} 0 {t_step:.11g} UIC
+      .meas tran VOUT_AVG avg v(out) from={t_meas:.9g} to={t_end:.9g}
+      .meas tran VOUT_PP  pp  v(out) from={t_meas:.9g} to={t_end:.9g}
+      .meas tran IL1_AVG  avg i(L1)  from={t_meas:.9g} to={t_end:.9g}
+      .meas tran IL2_AVG  avg i(L2)  from={t_meas:.9g} to={t_end:.9g}
+      .end
+
+    validation:
+      v_out_error_pct:
+        expr: "abs(vout_avg - v_out) / v_out * 100"
+        max: 5.0
+        unit: "%"
+        action_on_fail: "adjust_duty"
+      ripple_mv:
+        expr: "vout_pp * 1000"
+        max_from_goal: "ripple_v * 1000"
+        unit: "mV"
+        action_on_fail: "increase_cap_out"
+
+    bom_roles:
+      - role: mosfet
+        type: mosfet
+        ref: Q1
+        description: "N-channel MOSFET (sees V_in + V_out)"
+        v_rated_var: mosfet_vds_min
+        i_rated_var: mosfet_id_min
+        search_keywords: "N-channel MOSFET {vds:.0f}V {id:.1f}A SEPIC"
+        datasheet_fields: [rds_on_mohm, qg_nc, v_th_v]
+
+
+  # ─── FULL BRIDGE DC-DC (Isolated, High Power) ─────────────────────────────
+  full_bridge:
+    name: "Full-Bridge DC-DC Converter"
+    description: >
+      Isolated DC-DC for high power (200W–10kW).
+      Four MOSFETs switch transformer primary in alternating polarity.
+      Phase-shift PWM for ZVS. Transformer + secondary rectifier + LC filter.
+    family: dc_dc_isolated
+
+    selection:
+      rules:
+        - "v_out > 0"
+        - "v_in > 0"
+        - "i_out * v_out > 100"   # only viable above ~100W
+        - "efficiency_min >= 0.80"
+      score: "0.3 * efficiency_min"  # lower score — prefer simpler topologies below 100W
+
+    parameters:
+      duty_max:
+        default: 0.90
+        description: "Maximum duty cycle (phase-shift limits effective duty)"
+        unit: "dimensionless"
+        source: "TI SLUA107"
+      ripple_i_ratio:
+        default: 0.20
+        description: "Output inductor current ripple fraction"
+        unit: "dimensionless"
+        source: "TI SLUA107"
+      coupling:
+        default: 0.999
+        unit: "dimensionless"
+        source: "TI SLUA107"
+      v_derating_switch:
+        default: 1.25
+        unit: "dimensionless"
+        source: "MIL-STD-975"
+      v_derating_cap:
+        default: 1.5
+        unit: "dimensionless"
+        source: "IPC-9592"
+
+    design_equations:
+      # Turns ratio n: choose so duty ≈ 0.5 at nominal Vin
+      turns_ratio: "v_out / (v_in * 0.45)"
+      duty: "v_out / (v_in * turns_ratio)"
+
+      # Output inductor (full-bridge has 2× effective switching frequency)
+      ripple_i_l: "ripple_i_ratio * i_out"
+      inductance_h: "(v_in * turns_ratio - v_out) * duty / (ripple_i_l * 2 * f_sw)"
+      l_value_uh: "inductance_h * 1e6"
+      il_valley: "i_out - ripple_i_l / 2"
+
+      # Output capacitor
+      cap_out_f: "ripple_i_l / (8 * 2 * f_sw * ripple_v)"
+      cap_out_uf: "cap_out_f * 1e6"
+      cap_out_v_min: "v_out * v_derating_cap"
+
+      # Primary MOSFETs: each sees full Vin
+      mosfet_vds_min: "v_in * v_derating_switch"
+      mosfet_id_min: "(i_out / turns_ratio + ripple_i_l / (2 * turns_ratio)) * 1.5"
+
+      # Magnetising inductance (for SPICE transformer)
+      lp_h: "v_in * duty / (0.1 * i_out / turns_ratio * f_sw)"
+      ls_h: "lp_h * (turns_ratio ** 2)"
+
+      r_load: "v_out / i_out"
+      cap_in_f: "i_out / (turns_ratio * 0.02 * v_in * f_sw)"
+      cap_in_v_min: "v_in * v_derating_cap"
+
+    spice_phase1: |
+      * BRICK OS Full-Bridge DC-DC — Phase 1 (simplified: half-bridge + xfmr + LC filter)
+      * {project_name}
+      * V_in={vin:.4f}V  V_out={vout:.4f}V  n={turns_ratio:.3f}  D={duty:.4f}
+      *
+      Vin vin 0 DC {vin:.6g}
+      Cin vin 0 {c_in_f:.11g}
+      *
+      * Primary H-bridge: two complementary pairs
+      * Leg A: Q1 (HS) + Q4 (LS), Leg B: Q2 (HS) + Q3 (LS) — phase-shifted
+      Vpwm_a pwm_a 0 PULSE(0 {vin:.6g} 0 1e-9 1e-9 {t_on:.11g} {t_period:.11g})
+      Vpwm_b pwm_b 0 PULSE({vin:.6g} 0 0 1e-9 1e-9 {t_on:.11g} {t_period:.11g})
+      *
+      Sq1 vin pa pwm_a 0 SWMOD
+      Sq4 pa 0  pwm_b 0 SWMOD
+      Sq2 vin pb pwm_b 0 SWMOD
+      Sq3 pb 0  pwm_a 0 SWMOD
+      .model SWMOD SW(Ron=1e-4 Roff=1e8 Vt={vin_half:.6g} Vh=0.0)
+      *
+      * Transformer (coupled inductors)
+      Lp pa pb {lp_h:.11g}
+      Ls1 sr1 0 {ls_h:.11g}
+      K1 Lp Ls1 {coupling:.6g}
+      *
+      * Secondary full-wave rectifier (center-tap simplified to single diode)
+      Sd sr1 lx pwm_a 0 SDMOD
+      .model SDMOD SW(Ron=1e-4 Roff=1e8 Vt={vin_half:.6g} Vh=0.0)
+      *
+      * Output LC filter
+      Lo lx out {l_h:.11g} IC={il_valley:.6g}
+      Cout out 0 {c_out_f:.11g} IC={vout:.6g}
+      Rload out 0 {r_load:.6g}
+      *
+      .tran {t_step:.11g} {t_end:.9g} 0 {t_step:.11g} UIC
+      .meas tran VOUT_AVG avg v(out) from={t_meas:.9g} to={t_end:.9g}
+      .meas tran VOUT_PP  pp  v(out) from={t_meas:.9g} to={t_end:.9g}
+      .meas tran IL_AVG   avg i(Lo)  from={t_meas:.9g} to={t_end:.9g}
+      .meas tran IL_MIN   min i(Lo)  from={t_meas:.9g} to={t_end:.9g}
+      .end
+
+    validation:
+      v_out_error_pct:
+        expr: "abs(vout_avg - v_out) / v_out * 100"
+        max: 10.0
+        unit: "%"
+        action_on_fail: "adjust_duty"
+      ripple_mv:
+        expr: "vout_pp * 1000"
+        max_from_goal: "ripple_v * 1000"
+        unit: "mV"
+        action_on_fail: "increase_cap_out"
+      ccm_check:
+        expr: "il_min"
+        min: 0.0
+        unit: "A"
+        action_on_fail: "increase_inductance"
+
+    bom_roles:
+      - role: mosfet_primary
+        type: mosfet
+        ref: Q1
+        description: "Primary H-bridge N-channel MOSFET (x4)"
+        v_rated_var: mosfet_vds_min
+        i_rated_var: mosfet_id_min
+        search_keywords: "N-channel MOSFET {vds:.0f}V {id:.1f}A full-bridge ZVS"
+        datasheet_fields: [rds_on_mohm, qg_nc, coss_pf]
+
+
+  # ─── LLC RESONANT CONVERTER ────────────────────────────────────────────────
+  llc_resonant:
+    name: "LLC Resonant Converter"
+    description: >
+      Isolated resonant converter with half-bridge primary and resonant tank
+      (Lr, Lm, Cr). Zero-voltage switching (ZVS) on primary, zero-current
+      switching (ZCS) on secondary. Variable frequency control.
+      Highest efficiency of isolated topologies (96-98%). 100W–5kW.
+    family: dc_dc_isolated
+
+    selection:
+      rules:
+        - "v_out > 0"
+        - "v_in > 0"
+        - "i_out * v_out > 50"
+        - "efficiency_min >= 0.90"
+      score: "0.25 * efficiency_min"
+
+    parameters:
+      fn_nom:
+        default: 1.05
+        description: "Normalized operating frequency (fn = f_sw / f_r), ≥1 for ZVS"
+        unit: "dimensionless"
+        source: "TI SLUA518"
+      quality_factor:
+        default: 0.35
+        description: "Loaded quality factor Q (0.3–0.5 for wide regulation)"
+        unit: "dimensionless"
+        source: "TI SLUA518"
+      inductance_ratio:
+        default: 5.0
+        description: "Ratio Lm/Lr (3–10, higher = wider regulation)"
+        unit: "dimensionless"
+        source: "TI SLUA518"
+      v_derating_switch:
+        default: 1.3
+        unit: "dimensionless"
+        source: "MIL-STD-975"
+      v_derating_cap:
+        default: 1.5
+        unit: "dimensionless"
+        source: "IPC-9592"
+
+    design_equations:
+      # Turns ratio: n = Vin / (2 * Vout) for half-bridge at fn=1
+      turns_ratio: "v_in / (2 * v_out)"
+      duty: "0.5"   # half-bridge, fixed 50% duty on each leg
+
+      # Characteristic impedance
+      z0: "v_in / (2 * turns_ratio * i_out * quality_factor)"
+
+      # Resonant tank
+      f_r: "f_sw / fn_nom"
+      lr_h: "z0 / (2 * pi * f_r)"
+      cr_f: "1 / (z0 * 2 * pi * f_r)"
+      lm_h: "lr_h * inductance_ratio"
+      lr_uh: "lr_h * 1e6"
+      cr_nf: "cr_f * 1e9"
+      lm_uh: "lm_h * 1e6"
+
+      # Output components
+      cap_out_f: "i_out / (8 * f_sw * ripple_v)"
+      cap_out_uf: "cap_out_f * 1e6"
+      cap_out_v_min: "v_out * v_derating_cap"
+      cap_in_f: "i_out / (turns_ratio * 0.02 * v_in * f_sw)"
+
+      # Switch ratings (half-bridge: each MOSFET sees Vin)
+      mosfet_vds_min: "v_in * v_derating_switch"
+      mosfet_id_min: "(i_out / turns_ratio) * 2 * 1.5"
+
+      r_load: "v_out / i_out"
+      vin_half: "v_in / 2"
+
+    spice_phase1: |
+      * BRICK OS LLC Resonant Converter — Phase 1 (half-bridge, resonant tank)
+      * {project_name}
+      * V_in={vin:.4f}V  V_out={vout:.4f}V  n={turns_ratio:.3f}
+      * Lr={lr_uh:.2f}µH  Cr={cr_nf:.2f}nF  Lm={lm_uh:.2f}µH  fr={fsw_khz:.0f}kHz
+      *
+      Vin vin 0 DC {vin:.6g}
+      Cin vin 0 {c_in_f:.11g}
+      * Half-bridge: Q1(HS) Q2(LS) with complementary 50% duty
+      Vpwm_hs pwm_hs 0 PULSE(0 {vin:.6g} 0 1e-9 1e-9 {t_on:.11g} {t_period:.11g})
+      Vpwm_ls pwm_ls 0 PULSE({vin:.6g} 0 0 1e-9 1e-9 {t_on:.11g} {t_period:.11g})
+      Shs vin sw pwm_hs 0 SWMOD
+      Sls sw 0  pwm_ls 0 SWMOD
+      .model SWMOD SW(Ron=1e-4 Roff=1e8 Vt={vin_half:.6g} Vh=0.0)
+      * Resonant inductor Lr in series
+      Lr sw lx {lr_h:.11g}
+      * Magnetising inductance Lm (across primary winding)
+      Lm lx 0 {lm_h:.11g}
+      * Resonant capacitor Cr in series
+      Cr lx rx {cr_f:.11g}
+      * Transformer primary (secondary modelled via voltage source scaled by n)
+      Lp rx 0 {lm_h:.11g}
+      Ls 0 sec_p {ls_h:.11g}
+      K1 Lp Ls 0.9999
+      * Secondary rectifier
+      Vpwm_sr pwm_sr 0 PULSE(0 {vin:.6g} 0 1e-9 1e-9 {t_on:.11g} {t_period:.11g})
+      Ssr sec_p out pwm_sr 0 SDMOD
+      .model SDMOD SW(Ron=1e-4 Roff=1e8 Vt={vin_half:.6g} Vh=0.0)
+      Cout out 0 {c_out_f:.11g} IC={vout:.6g}
+      Rload out 0 {r_load:.6g}
+      .tran {t_step:.11g} {t_end:.9g} 0 {t_step:.11g} UIC
+      .meas tran VOUT_AVG avg v(out) from={t_meas:.9g} to={t_end:.9g}
+      .meas tran VOUT_PP  pp  v(out) from={t_meas:.9g} to={t_end:.9g}
+      .end
+
+    validation:
+      v_out_error_pct:
+        expr: "abs(vout_avg - v_out) / v_out * 100"
+        max: 15.0
+        unit: "%"
+        action_on_fail: "adjust_duty"
+      ripple_mv:
+        expr: "vout_pp * 1000"
+        max_from_goal: "ripple_v * 1000"
+        unit: "mV"
+        action_on_fail: "increase_cap_out"
+
+    bom_roles:
+      - role: mosfet_hb
+        type: mosfet
+        ref: Q1
+        description: "Half-bridge N-channel MOSFET (x2)"
+        v_rated_var: mosfet_vds_min
+        i_rated_var: mosfet_id_min
+        search_keywords: "N-channel MOSFET {vds:.0f}V {id:.1f}A LLC resonant ZVS"
+        datasheet_fields: [rds_on_mohm, coss_pf, qg_nc]
+
+
+  # ─── FORWARD CONVERTER (Non-isolated simplified variant) ──────────────────
+  forward:
+    name: "Forward Converter"
+    description: >
+      Isolated step-down using direct energy transfer (not stored as in flyback).
+      Single-switch or two-switch variant. Transformer reset required.
+      Typical power range 50–500W. Output LC filter same as buck.
+    family: dc_dc_isolated
+
+    selection:
+      rules:
+        - "v_out < v_in * 0.9"
+        - "v_out > 0"
+        - "i_out * v_out > 30"
+        - "efficiency_min >= 0.80"
+      score: "0.4 * efficiency_min"
+
+    parameters:
+      duty_max:
+        default: 0.45
+        description: "Max duty (single-switch forward: ≤0.5 for reset)"
+        unit: "dimensionless"
+        source: "TI SLUA108"
+      ripple_i_ratio:
+        default: 0.25
+        unit: "dimensionless"
+        source: "TI SLUA108"
+      v_derating_switch:
+        default: 1.5
+        description: "Forward MOSFET sees 2×Vin at turn-off in single-switch"
+        unit: "dimensionless"
+        source: "MIL-STD-975"
+      v_derating_cap:
+        default: 1.5
+        unit: "dimensionless"
+        source: "IPC-9592"
+      coupling:
+        default: 0.999
+        unit: "dimensionless"
+
+    design_equations:
+      turns_ratio: "v_out / (v_in * duty_max * 0.95)"
+      duty: "duty_max"
+
+      # Output inductor (acts like buck filter at effective voltage)
+      ripple_i_l: "ripple_i_ratio * i_out"
+      inductance_h: "(v_in * turns_ratio - v_out) * duty / (ripple_i_l * f_sw)"
+      l_value_uh: "inductance_h * 1e6"
+      il_valley: "i_out - ripple_i_l / 2"
+
+      cap_out_f: "ripple_i_l / (8 * f_sw * ripple_v)"
+      cap_out_uf: "cap_out_f * 1e6"
+      cap_out_v_min: "v_out * v_derating_cap"
+      cap_in_f: "i_out / (turns_ratio * 0.02 * v_in * f_sw)"
+      cap_in_v_min: "v_in * v_derating_cap"
+
+      # Primary magnetising inductance
+      lp_h: "v_in * duty / (0.05 * i_out / turns_ratio * f_sw)"
+      ls_h: "lp_h * (turns_ratio ** 2)"
+
+      # Switch: single-switch sees 2×Vin
+      mosfet_vds_min: "v_in * 2 * v_derating_switch"
+      mosfet_id_min: "(i_out / turns_ratio) * 1.5"
+
+      r_load: "v_out / i_out"
+
+    spice_phase1: |
+      * BRICK OS Forward Converter — Phase 1
+      * {project_name}  n={turns_ratio:.3f}  D={duty:.4f}
+      *
+      Vin vin 0 DC {vin:.6g}
+      Cin vin 0 {c_in_f:.11g}
+      Vpwm pwm 0 PULSE(0 {vin:.6g} 0 1e-9 1e-9 {t_on:.11g} {t_period:.11g})
+      Vpwm_n pwm_n 0 PULSE({vin:.6g} 0 0 1e-9 1e-9 {t_on:.11g} {t_period:.11g})
+      * Primary switch
+      Sq vin drain_p pwm 0 SWMOD
+      .model SWMOD SW(Ron=1e-4 Roff=1e8 Vt={vin_half:.6g} Vh=0.0)
+      Lp drain_p 0 {lp_h:.11g}
+      Ls 0 sec_a {ls_h:.11g}
+      K1 Lp Ls {coupling:.6g}
+      * Secondary rectifier (forward diode ON during primary ON-time)
+      Sfd sec_a lx pwm 0 SFMOD
+      .model SFMOD SW(Ron=1e-4 Roff=1e8 Vt={vin_half:.6g} Vh=0.0)
+      * Freewheeling diode (ON during primary OFF-time)
+      Sfw 0 lx pwm_n 0 SFMOD
+      * Output LC filter
+      Lo lx out {l_h:.11g} IC={il_valley:.6g}
+      Cout out 0 {c_out_f:.11g} IC={vout:.6g}
+      Rload out 0 {r_load:.6g}
+      .tran {t_step:.11g} {t_end:.9g} 0 {t_step:.11g} UIC
+      .meas tran VOUT_AVG avg v(out) from={t_meas:.9g} to={t_end:.9g}
+      .meas tran VOUT_PP  pp  v(out) from={t_meas:.9g} to={t_end:.9g}
+      .meas tran IL_AVG   avg i(Lo)  from={t_meas:.9g} to={t_end:.9g}
+      .meas tran IL_MIN   min i(Lo)  from={t_meas:.9g} to={t_end:.9g}
+      .end
+
+    validation:
+      v_out_error_pct:
+        expr: "abs(vout_avg - v_out) / v_out * 100"
+        max: 10.0
+        unit: "%"
+        action_on_fail: "adjust_duty"
+      ripple_mv:
+        expr: "vout_pp * 1000"
+        max_from_goal: "ripple_v * 1000"
+        unit: "mV"
+        action_on_fail: "increase_cap_out"
+
+    bom_roles:
+      - role: mosfet_primary
+        type: mosfet
+        ref: Q1
+        description: "Primary MOSFET (single-switch forward)"
+        v_rated_var: mosfet_vds_min
+        i_rated_var: mosfet_id_min
+        search_keywords: "N-channel MOSFET {vds:.0f}V {id:.1f}A forward converter"
+        datasheet_fields: [rds_on_mohm, qg_nc]
+
+
+# ─── Simulation timing defaults ────────────────────────────────────────────
+# These govern how the SPICE transient simulation is configured.
+# All times are derived from switching frequency — no magic constants.
+simulation:
+  cycles_total: 40         # Total switching cycles to simulate
+  cycles_skip: 30          # Skip first N cycles — LC resonance (f0 ≈ 30kHz) decays in ~50µs
+  steps_per_cycle: 200     # Time resolution: t_step = T_sw / steps_per_cycle
+  motor_cycles_total: 60   # H-bridge: motor L/R settling + LC transient
+
+# ─── E-series component value rounding ────────────────────────────────────
+# Preferred component value series for rounding calculated values
+e_series:
+  resistor: E96     # 1% resistors
+  capacitor: E24    # Common cap values
+  inductor: E12     # Inductor values

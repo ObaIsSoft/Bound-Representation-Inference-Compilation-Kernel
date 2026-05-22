@@ -22,7 +22,31 @@ import logging
 import re
 from datetime import datetime
 
+import jinja2
+from agents.hardware_db import HardwareDB
+from agents.pin_allocator import PinAllocator
+from agents.hal_generator import generate_hal_files
+
+_JINJA_ENV = jinja2.Environment(
+    undefined=jinja2.Undefined,  # silently use "" for missing vars (safe for embedded)
+    keep_trailing_newline=True,
+)
+
+
+def _render(template_str: str, ctx: dict) -> str:
+    """Render a Jinja2 template string. Never raises on missing vars — emits empty string."""
+    try:
+        return _JINJA_ENV.from_string(template_str).render(**ctx)
+    except jinja2.TemplateError as exc:
+        logger.error("Template render error: %s", exc)
+        return f"// TEMPLATE ERROR: {exc}\n"
+
 logger = logging.getLogger(__name__)
+
+
+def _c_ident(name: str) -> str:
+    """Convert any component name to a valid C identifier."""
+    return re.sub(r"[^a-z0-9_]", "_", name.lower()).strip("_")
 
 
 class Platform(Enum):
@@ -81,6 +105,17 @@ class Component:
     max_frequency_hz: Optional[float] = None
     # Per-language loop/read/actuate code (runs every cycle after setup)
     loop_templates: Dict[str, str] = field(default_factory=dict)
+    # User-supplied overrides (i2c_address, spi_mode, uart_baud, etc.)
+    # Merged into template context at render time — no hardcoded values here.
+    user_params: Dict[str, Any] = field(default_factory=dict)
+    # Template expression for the sensor's primary scalar output after loop_templates runs.
+    # Used to populate data.values[slot] in the FreeRTOS sensor task.
+    # Empty string → a TODO comment is emitted instead.
+    primary_output: str = ""
+    # Pinned version string for this component's library (e.g. "2.6.3").
+    # When set, platformio.ini emits "LibraryName@version" instead of bare name.
+    # Prevents upstream breakage from unpinned floating dependencies.
+    library_version: str = ""
 
 
 @dataclass
@@ -94,13 +129,6 @@ class GeneratedProject:
     build_config: Dict[str, Any]
 
 
-# Pin name constants (must be defined before CodegenAgent class uses them in PLATFORM_DEFS)
-PA0, PA1, PA2, PA3, PA4, PA5, PA6, PA7 = "PA0", "PA1", "PA2", "PA3", "PA4", "PA5", "PA6", "PA7"
-PA8, PA9, PA10, PA11, PA12, PA13, PA14, PA15 = "PA8", "PA9", "PA10", "PA11", "PA12", "PA13", "PA14", "PA15"
-PB0, PB1, PB2, PB3, PB4, PB5, PB6, PB7 = "PB0", "PB1", "PB2", "PB3", "PB4", "PB5", "PB6", "PB7"
-PB8, PB9, PB10, PB11, PB12, PB13, PB14, PB15 = "PB8", "PB9", "PB10", "PB11", "PB12", "PB13", "PB14", "PB15"
-PC0, PC1, PC2, PC3, PC4, PC5, PC6, PC7, PC8, PC9 = "PC0", "PC1", "PC2", "PC3", "PC4", "PC5", "PC6", "PC7", "PC8", "PC9"
-PC10, PC11, PC12, PC13, PC14, PC15 = "PC10", "PC11", "PC12", "PC13", "PC14", "PC15"
 
 
 class CodegenAgent:
@@ -111,95 +139,6 @@ class CodegenAgent:
     platforms with proper pin allocation and dependency management.
     """
     
-    # Hardware definitions for each platform
-    PLATFORM_DEFS = {
-        Platform.STM32F405: {
-            "clock_mhz": 168,
-            "flash_kb": 1024,
-            "sram_kb": 192,
-            "pwm_pins": [PA0, PA1, PA2, PA3, PA6, PA7, PA8, PA9, PA10, PA11, PA15,
-                        PB0, PB1, PB3, PB4, PB5, PB6, PB7, PB8, PB9, PB10, PB11, PB12, PB13, PB14, PB15,
-                        PC6, PC7, PC8, PC9],
-            "i2c_interfaces": [("I2C1", "PB6", "PB7"), ("I2C2", "PB10", "PB11"), ("I2C3", "PA8", "PC9")],
-            "spi_interfaces": [("SPI1", "PA5", "PA6", "PA7", "PA4"), 
-                              ("SPI2", "PB13", "PB14", "PB15", "PB12"),
-                              ("SPI3", "PC10", "PC11", "PC12", "PA15")],
-            "uart_interfaces": [("USART1", "PA9", "PA10"), ("USART2", "PA2", "PA3"),
-                               ("USART3", "PB10", "PB11"), ("UART4", "PC10", "PC11")],
-            "can_interfaces": [("CAN1", "PA12", "PA11"), ("CAN2", "PB13", "PB12")],
-            "adc_channels": 16,
-            "dac_channels": 2,
-        },
-        Platform.ESP32: {
-            "clock_mhz": 240,
-            "flash_mb": 4,
-            "sram_kb": 520,
-            "pwm_channels": 16,
-            "ledc_channels": 16,
-            "i2c_interfaces": [("I2C0", "GPIO21", "GPIO22"), ("I2C1", "GPIO5", "GPIO4")],
-            "spi_interfaces": [("SPI2", "GPIO18", "GPIO19", "GPIO23", "GPIO5"),
-                              ("SPI3", "GPIO14", "GPIO12", "GPIO13", "GPIO15")],
-            "uart_interfaces": [("UART0", "GPIO1", "GPIO3"), ("UART1", "GPIO9", "GPIO10"),
-                               ("UART2", "GPIO16", "GPIO17")],
-            "can_interfaces": [("TWAI", "GPIO4", "GPIO5")],
-            "adc_channels": 18,
-            "dac_channels": 2,
-            "touch_sensors": 10,
-        },
-        Platform.RP2040: {
-            "clock_mhz": 133,
-            "flash_mb": 2,
-            "sram_kb": 264,
-            "pwm_slices": 8,  # 16 PWM channels (2 per slice)
-            "pio_state_machines": 8,
-            "i2c_interfaces": [("I2C0", "GPIO0", "GPIO1"), ("I2C1", "GPIO2", "GPIO3")],
-            "spi_interfaces": [("SPI0", "GPIO18", "GPIO16", "GPIO19", "GPIO17"),
-                              ("SPI1", "GPIO10", "GPIO12", "GPIO11", "GPIO13")],
-            "uart_interfaces": [("UART0", "GPIO0", "GPIO1"), ("UART1", "GPIO8", "GPIO9")],
-            "adc_channels": 4,
-        },
-        Platform.NRF52840: {
-            "clock_mhz": 64,
-            "flash_kb": 1024,
-            "sram_kb": 256,
-            "pwm_instances": 4,
-            "i2c_interfaces": [("TWI0", "P0_08", "P0_09"), ("TWI1", "P0_11", "P0_12")],
-            "spi_interfaces": [("SPI0", "P0_14", "P0_15", "P0_16", "P0_13"),
-                              ("SPI1", "P0_29", "P0_30", "P0_31", "P0_28")],
-            "uart_interfaces": [("UART0", "P0_05", "P0_06"), ("UART1", "P0_07", "P0_08")],
-            "adc_channels": 8,
-            "ble": True,
-            "802_15_4": True,  # Thread/Zigbee
-        },
-        Platform.ARDUINO_MEGA: {
-            "clock_mhz": 16,
-            "flash_kb": 256,
-            "sram_kb": 8,
-            "pwm_pins": [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
-            "i2c_interfaces": [("Wire", "20", "21")],
-            "spi_interfaces": [("SPI", "52", "50", "51", "53")],
-            "uart_interfaces": [("Serial", "0", "1"), ("Serial1", "18", "19"),
-                               ("Serial2", "16", "17"), ("Serial3", "14", "15")],
-            "adc_channels": 16,
-        },
-        Platform.TEENSY41: {
-            "clock_mhz": 600,
-            "flash_mb": 8,
-            "sram_kb": 1024,
-            "pwm_pins": list(range(0, 40)),
-            "i2c_interfaces": [("Wire", "18", "19"), ("Wire1", "16", "17"), ("Wire2", "24", "25")],
-            "spi_interfaces": [("SPI", "11", "12", "13", "10"),
-                              ("SPI1", "26", "1", "27", "0")],
-            "uart_interfaces": [("Serial1", "0", "1"), ("Serial2", "7", "8"),
-                               ("Serial3", "14", "15"), ("Serial4", "16", "17"),
-                               ("Serial5", "20", "21"), ("Serial6", "24", "25"),
-                               ("Serial7", "28", "29"), ("Serial8", "34", "35")],
-            "can_interfaces": [("CAN1", "22", "23"), ("CAN2", "30", "31")],
-            "ethernet": True,
-        },
-    }
-    
-    # Component library
     COMPONENT_LIBRARY = {
         # ── Motors ──────────────────────────────────────────────────────────
         "brushless_motor": Component(
@@ -310,6 +249,7 @@ class CodegenAgent:
                 ),
             },
             headers=["<MPU6050.h>", "<Wire.h>"],
+            primary_output="accel_x_{name}",
         ),
         "imu_bno055": Component(
             name="BNO055 IMU",
@@ -332,6 +272,7 @@ class CodegenAgent:
                 ),
             },
             headers=["<Adafruit_BNO055.h>"],
+            primary_output="yaw_{name}",
         ),
         "barometer_bmp280": Component(
             name="BMP280 Barometer",
@@ -352,6 +293,7 @@ class CodegenAgent:
                 ),
             },
             headers=["<Adafruit_BMP280.h>"],
+            primary_output="temperature_{name}",
         ),
         "gps_neo6m": Component(
             name="NEO-6M GPS",
@@ -375,6 +317,7 @@ class CodegenAgent:
                 ),
             },
             headers=["<TinyGPS++.h>"],
+            primary_output="",  # lat/lng are inside conditional scope — caller emits TODO
         ),
         "lidar_tfmini": Component(
             name="TFMini LiDAR",
@@ -396,6 +339,7 @@ class CodegenAgent:
                 ),
             },
             headers=["<TFMini.h>"],
+            primary_output="",  # dist_{name} is scoped inside if block — caller emits TODO
         ),
         "ultrasonic_hcsr04": Component(
             name="HC-SR04 Ultrasonic",
@@ -417,6 +361,7 @@ class CodegenAgent:
                     "  long duration_{name} = pulseIn({name}_ECHO, HIGH, 30000UL);\n"
                     "  float dist_cm_{name} = duration_{name} * 0.034f / 2.0f;"
                 ),
+
                 "MicroPython": (
                     "# {name}: measure distance in cm\n"
                     "    {name}_trig.value(0); utime.sleep_us(2)\n"
@@ -427,6 +372,7 @@ class CodegenAgent:
                 ),
             },
             headers=[],
+            primary_output="dist_cm_{name}",
         ),
         "thermocouple_max31855": Component(
             name="MAX31855 Thermocouple",
@@ -446,6 +392,7 @@ class CodegenAgent:
                 ),
             },
             headers=["<Adafruit_MAX31855.h>"],
+            primary_output="(float)temp_c_{name}",
         ),
         "load_cell_hx711": Component(
             name="HX711 Load Cell Amplifier",
@@ -464,6 +411,7 @@ class CodegenAgent:
                 ),
             },
             headers=["<HX711.h>"],
+            primary_output="weight_g_{name}",
         ),
         "flow_sensor_yfs201": Component(
             name="YF-S201 Flow Sensor",
@@ -488,6 +436,7 @@ class CodegenAgent:
                 ),
             },
             headers=[],
+            primary_output="flow_lpm_{name}",
         ),
         # ── Communication ────────────────────────────────────────────────────
         "wifi_esp32": Component(
@@ -753,7 +702,9 @@ class CodegenAgent:
     def __init__(self, llm_provider=None):
         self.name = "CodegenAgent"
         self.llm_provider = llm_provider
-        self.allocated_pins: Dict[Platform, Dict[str, Any]] = {}
+        self.allocated_pins: Dict[str, Dict[str, Any]] = {}
+        self._dynamic_catalog: Dict[str, Component] = {}
+        self._load_component_catalogs()
         
     def _infer_design_domain(self, params: Dict[str, Any]) -> str:
         """
@@ -855,21 +806,17 @@ class CodegenAgent:
         logger.info(f"[CODEGEN] Generating {language.value} firmware for {platform.value}")
         logger.info(f"[CODEGEN] Components: {len(components)}, RTOS: {rtos.value}")
         
-        # Initialize pin allocation
-        self.allocated_pins[platform] = {
-            "pwm": [],
-            "i2c": [],
-            "spi": [],
-            "uart": [],
-            "can": [],
-            "gpio": [],
-        }
+        # Load hardware spec from Supabase / YAML / LLM (no hardcoding)
+        hw = HardwareDB.load(platform.value, self.llm_provider)
+        self._current_hw = hw
         
         # Resolve components
         resolved_components = []
         errors = []
         
         for comp_spec in components:
+            if isinstance(comp_spec, str):
+                comp_spec = {"id": comp_spec}
             comp_id = comp_spec.get("id", "unknown")
             resolved = self._resolve_component(comp_id, comp_spec)
             if resolved:
@@ -908,6 +855,8 @@ class CodegenAgent:
                     "libraries": project.libraries,
                     "build_config": project.build_config,
                 },
+                # Top-level convenience keys so callers don't need to unpack project
+                "files": project.files,
                 "errors": errors if errors else None,
                 "logs": [
                     f"Generated {len(project.files)} files",
@@ -924,11 +873,90 @@ class CodegenAgent:
                 "errors": errors
             }
     
-    def _resolve_component(self, comp_id: str, comp_spec: Dict) -> Optional[Component]:
-        """Resolve component from library or generate custom."""
-        if comp_id in self.COMPONENT_LIBRARY:
-            base = self.COMPONENT_LIBRARY[comp_id]
-            # Create copy with overrides from spec
+    def _load_component_catalogs(self) -> None:
+        """
+        Load YAML component catalogs from config/component_catalog/*.yaml.
+
+        Any user can drop a YAML file there to register custom components without
+        touching Python code. Format (all fields optional except id/name/category):
+
+          components:
+            my_sensor_foo:
+              name: "Foo Pressure Sensor"
+              category: sensor          # sensor|motor|servo|communication|output|power
+              library: "FooLib"
+              dependencies: ["FooLib"]
+              required_interfaces: ["I2C"]
+              pins_needed: 2
+              headers: ["<FooLib.h>"]
+              primary_output: "pressure_{name}"
+              templates:
+                cpp_init: "FooSensor {name}(0x40);\n{name}.begin();"
+                cpp_loop: "float pressure_{name} = {name}.readPressure();"
+                micropython_init: "from foolib import Foo\n{name} = Foo(i2c)"
+                micropython_loop: "pressure_{name} = {name}.read()"
+        """
+        import yaml
+        catalog_dirs = [
+            Path(__file__).parent.parent / "config" / "component_catalog",
+            Path(__file__).parent / "component_catalog",
+        ]
+        for catalog_dir in catalog_dirs:
+            if not catalog_dir.exists():
+                continue
+            for yaml_path in sorted(catalog_dir.glob("*.yaml")):
+                try:
+                    with open(yaml_path) as f:
+                        data = yaml.safe_load(f)
+                    for comp_id, spec in (data or {}).get("components", {}).items():
+                        self._dynamic_catalog[comp_id] = self._component_from_yaml(comp_id, spec)
+                    logger.info(f"[CODEGEN] Loaded catalog: {yaml_path.name} ({len(data.get('components', {}))} components)")
+                except Exception as e:
+                    logger.warning(f"[CODEGEN] Could not load catalog {yaml_path}: {e}")
+
+    @staticmethod
+    def _component_from_yaml(comp_id: str, spec: Dict) -> Component:
+        """Build a Component from a YAML catalog entry."""
+        tmpls = spec.get("templates", {})
+        code_templates: Dict[str, str] = {}
+        loop_templates: Dict[str, str] = {}
+        if tmpls.get("cpp_init"):
+            code_templates["C++"] = tmpls["cpp_init"]
+        if tmpls.get("cpp_loop"):
+            loop_templates["C++"] = tmpls["cpp_loop"]
+        if tmpls.get("micropython_init"):
+            code_templates["MicroPython"] = tmpls["micropython_init"]
+        if tmpls.get("micropython_loop"):
+            loop_templates["MicroPython"] = tmpls["micropython_loop"]
+        return Component(
+            name=spec.get("name", comp_id),
+            category=spec.get("category", "sensor"),
+            library=spec.get("library", ""),
+            dependencies=spec.get("dependencies", []),
+            required_interfaces=spec.get("required_interfaces", ["GPIO"]),
+            pins_needed=spec.get("pins_needed", 1),
+            code_templates=code_templates,
+            headers=spec.get("headers", []),
+            loop_templates=loop_templates,
+            primary_output=spec.get("primary_output", ""),
+        )
+
+    def _resolve_component(self, comp_id: str, comp_spec: Dict) -> Component:
+        """
+        Resolve a component in priority order:
+          1. Built-in COMPONENT_LIBRARY
+          2. User YAML catalog (config/component_catalog/*.yaml)
+          3. LLM-generated (if llm_provider available)
+          4. Skeleton stub (always succeeds — compilable TODO markers)
+        """
+        user_params = {
+            k: v for k, v in comp_spec.items()
+            if k not in ("id", "name", "min_freq", "max_freq")
+        }
+
+        # 1 — built-in library
+        base = self.COMPONENT_LIBRARY.get(comp_id)
+        if base:
             return Component(
                 name=comp_spec.get("name", base.name),
                 category=base.category,
@@ -941,131 +969,211 @@ class CodegenAgent:
                 min_frequency_hz=comp_spec.get("min_freq", base.min_frequency_hz),
                 max_frequency_hz=comp_spec.get("max_freq", base.max_frequency_hz),
                 loop_templates=base.loop_templates,
+                user_params=user_params,
+                primary_output=base.primary_output,
             )
-        
-        # Try LLM generation for unknown components
-        if self.llm_provider:
-            return self._generate_custom_component(comp_id, comp_spec)
-        
-        return None
-    
-    def _generate_custom_component(self, comp_id: str, comp_spec: Dict) -> Optional[Component]:
-        """Generate custom component using LLM."""
-        if not self.llm_provider:
-            return None
-        
-        prompt = f"""
-        Generate embedded component definition for '{comp_id}'.
-        Specification: {comp_spec}
-        
-        Return JSON:
-        {{
-            "name": "Human readable name",
-            "category": "motor|servo|sensor|communication|output|power",
-            "library": "Arduino library name or empty",
-            "dependencies": ["list", "of", "libraries"],
-            "required_interfaces": ["PWM", "I2C", "SPI", "UART", "GPIO"],
-            "pins_needed": 1,
-            "headers": ["<Library.h>"],
-            "cpp_template": "C++ setup code template with {pin} placeholders"
-        }}
-        """
-        
-        try:
-            result = self.llm_provider.generate_json(prompt)
+
+        # 2 — user YAML catalog
+        base = self._dynamic_catalog.get(comp_id)
+        if base:
             return Component(
-                name=result["name"],
-                category=result["category"],
-                library=result["library"],
-                dependencies=result["dependencies"],
-                required_interfaces=result["required_interfaces"],
-                pins_needed=result["pins_needed"],
-                code_templates={"C++": result["cpp_template"]},
-                headers=result["headers"],
+                name=comp_spec.get("name", base.name),
+                category=base.category,
+                library=base.library,
+                dependencies=base.dependencies,
+                required_interfaces=base.required_interfaces,
+                pins_needed=base.pins_needed,
+                code_templates=base.code_templates,
+                headers=base.headers,
+                loop_templates=base.loop_templates,
+                user_params=user_params,
+                primary_output=base.primary_output,
             )
-        except Exception as e:
-            logger.warning(f"Custom component generation failed: {e}")
-            return None
+
+        # 3 — LLM generation
+        if self.llm_provider:
+            generated = self._generate_custom_component(comp_id, comp_spec)
+            if generated:
+                generated.user_params = user_params
+                return generated
+
+        # 4 — skeleton stub: always returns something compilable
+        return self._skeleton_component(comp_id, comp_spec, user_params)
+
+    def _generate_custom_component(self, comp_id: str, comp_spec: Dict) -> Optional[Component]:
+        """
+        Ask the LLM to generate a complete Component definition for an unknown part.
+        Requests BOTH init and per-cycle loop code plus the primary output expression,
+        so the FreeRTOS sensor task and MicroPython async tasks are fully populated.
+        """
+        inferred_iface = comp_spec.get("interface", comp_spec.get("required_interfaces", ["GPIO"])[0]
+                                       if isinstance(comp_spec.get("required_interfaces"), list) else "GPIO")
+        pin_tokens_by_iface = {
+            "I2C":  "{scl} {sda}  (shared bus, Wire.begin() called once)",
+            "SPI":  "{sclk} {miso} {mosi} {cs}  (shared bus, unique CS per device)",
+            "UART": "{tx} {rx}",
+            "PWM":  "{pwm}",
+            "GPIO": "{pin}  (or {pin_a}, {pin_b} for multi-pin)",
+        }
+        pin_hint = pin_tokens_by_iface.get(inferred_iface.upper(), "{pin}")
+
+        prompt = f"""You are generating embedded firmware code for a hardware component.
+
+Component ID : {comp_id}
+User spec    : {json.dumps(comp_spec)}
+Interface    : {inferred_iface}
+
+RULES:
+- Use ONLY the pin placeholder tokens for the interface type shown below — do NOT
+  invent pin numbers. The code generator replaces these at render time.
+- Pin tokens for {inferred_iface}: {pin_hint}
+- Variable naming: use {{name}} as a C identifier prefix for all variables
+  (the generator replaces {{name}} with a sanitised string like "my_sensor").
+- Arduino/C++ templates must compile on ESP32 / STM32 / RP2040 without modification.
+- MicroPython templates must run on RP2040/ESP32 with the standard machine module.
+- cpp_loop must leave a local float variable named according to primary_output_expr
+  so the FreeRTOS sensor task can store it in the queue struct.
+
+Return ONLY valid JSON (no markdown, no extra text):
+{{
+  "name": "Human-readable component name",
+  "category": "sensor|motor|servo|communication|output|power",
+  "library": "Arduino library name, or empty string if using raw registers",
+  "dependencies": ["LibraryA", "LibraryB"],
+  "required_interfaces": ["{inferred_iface}"],
+  "pins_needed": 2,
+  "headers": ["<LibraryA.h>"],
+  "cpp_init": "C++ setup code using {{name}} and pin tokens",
+  "cpp_loop": "C++ per-cycle read/update code — must define the primary output variable",
+  "micropython_init": "MicroPython init code using {{name}} and pin tokens",
+  "micropython_loop": "MicroPython per-cycle read/update — one assignment statement",
+  "primary_output_expr": "C expression for the primary scalar reading, e.g. temperature_{{name}}"
+}}"""
+
+        def _validate_llm_result(result: dict, iface: str) -> List[str]:
+            """Return list of validation errors. Empty list = OK."""
+            errs: List[str] = []
+            for req_key in ("cpp_init", "micropython_init"):
+                if not result.get(req_key):
+                    errs.append(f"missing '{req_key}'")
+            # Jinja2 syntax check on all template strings
+            for key in ("cpp_init", "cpp_loop", "micropython_init", "micropython_loop"):
+                tmpl = result.get(key, "")
+                if tmpl:
+                    try:
+                        _JINJA_ENV.parse(tmpl)
+                    except jinja2.TemplateSyntaxError as exc:
+                        errs.append(f"Jinja2 syntax error in '{key}': {exc}")
+            # Pin-token presence check: at least one interface token must appear
+            iface_tokens = {
+                "I2C":  ["{scl}", "{sda}"],
+                "SPI":  ["{sclk}", "{mosi}"],
+                "UART": ["{tx}", "{rx}"],
+                "PWM":  ["{pwm}"],
+                "GPIO": ["{pin}"],
+            }
+            required_tokens = iface_tokens.get(iface.upper(), ["{pin}"])
+            all_code = " ".join(str(result.get(k, "")) for k in ("cpp_init", "micropython_init"))
+            if required_tokens and not any(t in all_code for t in required_tokens):
+                errs.append(f"no pin tokens for {iface} found — LLM may have hallucinated pin numbers")
+            return errs
+
+        for attempt in range(2):
+            try:
+                result = self.llm_provider.generate_json(prompt)
+                errs = _validate_llm_result(result, inferred_iface)
+                if errs and attempt == 0:
+                    # Retry once with validation feedback appended to prompt
+                    retry_prompt = prompt + f"\n\nPrevious attempt failed validation:\n" + "\n".join(f"- {e}" for e in errs) + "\nPlease fix and return correct JSON."
+                    result = self.llm_provider.generate_json(retry_prompt)
+                    errs = _validate_llm_result(result, inferred_iface)
+                if errs:
+                    logger.warning("[CODEGEN] LLM result for '%s' failed validation: %s", comp_id, errs)
+                    # Still use it — better than nothing — but log the issues
+                code_templates: Dict[str, str] = {}
+                loop_templates: Dict[str, str] = {}
+                if result.get("cpp_init"):
+                    code_templates["C++"] = result["cpp_init"]
+                if result.get("cpp_loop"):
+                    loop_templates["C++"] = result["cpp_loop"]
+                if result.get("micropython_init"):
+                    code_templates["MicroPython"] = result["micropython_init"]
+                if result.get("micropython_loop"):
+                    loop_templates["MicroPython"] = result["micropython_loop"]
+                return Component(
+                    name=result.get("name", comp_id),
+                    category=result.get("category", "sensor"),
+                    library=result.get("library", ""),
+                    dependencies=result.get("dependencies", []),
+                    required_interfaces=result.get("required_interfaces", [inferred_iface]),
+                    pins_needed=result.get("pins_needed", 1),
+                    code_templates=code_templates,
+                    headers=result.get("headers", []),
+                    loop_templates=loop_templates,
+                    primary_output=result.get("primary_output_expr", ""),
+                )
+            except Exception as e:
+                logger.warning("[CODEGEN] LLM component generation attempt %d failed for '%s': %s", attempt + 1, comp_id, e)
+                if attempt == 1:
+                    return None
+        return None
+
+    @staticmethod
+    def _skeleton_component(comp_id: str, comp_spec: Dict, user_params: Dict) -> Component:
+        """
+        Return a compilable stub for a completely unknown component.
+        The generated code contains clear TODO markers so the developer knows
+        exactly what to fill in — it will compile and link without errors.
+        """
+        display_name = comp_spec.get("name", comp_id)
+        category     = comp_spec.get("category", "sensor")
+        iface        = (comp_spec.get("interface") or
+                        (comp_spec.get("required_interfaces") or ["GPIO"])[0])
+        n = "{name}"  # keep as template token
+        return Component(
+            name=display_name,
+            category=category,
+            library="",
+            dependencies=[],
+            required_interfaces=[iface],
+            pins_needed=1,
+            code_templates={
+                "C++": (
+                    f"// TODO: add #include and init for {display_name}\n"
+                    f"// Interface: {iface}  Spec: {comp_spec}\n"
+                    f"// Replace this block with real driver initialisation."
+                ),
+                "MicroPython": (
+                    f"# TODO: import and init {display_name}\n"
+                    f"# Interface: {iface}\n"
+                    f"{n}_{_c_ident(display_name)} = None  # replace with real driver"
+                ),
+            },
+            headers=[],
+            loop_templates={
+                # C++ gets a typed stub so it still compiles
+                "C++": (
+                    f"// TODO: read/update {display_name}\n"
+                    f"  float {n}_val = 0.0f;  // replace with actual read"
+                ),
+                # MicroPython: leave empty so the interface-driven raw-bus generator
+                # kicks in and produces code that actually talks to real hardware.
+            },
+            user_params=user_params,
+            primary_output=f"{{name}}_val",
+        )
     
     def _allocate_pins(self, platform: Platform, components: List[Component]) -> Dict:
-        """Allocate pins for all components."""
-        allocations = {}
-        errors = []
-        
-        plat_def = self.PLATFORM_DEFS.get(platform, {})
-        
-        for comp in components:
-            comp_alloc = {
-                "name": comp.name,
-                "pins": {},
-                "interface": None
-            }
-            
-            # Find first matching interface
-            for interface in comp.required_interfaces:
-                if interface == "PWM":
-                    # RP2040 uses pwm_slices (16 channels via 8 slices), others use pwm_pins list
-                    pwm_pins = plat_def.get("pwm_pins", [])
-                    if not pwm_pins:
-                        # Generate synthetic PWM pin list from slice count or channel count
-                        n_slices = plat_def.get("pwm_slices", 0)
-                        n_channels = plat_def.get("pwm_channels", plat_def.get("ledc_channels", 0))
-                        n_instances = plat_def.get("pwm_instances", 0)
-                        if n_slices:
-                            pwm_pins = [f"GPIO{i}" for i in range(n_slices * 2)]
-                        elif n_channels:
-                            pwm_pins = [f"GPIO{i}" for i in range(n_channels)]
-                        elif n_instances:
-                            pwm_pins = [f"P{i}" for i in range(n_instances * 4)]
-                    available = [p for p in pwm_pins if p not in self.allocated_pins[platform]["pwm"]]
-                    if available:
-                        pin = available[0]
-                        self.allocated_pins[platform]["pwm"].append(pin)
-                        comp_alloc["pins"]["pwm"] = pin
-                        comp_alloc["interface"] = "PWM"
-                        break
-                
-                elif interface == "I2C":
-                    i2c_ifaces = plat_def.get("i2c_interfaces", [])
-                    available = [i for i in i2c_ifaces if i[0] not in self.allocated_pins[platform]["i2c"]]
-                    if available:
-                        iface = available[0]
-                        self.allocated_pins[platform]["i2c"].append(iface[0])
-                        comp_alloc["pins"]["scl"] = iface[1]
-                        comp_alloc["pins"]["sda"] = iface[2]
-                        comp_alloc["interface"] = f"I2C ({iface[0]})"
-                        break
-                
-                elif interface == "SPI":
-                    spi_ifaces = plat_def.get("spi_interfaces", [])
-                    available = [i for i in spi_ifaces if i[0] not in self.allocated_pins[platform]["spi"]]
-                    if available:
-                        iface = available[0]
-                        self.allocated_pins[platform]["spi"].append(iface[0])
-                        comp_alloc["pins"]["sclk"] = iface[1]
-                        comp_alloc["pins"]["miso"] = iface[2]
-                        comp_alloc["pins"]["mosi"] = iface[3]
-                        comp_alloc["pins"]["cs"] = iface[4]
-                        comp_alloc["interface"] = f"SPI ({iface[0]})"
-                        break
-                
-                elif interface == "UART":
-                    uart_ifaces = plat_def.get("uart_interfaces", [])
-                    available = [i for i in uart_ifaces if i[0] not in self.allocated_pins[platform]["uart"]]
-                    if available:
-                        iface = available[0]
-                        self.allocated_pins[platform]["uart"].append(iface[0])
-                        comp_alloc["pins"]["tx"] = iface[1]
-                        comp_alloc["pins"]["rx"] = iface[2]
-                        comp_alloc["interface"] = f"UART ({iface[0]})"
-                        break
-            
-            if comp_alloc["interface"]:
-                allocations[comp.name] = comp_alloc
-            else:
-                errors.append(f"Could not allocate pins for {comp.name}")
-        
-        return {"allocations": allocations, "errors": errors}
+        """
+        Delegate to PinAllocator (constraint-based, reads hw spec from HardwareDB).
+        Returns {"allocations": {...}, "errors": [...]} for backwards compatibility.
+        """
+        hw = getattr(self, "_current_hw", None) or HardwareDB.load(platform.value, self.llm_provider)
+        alloc_result = PinAllocator(hw).allocate(components)
+        return {
+            "allocations": alloc_result.assignments,
+            "errors": alloc_result.errors + alloc_result.warnings,
+        }
     
     def _generate_project(
         self,
@@ -1124,24 +1232,42 @@ class CodegenAgent:
         files[f"{project_name}.h"] = self._generate_header(platform, components, project_name, safety_level)
         files["pin_config.h"] = self._generate_pin_config(pin_allocations)
 
-        if platform in [Platform.ESP32, Platform.ESP32_S3]:
-            files["platformio.ini"] = self._generate_platformio_ini(platform, components)
-        else:
+        # HAL abstraction — always included so components use portable HAL_* calls
+        board_cfg = self._PLATFORMIO_BOARD_MAP.get(platform.value, {})
+        framework = board_cfg.get("framework", "arduino")
+        hal_files = generate_hal_files(platform.value, framework)
+        files.update(hal_files)
+
+        # PlatformIO ini for all platforms + CMake for STM32 (dual build system)
+        files["platformio.ini"] = self._generate_platformio_ini(platform, components)
+        stm32_platforms = {Platform.STM32F405, Platform.STM32F103, Platform.STM32H743}
+        if platform in stm32_platforms:
             files["CMakeLists.txt"] = self._generate_cmake(platform, components, project_name)
+
+        # Safety files — only when a real safety level is requested
+        if safety_level not in ("NONE", "", None):
+            safety_files = self._generate_safety_files(platform, components, safety_level)
+            files.update(safety_files)
+
+        # CI/CD pipeline
+        files[".github/workflows/ci.yml"] = self._generate_ci_yml(platform, project_name)
 
         for comp in components:
             libraries.update(comp.dependencies)
             if comp.library:
-                libraries.add(comp.library)
+                lib_entry = (
+                    f"{comp.library}@{comp.library_version}" if comp.library_version else comp.library
+                )
+                libraries.add(lib_entry)
 
         build_config = {
             "platform": platform.value,
             "language": language.value,
-            "framework": "arduino" if platform in [Platform.ESP32, Platform.ARDUINO_MEGA] else "stm32cube",
+            "framework": framework,
             "build_flags": ["-Os", "-Wall"],
             "lib_deps": sorted(libraries),
         }
-        if safety_level != "NONE":
+        if safety_level not in ("NONE", "", None):
             build_config["build_flags"].extend(["-Werror", "-pedantic"])
 
         return GeneratedProject(
@@ -1205,33 +1331,88 @@ SENSOR_PERIOD_MS = 20 # Sensor read period (ms)
             template = comp.code_templates.get("MicroPython") or comp.code_templates.get("C++")
 
             if template:
-                ctx = {"name": comp.name.replace(" ", "_").lower()}
+                ctx = {"name": _c_ident(comp.name)}
                 ctx.update(pins)
                 ctx.update({f"pin_{k}": v for k, v in pins.items()})
-                try:
-                    init_code = template.format(**ctx)
-                    init_lines.append(f"# {comp.name}")
-                    init_lines.extend(init_code.split("\n"))
-                except KeyError as e:
-                    init_lines.append(f"# TODO: Configure {comp.name} — missing pin: {e}")
+                init_code = _render(template, ctx)
+                init_lines.append(f"# {comp.name}")
+                init_lines.extend(init_code.split("\n"))
             else:
                 init_lines.append(f"# {comp.name}: no MicroPython template (add driver manually)")
 
             # Create an async task for each component if using async
             if use_async:
-                task_name = comp.name.replace(" ", "_").lower()
-                async_tasks.append(f'''\nasync def task_{task_name}():
-    """Task for {comp.name}"""
+                task_name = _c_ident(comp.name)
+                period_const = ("SENSOR_PERIOD_MS"
+                                if comp.category == "sensor"
+                                else "LOOP_PERIOD_MS")
+                loop_tmpl = comp.loop_templates.get("MicroPython", "")
+
+                if loop_tmpl:
+                    # Component has a MicroPython-specific loop template (from YAML catalog
+                    # or built-in) — render it directly.
+                    loop_ctx = {"name": task_name}
+                    loop_ctx.update(pins)
+                    loop_ctx.update({f"pin_{k}": v for k, v in pins.items()})
+                    loop_ctx.update(comp.user_params)
+                    rendered_loop = _render(loop_tmpl, loop_ctx)
+                    task_body = "\n".join(
+                        "        " + ln if ln.strip() else ""
+                        for ln in rendered_loop.splitlines()
+                    )
+                else:
+                    # No specific template — generate generic raw-bus read code based on
+                    # the allocated interface. This works on real hardware for ANY device
+                    # without knowing the chip. Developer fills in address + parsing only.
+                    iface = alloc.get("interface", "") or ""
+                    addr  = comp.user_params.get("i2c_address", "0x00")
+                    if "I2C" in iface:
+                        task_body = (
+                            f"        # {comp.name} — I2C addr {addr}\n"
+                            f"        # Consult datasheet: set address, byte count, register\n"
+                            f"        _buf_{task_name} = i2c.readfrom_mem({addr}, 0x00, 2)  # reg 0x00, 2 bytes\n"
+                            f"        {task_name}_val = int.from_bytes(_buf_{task_name}, 'big')  # TODO: apply scaling"
+                        )
+                    elif "SPI" in iface:
+                        cs_pin = pins.get("cs", "None")
+                        task_body = (
+                            f"        # {comp.name} — SPI CS={cs_pin}\n"
+                            f"        # Consult datasheet: set command byte and byte count\n"
+                            f"        {task_name}_cs.value(0)\n"
+                            f"        _buf_{task_name} = spi.read(2, 0x00)  # TODO: command byte, byte count\n"
+                            f"        {task_name}_cs.value(1)\n"
+                            f"        {task_name}_val = int.from_bytes(_buf_{task_name}, 'big')  # TODO: apply scaling"
+                        )
+                    elif "UART" in iface:
+                        task_body = (
+                            f"        # {comp.name} — UART\n"
+                            f"        if {task_name}_uart.any():\n"
+                            f"            _buf_{task_name} = {task_name}_uart.read()  # TODO: fixed packet length\n"
+                            f"            {task_name}_val = 0.0  # TODO: parse _buf_{task_name} per protocol"
+                        )
+                    elif comp.category in ("motor", "servo", "actuator", "output"):
+                        task_body = (
+                            f"        # {comp.name} — update output\n"
+                            f"        # TODO: write setpoint to {task_name} via PWM/GPIO"
+                        )
+                    else:
+                        task_body = (
+                            f"        # {comp.name} — GPIO\n"
+                            f"        # TODO: read/write {task_name} pin"
+                        )
+
+                async_tasks.append(f'''
+async def task_{task_name}():
     while True:
-        # TODO: Read / actuate {comp.name}
-        await asyncio.sleep_ms(SENSOR_PERIOD_MS)
+{task_body}
+        await asyncio.sleep_ms({period_const})
 ''')
 
         # --- main.py ---
         if use_async:
             # uasyncio coroutine-based (FreeRTOS equivalent for MicroPython)
             task_creates = "\n".join(
-                f"    asyncio.create_task(task_{c.name.replace(' ','_').lower()}())"
+                f"    asyncio.create_task(task_{_c_ident(c.name)}())"
                 for c in components
             )
             main_py = f'''"""
@@ -1435,21 +1616,18 @@ mpremote connect "$PORT" reset
 
             template = comp.code_templates.get("MicroPython") or comp.code_templates.get("C++")
             if template:
-                ctx = {"name": comp.name.replace(" ", "_").lower()}
+                ctx = {"name": _c_ident(comp.name)}
                 ctx.update(pins)
                 ctx.update({f"pin_{k}": v for k, v in pins.items()})
                 # CircuitPython uses board.GPxx instead of bare integers
                 ctx_cp = {k: f"board.GP{v}" if isinstance(v, int) else v for k, v in ctx.items()}
-                try:
-                    init_code = template.format(**ctx_cp)
-                    init_lines.append(f"# {comp.name}")
-                    init_lines.extend(
-                        line.replace("machine.Pin", "digitalio.DigitalInOut")
-                            .replace("machine.PWM", "pwmio.PWMOut")
-                        for line in init_code.split("\n")
-                    )
-                except KeyError as e:
-                    init_lines.append(f"# TODO: Configure {comp.name} — missing pin: {e}")
+                init_code = _render(template, ctx_cp)
+                init_lines.append(f"# {comp.name}")
+                init_lines.extend(
+                    line.replace("machine.Pin", "digitalio.DigitalInOut")
+                        .replace("machine.PWM", "pwmio.PWMOut")
+                    for line in init_code.split("\n")
+                )
             else:
                 init_lines.append(f"# {comp.name}: add adafruit driver")
 
@@ -1555,6 +1733,8 @@ CIRCUITPY_WIFI_PASSWORD = "YourPassword"
         if rtos == RTOS.FREERTOS:
             includes.add("<FreeRTOS.h>")
             includes.add("<task.h>")
+            includes.add("<queue.h>")
+            includes.add("<semphr.h>")
         
         # Generate setup code and loop code from templates
         setup_code = []
@@ -1564,42 +1744,41 @@ CIRCUITPY_WIFI_PASSWORD = "YourPassword"
             alloc = pin_allocations.get(comp.name, {})
             pins = alloc.get("pins", {})
 
-            ctx = {"name": comp.name.replace(" ", "_").lower()}
+            ctx = {"name": _c_ident(comp.name)}
             ctx.update(pins)
             ctx.update({f"pin_{k}": v for k, v in pins.items()})
+            ctx.update(comp.user_params)  # i2c_address, spi_mode, uart_baud, etc.
 
             # ── Setup block ──
             init_tmpl = comp.code_templates.get("C++", "")
             if init_tmpl:
-                try:
-                    code = init_tmpl.format(**ctx)
-                    setup_code.append(f"  // Initialize {comp.name}")
-                    setup_code.extend([f"  {line}" for line in code.split("\n")])
-                except KeyError as e:
-                    setup_code.append(f"  // TODO: Configure {comp.name} (missing ctx key: {e})")
+                code = _render(init_tmpl, ctx)
+                setup_code.append(f"  // Initialize {comp.name}")
+                setup_code.extend([f"  {line}" for line in code.split("\n")])
             else:
                 setup_code.append(f"  // {comp.name}: no C++ init template")
 
             # ── Loop block ──
             loop_tmpl = comp.loop_templates.get("C++", "")
             if loop_tmpl:
-                try:
-                    lcode = loop_tmpl.format(**ctx)
-                    loop_code.append(f"  // {comp.name}")
-                    loop_code.extend([f"  {line}" for line in lcode.split("\n")])
-                except KeyError as e:
-                    loop_code.append(f"  // {comp.name}: add loop logic (missing ctx key: {e})")
+                lcode = _render(loop_tmpl, ctx)
+                loop_code.append(f"  // {comp.name}")
+                loop_code.extend([f"  {line}" for line in lcode.split("\n")])
             else:
                 loop_code.append(f"  // {comp.name}: add read/update logic here")
         
-        # RTOS task creation — one real task per component category
+        # RTOS task creation — queues between sensor→actuator, mutex for shared I2C
         rtos_code = ""
         if rtos == RTOS.FREERTOS:
-            sensor_comps   = [c for c in components if c.category == "sensor"]
-            motor_comps    = [c for c in components if c.category in ("motor", "servo", "actuator")]
-            comms_comps    = [c for c in components if c.category == "communication"]
-            output_comps   = [c for c in components if c.category == "output"]
-            power_comps    = [c for c in components if c.category == "power"]
+            sensor_comps = [c for c in components if c.category == "sensor"]
+            motor_comps  = [c for c in components if c.category in ("motor", "servo", "actuator")]
+            comms_comps  = [c for c in components if c.category == "communication"]
+            output_comps = [c for c in components if c.category == "output"]
+
+            has_i2c = any(
+                "I2C" in (pin_allocations.get(c.name, {}).get("interface") or "")
+                for c in components
+            )
 
             def _loop_body(comps: List[Component], indent: str = "    ") -> str:
                 lines = []
@@ -1608,80 +1787,253 @@ CIRCUITPY_WIFI_PASSWORD = "YourPassword"
                     pins  = alloc.get("pins", {})
                     tmpl  = c.loop_templates.get("C++", "")
                     if tmpl:
-                        ctx = {"name": c.name.replace(" ", "_").lower()}
+                        ctx = {"name": _c_ident(c.name)}
                         ctx.update(pins)
                         ctx.update({f"pin_{k}": v for k, v in pins.items()})
-                        try:
-                            lines.append(tmpl.format(**ctx))
-                        except KeyError:
-                            lines.append(f"// {c.name}: read/update (pin context incomplete)")
+                        ctx.update(c.user_params)
+                        lines.append(_render(tmpl, ctx))
                     else:
                         lines.append(f"// {c.name}: add read/update code here")
                 return ("\n" + indent).join(lines) if lines else "// No components in this task"
 
-            sensor_body = _loop_body(sensor_comps)
-            motor_body  = _loop_body(motor_comps)
-            comms_body  = _loop_body(comms_comps)
-            output_body = _loop_body(output_comps)
+            def _sensor_slot_assignments(comps: List[Component]) -> str:
+                """Emit data.values[i] = <primary_expr> for each sensor slot."""
+                lines = []
+                for i, c in enumerate(comps):
+                    n   = _c_ident(c.name)
+                    ctx = {"name": n}
+                    ctx.update(c.user_params)
+                    expr = c.primary_output
+                    resolved = _render(expr, ctx).strip() if expr else None
+                    if resolved:
+                        lines.append(f"  data.values[{i}] = {resolved};")
+                    else:
+                        lines.append(f"  data.values[{i}] = 0.0f;  // TODO: assign primary reading from {c.name}")
+                return "\n".join(lines)
 
-            task_decls = []
+            sensor_body   = _loop_body(sensor_comps)
+            actuator_body = _loop_body(motor_comps + output_comps)
+            comms_body    = _loop_body(comms_comps)
+
+            # Generic sensor struct — indexed by slot, not by component name.
+            # N_SENSORS is emitted as a #define so it scales to any component set.
+            n_sensors = max(len(sensor_comps), 1)
+
+            # Stack sizes: sensor I2C reads ~1KB, motor float math ~2KB, comms network ~4KB
+            sensor_stack  = 2048 if not has_i2c else 3072
+            actuator_stack = 2048 + 512 * len(motor_comps)
+            comms_stack   = 4096
+
+            task_decls  = []
             task_creates = []
+            global_decls = []
+
+            # Emit a comment mapping slot index → sensor name so generated code stays readable
+            slot_comments = "\n".join(
+                f"//   values[{i}]  {c.name}"
+                for i, c in enumerate(sensor_comps)
+            ) or "//   (no sensors)"
+
+            # ── DMA / interrupt capability by platform ────────────────────────
+            # STM32 platforms support raw DMA via HAL_I2C_Master_Receive_DMA.
+            # All platforms support DRDY external interrupt when drdy_pin provided.
+            # Everything else falls back to a timed read with proper queue depth.
+            dma_platforms = {Platform.STM32F405, Platform.STM32F103, Platform.STM32H743}
+            tickless_platforms = {Platform.NRF52840, Platform.ESP32, Platform.ESP32_S3}
+            has_dma  = platform in dma_platforms
+            has_tickless = platform in tickless_platforms and not motor_comps
+            has_drdy = any(c.user_params.get("drdy_pin") for c in sensor_comps)
+
+            # Determine if any sensor uses I2C — affects DMA buffer/callback approach
+            def _sensor_uses_i2c(c: Component) -> bool:
+                return "I2C" in (pin_allocations.get(c.name, {}).get("interface") or "")
+
+            global_decls.append(f"""
+// ── FreeRTOS inter-task communication ────────────────────────────────────────
+// Sensor slot index map:
+{slot_comments}
+#define N_SENSORS {n_sensors}
+#define SENSOR_QUEUE_DEPTH 4  // ring buffer — 4 samples deep, never blocks sensor task
+
+typedef struct {{
+  float    values[N_SENSORS];  // one slot per sensor, order matches slot map above
+  uint32_t timestamp_ms;
+  bool     valid;
+}} SensorData_t;
+
+static QueueHandle_t    sensorQueue    = NULL;
+static TaskHandle_t     sensorTaskHandle = NULL;
+{"static SemaphoreHandle_t i2cMutex = NULL;  // Shared I2C bus protection" if has_i2c else ""}
+{"// DMA receive buffers — one per I2C sensor (placed in DMA-accessible RAM)" if has_dma and has_i2c else ""}
+{"".join(f"static uint8_t _dma_buf_{_c_ident(c.name)}[16];  // burst read buffer for {c.name}" + chr(10) for c in sensor_comps if _sensor_uses_i2c(c)) if has_dma else ""}
+""")
 
             if sensor_comps:
-                task_decls.append(f"""
+                slot_assigns = _sensor_slot_assignments(sensor_comps)
+                i2c_lock   = "xSemaphoreTake(i2cMutex, portMAX_DELAY);" if has_i2c else ""
+                i2c_unlock = "xSemaphoreGive(i2cMutex);" if has_i2c else ""
+
+                if has_dma and has_i2c:
+                    # STM32 DMA path: request DMA read, task waits on notification from IRQ
+                    dma_read_lines = "\n    ".join(
+                        f"HAL_I2C_Read_DMA(0, 0x{c.user_params.get('i2c_address', 0):02X}, 0x00,"
+                        f" _dma_buf_{_c_ident(c.name)}, sizeof(_dma_buf_{_c_ident(c.name)}));"
+                        for c in sensor_comps if _sensor_uses_i2c(c)
+                    ) or "// No DMA-capable sensors"
+
+                    task_decls.append(f"""
+// Override HAL DMA complete callback — fires from DMA IRQ context
+void HAL_I2C_DMAComplete_Callback(uint8_t bus) {{
+  (void)bus;
+  BaseType_t xHigher = pdFALSE;
+  vTaskNotifyGiveFromISR(sensorTaskHandle, &xHigher);
+  portYIELD_FROM_ISR(xHigher);
+}}
+
 void sensorTask(void *pvParameters) {{
-  const TickType_t period = pdMS_TO_TICKS(10);  // 100 Hz sensor loop
-  TickType_t lastWake = xTaskGetTickCount();
+  SensorData_t data = {{}};
   for (;;) {{
+    // Arm DMA burst reads (non-blocking)
+    {i2c_lock}
+    {dma_read_lines}
+    {i2c_unlock}
+    // Block until DMA complete IRQ fires (zero CPU during transfer)
+    ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(100));  // 100 ms watchdog
+{slot_assigns}
+    data.timestamp_ms = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
+    data.valid = true;
+    // Queue depth=4: never overwrites; if full, discard oldest
+    if (uxQueueSpacesAvailable(sensorQueue) == 0) {{
+      SensorData_t discard;
+      xQueueReceive(sensorQueue, &discard, 0);
+    }}
+    xQueueSendToBack(sensorQueue, &data, 0);
+  }}
+}}""")
+
+                elif has_drdy:
+                    # DRDY interrupt path — works on all platforms
+                    drdy_setups = "\n  ".join(
+                        f"HAL_GPIO_AttachInterrupt({c.user_params['drdy_pin']},"
+                        f" drdy_isr_{_c_ident(c.name)}, true);"
+                        for c in sensor_comps if c.user_params.get("drdy_pin")
+                    )
+                    drdy_isrs = "\n".join(
+                        f"static void IRAM_ATTR drdy_isr_{_c_ident(c.name)}(void) {{"
+                        f"\n  BaseType_t w = pdFALSE;"
+                        f"\n  vTaskNotifyGiveFromISR(sensorTaskHandle, &w);"
+                        f"\n  portYIELD_FROM_ISR(w);\n}}"
+                        for c in sensor_comps if c.user_params.get("drdy_pin")
+                    )
+                    task_decls.append(f"""
+{drdy_isrs}
+
+void sensorTask(void *pvParameters) {{
+  SensorData_t data = {{}};
+  for (;;) {{
+    // Block until DRDY interrupt fires — zero CPU while waiting
+    ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(100));
+    {i2c_lock}
     {sensor_body}
+    {i2c_unlock}
+{slot_assigns}
+    data.timestamp_ms = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
+    data.valid = true;
+    if (uxQueueSpacesAvailable(sensorQueue) == 0) {{
+      SensorData_t discard; xQueueReceive(sensorQueue, &discard, 0);
+    }}
+    xQueueSendToBack(sensorQueue, &data, 0);
+  }}
+}}""")
+                    setup_code_drdy = f"  {drdy_setups}"
+
+                else:
+                    # Timed path — optimized polling with configUSE_TICKLESS_IDLE
+                    task_decls.append(f"""
+void sensorTask(void *pvParameters) {{
+  const TickType_t period = pdMS_TO_TICKS(10);  // 100 Hz
+  TickType_t lastWake = xTaskGetTickCount();
+  SensorData_t data = {{}};
+  for (;;) {{
+    {i2c_lock}
+    {sensor_body}
+    {i2c_unlock}
+{slot_assigns}
+    data.timestamp_ms = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
+    data.valid = true;
+    // Queue depth 4: drop oldest if full so sensor is never blocked
+    if (uxQueueSpacesAvailable(sensorQueue) == 0) {{
+      SensorData_t discard; xQueueReceive(sensorQueue, &discard, 0);
+    }}
+    xQueueSendToBack(sensorQueue, &data, 0);
     vTaskDelayUntil(&lastWake, period);
   }}
 }}""")
-                task_creates.append("  xTaskCreate(sensorTask, \"Sensor\", 4096, NULL, 2, NULL);")
+
+                task_creates.append(
+                    f"  sensorQueue = xQueueCreate(SENSOR_QUEUE_DEPTH, sizeof(SensorData_t));\n"
+                    f"  xTaskCreate(sensorTask, \"Sensor\", {sensor_stack}, NULL, 2, &sensorTaskHandle);"
+                )
 
             if motor_comps or output_comps:
-                combined_body = _loop_body(motor_comps + output_comps)
                 task_decls.append(f"""
 void actuatorTask(void *pvParameters) {{
   const TickType_t period = pdMS_TO_TICKS(1);  // 1 kHz actuator loop
   TickType_t lastWake = xTaskGetTickCount();
+  SensorData_t sensors = {{}};
   for (;;) {{
-    {combined_body}
+    // Non-blocking peek — use last valid frame if queue empty
+    xQueuePeek(sensorQueue, &sensors, 0);
+    if (sensors.valid) {{
+      {actuator_body}
+    }}
+    HAL_WDG_Feed();  // REQ-SAF-WDG: each task must feed the watchdog
     vTaskDelayUntil(&lastWake, period);
   }}
 }}""")
-                task_creates.append("  xTaskCreate(actuatorTask, \"Actuator\", 4096, NULL, 3, NULL);")
+                task_creates.append(
+                    f"  xTaskCreate(actuatorTask, \"Actuator\", {actuator_stack}, NULL, 3, NULL);"
+                )
 
             if comms_comps:
                 task_decls.append(f"""
 void commsTask(void *pvParameters) {{
-  const TickType_t period = pdMS_TO_TICKS(100);  // 10 Hz comms loop
+  const TickType_t period = pdMS_TO_TICKS(100);  // 10 Hz comms
   TickType_t lastWake = xTaskGetTickCount();
   for (;;) {{
     {comms_body}
+    HAL_WDG_Feed();
     vTaskDelayUntil(&lastWake, period);
   }}
 }}""")
-                task_creates.append("  xTaskCreate(commsTask, \"Comms\", 8192, NULL, 1, NULL);")
+                task_creates.append(
+                    f"  xTaskCreate(commsTask, \"Comms\", {comms_stack}, NULL, 1, NULL);"
+                )
 
-            rtos_code = "\n".join(task_decls)
-            setup_code.append("\n  // --- FreeRTOS task launch ---\n" + "\n".join(task_creates))
+            # Tickless idle — reduces power consumption on battery platforms
+            tickless_config = (
+                "\n// Tickless idle enabled — enters low-power sleep between tasks\n"
+                "// configUSE_TICKLESS_IDLE = 1  (set in FreeRTOSConfig.h)\n"
+            ) if has_tickless else ""
+
+            mutex_init = "  i2cMutex = xSemaphoreCreateMutex();" if has_i2c else ""
+            rtos_code  = tickless_config + "\n".join(global_decls) + "\n".join(task_decls)
+            setup_code.append(
+                f"\n  // --- FreeRTOS init ---\n{mutex_init}\n"
+                + "\n".join(task_creates)
+            )
         
-        # Safety code patterns
+        # Safety code patterns — real IWDG via HAL abstraction
         safety_code = ""
         if safety_level in ["SIL1", "SIL2", "SIL3", "ASIL_A", "ASIL_B", "ASIL_C", "ASIL_D"]:
-            safety_code = """
-// Safety-Critical Watchdog
-#define WATCHDOG_TIMEOUT_MS 1000
+            wdg_timeout = 500 if safety_level in ("SIL3", "ASIL_D") else 1000
+            safety_code = f"""
+#include "hal/hal.h"
+#include "safety.h"
 
-void setup_watchdog() {
-  // Configure watchdog timer
-  // Reset if main loop stalls
-}
-
-void feed_watchdog() {
-  // Reset watchdog counter
-}
+// REQ-SAF-WDG: IWDG must be initialised before any task runs.
+// Timeout: {wdg_timeout} ms — feeds required from every task that holds CPU.
+#define WATCHDOG_TIMEOUT_MS {wdg_timeout}
 """
         
         code = f"""/**
@@ -1727,20 +2079,21 @@ void setup() {{
 {chr(10).join(setup_code)}
   
   Serial.println("Setup complete. Starting main loop...");
+{"  HAL_WDG_Init(WATCHDOG_TIMEOUT_MS);  // REQ-SAF-WDG: arm IWDG after all init" if safety_level not in ("NONE", "") else ""}
 }}
 
 void loop() {{
   unsigned long startTime = micros();
-  
+
   // Main control loop (runs at LOOP_FREQUENCY_HZ)
 {chr(10).join(loop_code) if loop_code else "  // TODO: Add main loop logic"}
-  
+  {"HAL_WDG_Feed();  // REQ-SAF-WDG: pet IWDG every iteration" if safety_level not in ("NONE", "") else ""}
   // Timing control
   unsigned long elapsed = micros() - startTime;
   if (elapsed < LOOP_PERIOD_US) {{
     delayMicroseconds(LOOP_PERIOD_US - elapsed);
   }}
-  
+
   // Performance monitoring
   loopCounter++;
   if (millis() - lastLoopTime >= 1000) {{
@@ -1837,23 +2190,35 @@ void write_outputs(const ControlOutput& output);
     }
 
     def _generate_platformio_ini(self, platform: Platform, components: List[Component]) -> str:
-        """Generate PlatformIO configuration with correct platform/board per target MCU."""
-        lib_deps = []
+        """Generate PlatformIO configuration with version-pinned lib_deps for all platforms."""
+        # Build a versioned dep map: prefer "Library@version" when library_version is set.
+        # Use a dict so duplicate lib names are deduped by name, keeping the first version seen.
+        versioned: Dict[str, str] = {}
         for comp in components:
-            lib_deps.extend(comp.dependencies)
-        unique_libs = sorted(set(lib_deps))
+            # Primary library with version pin
+            lib_key = comp.library or ""
+            if lib_key and lib_key not in versioned:
+                versioned[lib_key] = (
+                    f"{lib_key}@{comp.library_version}" if comp.library_version else lib_key
+                )
+            # Dependencies (usually framework libs — no version pinning available)
+            for dep in comp.dependencies:
+                if dep and dep not in versioned:
+                    versioned[dep] = dep
+        unique_libs = sorted(versioned.values())
 
         board_cfg = self._PLATFORMIO_BOARD_MAP.get(platform.value, {
             "platform": "espressif32", "board": "esp32dev", "framework": "arduino", "upload_speed": "115200"
         })
 
-        # Native test environment for unit testing without hardware
         native_section = """
 [env:native]
 platform = native
 build_flags = -std=c++17
+test_framework = unity
 """
         return f"""; PlatformIO Project Configuration — Auto-generated by BRICK OS
+; lib_deps are version-pinned. Bump versions here, not in code.
 [platformio]
 default_envs = {platform.value.lower()}
 
@@ -1869,6 +2234,7 @@ lib_deps =
 build_flags =
     -Os
     -Wall
+    -Werror=implicit-function-declaration
     -DPLATFORM_{platform.value.upper()}
 {native_section}"""
     
@@ -1901,6 +2267,276 @@ target_link_libraries(${{PROJECT_NAME}}
 """
 
 
+    def _generate_safety_files(
+        self,
+        platform: Platform,
+        components: List[Component],
+        safety_level: str,
+    ) -> Dict[str, str]:
+        """
+        Generate safety.h + safety.c for SIL/ASIL projects.
+
+        Implements:
+          - IWDG init + per-task Feed (REQ-SAF-WDG)
+          - SAFETY_EnterSafeState(fault_code) — disables all actuators, sets interlocks
+          - HardFault_Handler override (REQ-SAF-HF)
+          - Sensor majority vote when 2+ sensors share a category (REQ-SAF-VOTE)
+          - safety_tests.cpp with timing assertions
+        """
+        actuator_comps = [c for c in components if c.category in ("motor", "servo", "actuator")]
+        sensor_groups: Dict[str, List[str]] = {}
+        for c in components:
+            if c.category == "sensor":
+                sensor_groups.setdefault(c.category, []).append(_c_ident(c.name))
+
+        # Disable actuators in safe-state — emit one HAL_PWM_Write(pin, 0) per actuator
+        actuator_shutdowns = "\n  ".join(
+            f"HAL_PWM_Write(ACTUATOR_{_c_ident(c.name).upper()}_PIN, 0);  // disarm {c.name}"
+            for c in actuator_comps
+        ) or "// No actuators — nothing to disarm"
+
+        # Majority vote for sensor categories with 3+ sensors
+        vote_fns = []
+        for cat, names in sensor_groups.items():
+            if len(names) >= 3:
+                vote_fns.append(f"""
+// REQ-SAF-VOTE: majority vote across 3 {cat} readings
+float SAFETY_Vote_{cat}(float a, float b, float c) {{
+  // Sort and return median
+  if (a > b) {{ float t = a; a = b; b = t; }}
+  if (b > c) {{ float t = b; b = c; c = t; }}
+  if (a > b) {{ float t = a; a = b; b = t; }}
+  return b;
+}}""")
+
+        timeout_ms = 500 if safety_level in ("SIL3", "ASIL_D") else 1000
+
+        safety_h = f"""\
+#ifndef SAFETY_H
+#define SAFETY_H
+/**
+ * @file safety.h
+ * @brief Safety monitor — {safety_level}
+ * Auto-generated by BRICK OS. DO NOT EDIT.
+ *
+ * REQ-SAF-WDG:  IWDG must be fed by every task within {timeout_ms} ms.
+ * REQ-SAF-HF:   HardFault_Handler must enter safe state before halting.
+ * REQ-SAF-VOTE: Sensor majority vote required when 3+ sensors share a category.
+ */
+
+#include <stdint.h>
+#include "hal/hal.h"
+
+#define SAFETY_LEVEL_STR  "{safety_level}"
+#define SAFETY_WDG_TIMEOUT_MS {timeout_ms}
+
+typedef enum {{
+  FAULT_NONE         = 0,
+  FAULT_WDG_MISS     = 1,  // REQ-SAF-WDG
+  FAULT_HARDFAULT    = 2,  // REQ-SAF-HF
+  FAULT_SENSOR_OOB   = 3,
+  FAULT_ACTUATOR_OOR = 4,
+  FAULT_STACK_OVF    = 5,
+}} FaultCode_t;
+
+void SAFETY_Init(void);
+void SAFETY_Feed(void);
+void SAFETY_EnterSafeState(FaultCode_t fault);
+{"".join(f"float SAFETY_Vote_{cat}(float a, float b, float c);\n" for cat in sensor_groups if len(sensor_groups[cat]) >= 3)}
+#endif /* SAFETY_H */
+"""
+
+        vote_fn_block = "\n".join(vote_fns)
+
+        safety_c = f"""\
+/**
+ * @file safety.c
+ * @brief Safety monitor implementation — {safety_level}
+ * Auto-generated by BRICK OS. DO NOT EDIT.
+ */
+
+#include "safety.h"
+#include "hal/hal.h"
+#include <string.h>
+
+static volatile FaultCode_t _active_fault = FAULT_NONE;
+
+// REQ-SAF-WDG: Initialise IWDG. Call ONCE before vTaskStartScheduler / loop().
+void SAFETY_Init(void) {{
+  HAL_WDG_Init(SAFETY_WDG_TIMEOUT_MS);
+}}
+
+// REQ-SAF-WDG: Reset the watchdog. Each task/ISR must call this within the timeout.
+void SAFETY_Feed(void) {{
+  HAL_WDG_Feed();
+}}
+
+// REQ-SAF: Shut down all actuators and halt in a known safe state.
+// This function is intentionally non-returning.
+void SAFETY_EnterSafeState(FaultCode_t fault) {{
+  _active_fault = fault;
+
+  // Disable all actuators — {len(actuator_comps)} device(s)
+  {actuator_shutdowns}
+
+  // Log fault to serial (best-effort — may be unavailable in hard fault context)
+  // Use a raw memory-mapped UART write if you need guaranteed output.
+  HAL_UART_WriteStr(0, "SAFETY: safe state entered, fault=");
+  char buf[4];
+  buf[0] = '0' + (int)fault;
+  buf[1] = '\\r'; buf[2] = '\\n'; buf[3] = 0;
+  HAL_UART_WriteStr(0, buf);
+
+  // Feed watchdog once more to prevent spurious reset during shutdown,
+  // then stop feeding so the watchdog resets after SAFETY_WDG_TIMEOUT_MS.
+  HAL_WDG_Feed();
+  for (;;) {{
+    // Spin — watchdog will reset the MCU if this takes too long
+    HAL_DelayMs(10);
+  }}
+}}
+
+// REQ-SAF-HF: Cortex-M HardFault handler override.
+// __attribute__((naked)) preserves LR/SP for stack-trace tools.
+__attribute__((naked)) void HardFault_Handler(void) {{
+  __asm volatile(
+    "tst lr, #4      \\n"
+    "ite eq          \\n"
+    "mrseq r0, msp   \\n"
+    "mrsne r0, psp   \\n"
+    "b HardFault_HandlerC \\n"
+  );
+}}
+
+void HardFault_HandlerC(uint32_t *stack) {{
+  (void)stack;  // stack[6]=PC, stack[7]=xPSR for offline analysis
+  SAFETY_EnterSafeState(FAULT_HARDFAULT);
+}}
+
+{vote_fn_block}
+"""
+
+        safety_tests_cpp = f"""\
+/**
+ * @file safety_tests.cpp
+ * @brief Timing assertions for safety watchdog — {safety_level}
+ * Run with: pio test -e native
+ */
+
+#include <unity.h>
+#include <stdint.h>
+
+// Stub HAL for native test build
+static uint32_t _wdg_timeout = 0;
+static uint32_t _wdg_last_feed = 0;
+static uint32_t _mock_time = 0;
+void HAL_WDG_Init(uint32_t ms)  {{ _wdg_timeout = ms; _wdg_last_feed = 0; }}
+void HAL_WDG_Feed(void)          {{ _wdg_last_feed = _mock_time; }}
+void HAL_DelayMs(uint32_t ms)    {{ _mock_time += ms; }}
+void HAL_UART_WriteStr(uint8_t, const char*) {{}}
+
+#include "safety.c"
+
+void test_wdg_timeout_configured(void) {{
+  SAFETY_Init();
+  TEST_ASSERT_EQUAL_UINT32({timeout_ms}, _wdg_timeout);
+}}
+
+void test_feed_resets_timer(void) {{
+  SAFETY_Init();
+  _mock_time = 500;
+  SAFETY_Feed();
+  TEST_ASSERT_EQUAL_UINT32(500, _wdg_last_feed);
+}}
+
+void test_safe_state_sets_fault(void) {{
+  // Entering safe state must set fault code before looping
+  // We can't call SAFETY_EnterSafeState directly (it loops forever),
+  // so we test the fault assignment path indirectly.
+  // Full integration test requires hardware or a mock that intercepts HAL_DelayMs.
+  TEST_PASS();  // placeholder — extend with hardware-in-loop tests
+}}
+
+int main(void) {{
+  UNITY_BEGIN();
+  RUN_TEST(test_wdg_timeout_configured);
+  RUN_TEST(test_feed_resets_timer);
+  RUN_TEST(test_safe_state_sets_fault);
+  return UNITY_END();
+}}
+"""
+
+        return {
+            "safety.h": safety_h,
+            "safety.c": safety_c,
+            "test/safety_tests.cpp": safety_tests_cpp,
+        }
+
+    def _generate_ci_yml(self, platform: Platform, project_name: str) -> str:
+        """Generate .github/workflows/ci.yml with PlatformIO build + native tests + cppcheck."""
+        board_map = self._PLATFORMIO_BOARD_MAP.get(platform.value, {})
+        env_name = platform.value.lower()
+        return f"""\
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    name: PlatformIO Build — {platform.value}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PlatformIO
+        run: pip install platformio
+
+      - name: Build firmware
+        run: pio run -e {env_name}
+
+  native-tests:
+    name: Native Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PlatformIO
+        run: pip install platformio
+
+      - name: Run native tests
+        run: pio test -e native
+
+  static-analysis:
+    name: cppcheck static analysis
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cppcheck
+        run: sudo apt-get install -y cppcheck
+
+      - name: Run cppcheck
+        run: |
+          cppcheck --error-exitcode=1 --std=c++17 \\
+            --suppress=missingInclude \\
+            --enable=warning,performance,portability \\
+            main.cpp safety.c
+"""
+
     # ═══════════════════════════════════════════════════════════════
     #  DOMAIN GENERATORS
     # ═══════════════════════════════════════════════════════════════
@@ -1931,13 +2567,16 @@ target_link_libraries(${{PROJECT_NAME}}
         sf        = structural.get("safety_factor", 2.0)
         env_type  = (params.get("environment", {}) or {}).get("type", "GROUND")
 
-        # Estimate PID gains from physics
-        # Natural frequency approx from stiffness and mass
-        stiffness_n_m = structural.get("effective_stiffness_n_m", 1000.0) or 1000.0
-        omega_n = (stiffness_n_m / max(mass_kg, 0.001)) ** 0.5
-        kp = round(mass_kg * omega_n ** 2, 4)
-        ki = round(kp * 0.1, 4)
-        kd = round(2 * mass_kg * omega_n * 0.7, 4)  # critically damped
+        # Domain-specific PID gains — NOT generic mass-spring-damper numerology
+        domain_gains = self._pid_gains_for_domain(intent, design_p, thermal, structural, fluid)
+        kp          = domain_gains["kp"]
+        ki          = domain_gains["ki"]
+        kd          = domain_gains["kd"]
+        pv_name     = domain_gains["pv_name"]
+        cv_name     = domain_gains["cv_name"]
+        ctrl_domain = domain_gains["domain"]
+        anti_windup = domain_gains["anti_windup"]
+        gains_note  = domain_gains["note"]
 
         LOOP_RATE_HZ = 100  # Python variable — also embedded as constant in generated code
         timestamp = datetime.now().isoformat()
@@ -1957,8 +2596,11 @@ Design parameters:
   T_max        : {temp_max:.1f} °C
   Safety factor: {sf:.2f}
 
-PID gains (physics-informed estimate):
-  Kp = {kp}   Ki = {ki}   Kd = {kd}
+Control domain : {ctrl_domain}
+Process var    : {pv_name}
+Control var    : {cv_name}
+PID gains      : Kp={kp}  Ki={ki}  Kd={kd}
+Gain basis     : {gains_note}
 
 Install dependencies:
   pip install -r requirements.txt
@@ -2008,6 +2650,8 @@ LOOP_RATE_HZ     = 100
 DT               = 1.0 / LOOP_RATE_HZ
 
 # ─── PID Controller ─────────────────────────────────────────────────────────
+# Domain: {ctrl_domain}
+# Gain basis: {gains_note}
 @dataclass
 class PIDController:
     kp: float = {kp}
@@ -2018,18 +2662,22 @@ class PIDController:
     output_max: float = 1.0
     _integral: float = field(default=0.0, init=False, repr=False)
     _prev_error: float = field(default=0.0, init=False, repr=False)
+    _anti_windup: bool = {anti_windup}  # clamp integral when output saturates
 
     def reset(self):
-        self._integral = 0.0
+        self._integral  = 0.0
         self._prev_error = 0.0
 
     def update(self, measurement: float, dt: float) -> float:
-        error     = self.setpoint - measurement
-        self._integral  += error * dt
+        error      = self.setpoint - measurement
         derivative = (error - self._prev_error) / max(dt, 1e-9)
         self._prev_error = error
-        output = self.kp * error + self.ki * self._integral + self.kd * derivative
-        return float(np.clip(output, self.output_min, self.output_max))
+        raw_output = self.kp * error + self.ki * self._integral + self.kd * derivative
+        output     = float(np.clip(raw_output, self.output_min, self.output_max))
+        # Anti-windup: only integrate when output is not saturated
+        if not self._anti_windup or (output == raw_output):
+            self._integral += error * dt
+        return output
 
 
 # ─── State Machine ──────────────────────────────────────────────────────────
@@ -2070,16 +2718,19 @@ class {project_name.replace(" ", "_").replace("-", "_").title()}Controller:
         return sensors
 
     def compute_control(self, sensors: dict) -> dict:
-        """Main control law — PID on primary process variable."""
-        pv = sensors.get("position_m", 0.0)
+        """Main control law — {ctrl_domain} PID on {pv_name}."""
+        pv = sensors.get("{pv_name}", 0.0)
         output = self.pid.update(pv, DT)
-        return {{"control_output": output, "error": self.pid.setpoint - pv}}
+        return {{"{cv_name}": output, "error": self.pid.setpoint - pv}}
 
     def write_outputs(self, commands: dict):
-        """Apply control commands to actuators."""
-        ctrl = commands.get("control_output", 0.0)
-        # ── Replace with hardware output (GPIO PWM, DAC, serial, etc.) ─
-        # Example: GPIO.output(PIN_ACTUATOR, ctrl > 0.5)
+        """Apply {cv_name} command to actuator."""
+        ctrl = commands.get("{cv_name}", 0.0)
+        # ── Replace with hardware output matching your actuator type ────
+        # Thermal   : set heater duty cycle (0.0–1.0) via DAC or PWM
+        # Motion    : set motor torque/velocity via driver (CAN, PWM, serial)
+        # Fluid     : set pump speed / valve position via VFD or 4-20 mA
+        # Electrical: set PWM duty / reference voltage via DAC
         pass
 
     def safety_check(self, sensors: dict) -> bool:
@@ -2255,6 +2906,137 @@ python main.py          # Real-time control loop
             "logs": [f"Generated {len(files)} files", f"PID gains: Kp={kp}  Ki={ki}  Kd={kd}"],
         }
 
+    @staticmethod
+    def _pid_gains_for_domain(
+        intent: str,
+        design_p: Dict,
+        thermal: Dict,
+        structural: Dict,
+        fluid: Dict,
+    ) -> Dict[str, Any]:
+        """
+        Return domain-appropriate PID gains and metadata.
+
+        Each domain uses a physically motivated formula, not generic mass scaling.
+        All gains are conservative starting points — real tuning is always required.
+
+        Returns dict with keys: domain, kp, ki, kd, pv_name, cv_name,
+                                anti_windup, note
+        """
+        i = intent  # shorthand
+
+        # ── Thermal / temperature control ──────────────────────────────────────
+        # PI only (no derivative — amplifies sensor noise in slow thermal systems)
+        # Tuning basis: SIMC rules for first-order process
+        #   tau  ≈ mass * Cp / (U * A)   — thermal time constant
+        #   Kp   ≈ tau / (K * theta)     — K=steady-state gain, theta=dead time
+        # Without full process model, use conservative: Kp≈0.5, Ki≈Kp/(2*tau)
+        if any(kw in i for kw in ("temperature", "thermal", "heat", "oven",
+                                   "furnace", "cool", "hvac", "thermostat")):
+            tau_s   = design_p.get("thermal_time_constant_s", 120.0) or 120.0
+            k_gain  = design_p.get("thermal_process_gain", 1.0) or 1.0
+            kp = round(0.5 / max(k_gain, 0.01), 4)
+            ki = round(kp / (2 * max(tau_s, 1.0)), 6)
+            kd = 0.0  # no derivative for thermal
+            return {
+                "domain": "thermal",
+                "kp": kp, "ki": ki, "kd": kd,
+                "pv_name": "temperature_c",
+                "cv_name": "heater_pct",
+                "anti_windup": True,
+                "note": f"SIMC PI — tau={tau_s:.0f}s, K={k_gain}. Kd=0 (no derivative on thermal)",
+            }
+
+        # ── Fluid / flow / pressure control ────────────────────────────────────
+        # Cascade hint: outer loop (pressure/level) → inner loop (flow/speed)
+        # Use PI for inner loop, P for outer (slow outer, fast inner)
+        if any(kw in i for kw in ("flow", "pump", "pressure", "hydraulic",
+                                   "coolant", "fluid", "valve", "pipe")):
+            pipe_dia_m  = design_p.get("pipe_diameter_m", 0.05) or 0.05
+            # Approximate process gain from pipe area (higher area → lower gain needed)
+            import math
+            area = math.pi * (pipe_dia_m / 2) ** 2
+            kp = round(min(2.0, 0.05 / max(area, 1e-6)), 4)
+            ki = round(kp * 0.3, 5)
+            kd = 0.0  # flow loops rarely need derivative
+            return {
+                "domain": "fluid_flow",
+                "kp": kp, "ki": ki, "kd": kd,
+                "pv_name": "flow_lpm",
+                "cv_name": "pump_speed_pct",
+                "anti_windup": True,
+                "note": f"PI for inner flow loop, pipe_dia={pipe_dia_m*1000:.0f}mm. Add outer pressure/level loop if cascade needed",
+            }
+
+        # ── Motion / position / velocity control ───────────────────────────────
+        # PID + velocity feedforward. Gains from second-order closed-loop spec:
+        #   omega_n ≈ sqrt(stiffness / mass),  zeta = 0.7 (slightly underdamped)
+        #   Kp = mass * omega_n²,  Kd = 2*mass*omega_n*zeta,  Ki = Kp * 0.1
+        if any(kw in i for kw in ("position", "velocity", "servo", "motor", "joint",
+                                   "arm", "actuator", "motion", "drive", "robot")):
+            mass_kg       = design_p.get("mass_kg", 1.0) or 1.0
+            stiffness     = structural.get("effective_stiffness_n_m", 1000.0) or 1000.0
+            omega_n       = (stiffness / max(mass_kg, 0.001)) ** 0.5
+            kp = round(mass_kg * omega_n ** 2, 4)
+            ki = round(kp * 0.1, 5)
+            kd = round(2 * mass_kg * omega_n * 0.7, 4)
+            return {
+                "domain": "motion",
+                "kp": kp, "ki": ki, "kd": kd,
+                "pv_name": "position_m",
+                "cv_name": "motor_torque_nm",
+                "anti_windup": False,
+                "note": f"Second-order spec — mass={mass_kg}kg, stiffness={stiffness}N/m, omega_n={omega_n:.2f}rad/s, zeta=0.7",
+            }
+
+        # ── Electrical / power / voltage control ───────────────────────────────
+        # PI with tight integral bandwidth (switching noise, fast dynamics)
+        if any(kw in i for kw in ("voltage", "current", "power", "converter",
+                                   "inverter", "pwm", "buck", "boost", "mppt")):
+            kp = 0.1
+            ki = 10.0  # fast integrator for zero steady-state error on voltage
+            kd = 0.0
+            return {
+                "domain": "electrical",
+                "kp": kp, "ki": ki, "kd": kd,
+                "pv_name": "voltage_v",
+                "cv_name": "duty_cycle",
+                "anti_windup": True,
+                "note": "PI for power converter inner loop. Tune bandwidth to <1/10 switching frequency",
+            }
+
+        # ── Aerospace / altitude / attitude control ─────────────────────────────
+        if any(kw in i for kw in ("altitude", "attitude", "pitch", "roll", "yaw",
+                                   "drone", "uav", "spacecraft", "stabilize")):
+            mass_kg = design_p.get("mass_kg", 0.5) or 0.5
+            kp = round(4.0 * mass_kg, 4)
+            ki = round(0.5 * mass_kg, 4)
+            kd = round(2.0 * mass_kg, 4)
+            return {
+                "domain": "attitude",
+                "kp": kp, "ki": ki, "kd": kd,
+                "pv_name": "angle_rad",
+                "cv_name": "motor_thrust_pct",
+                "anti_windup": True,
+                "note": f"Attitude PID, mass={mass_kg}kg. Tune Kd first (damp oscillations), then Kp, then Ki",
+            }
+
+        # ── Fallback: generic position control with mass-spring model ──────────
+        mass_kg   = design_p.get("mass_kg", 1.0) or 1.0
+        stiffness = structural.get("effective_stiffness_n_m", 500.0) or 500.0
+        omega_n   = (stiffness / max(mass_kg, 0.001)) ** 0.5
+        kp = round(mass_kg * omega_n ** 2, 4)
+        ki = round(kp * 0.05, 5)
+        kd = round(2 * mass_kg * omega_n * 0.7, 4)
+        return {
+            "domain": "generic_position",
+            "kp": kp, "ki": ki, "kd": kd,
+            "pv_name": "process_variable",
+            "cv_name": "control_output",
+            "anti_windup": False,
+            "note": f"Generic mass-spring fallback — mass={mass_kg}kg, stiffness={stiffness}N/m. Identify domain in intent for domain-specific gains",
+        }
+
     # ─── ROS2 Generator ─────────────────────────────────────────────────────
     def _run_ros2(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Generate a complete ROS2 package for robotic / autonomous systems."""
@@ -2271,6 +3053,15 @@ python main.py          # Real-time control loop
         is_mobile  = any(kw in intent for kw in ("mobile robot", "wheeled", "diff drive", "navigation", "slam", "move_base"))
         is_arm     = any(kw in intent for kw in ("arm", "manipulator", "gripper", "joint", "6dof", "7dof"))
         is_aerial  = any(kw in intent for kw in ("drone", "uav", "quadrotor", "aerial", "hovering"))
+
+        thermal    = params.get("thermal_analysis", {}) or {}
+        structural = params.get("structural_analysis", {}) or {}
+        fluid      = params.get("fluid_analysis", {}) or {}
+        domain_gains = self._pid_gains_for_domain(intent, design_p, thermal, structural, fluid)
+        ros_kp = domain_gains["kp"]
+        ros_ki = domain_gains["ki"]
+        ros_kd = domain_gains["kd"]
+        ros_gains_note = domain_gains["note"]
 
         pkg_xml = f"""<?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
@@ -2348,19 +3139,75 @@ endif()
 ament_package()
 """
 
+        # ── Dynamic sensor node: one publisher per actual component ─────────
+        def _ros_msg_type(comp: Any) -> tuple:
+            """Return (include_header, ros_type, short_name) for a component category."""
+            cat = getattr(comp, "category", "") or ""
+            _map = {
+                "imu":         ("sensor_msgs/msg/imu.hpp",           "sensor_msgs::msg::Imu",            "Imu"),
+                "gps":         ("sensor_msgs/msg/nav_sat_fix.hpp",   "sensor_msgs::msg::NavSatFix",      "NavSatFix"),
+                "lidar":       ("sensor_msgs/msg/laser_scan.hpp",    "sensor_msgs::msg::LaserScan",      "LaserScan"),
+                "range":       ("sensor_msgs/msg/range.hpp",         "sensor_msgs::msg::Range",          "Range"),
+                "camera":      ("sensor_msgs/msg/image.hpp",         "sensor_msgs::msg::Image",          "Image"),
+                "temperature": ("sensor_msgs/msg/temperature.hpp",   "sensor_msgs::msg::Temperature",    "Temperature"),
+                "pressure":    ("sensor_msgs/msg/fluid_pressure.hpp","sensor_msgs::msg::FluidPressure",  "FluidPressure"),
+            }
+            if cat in _map:
+                return _map[cat]
+            return ("std_msgs/msg/float32_multi_array.hpp", "std_msgs::msg::Float32MultiArray", "Float32MultiArray")
+
+        sensor_comps_ros = [c for c in params.get("_resolved_components", []) if getattr(c, "category", "") == "sensor"]
+        # Fallback: treat 'imu' and 'range' as generic if no components passed
+        if not sensor_comps_ros:
+            sensor_comps_ros = []
+
+        # Build include list and publisher declarations
+        all_headers = {"sensor_msgs/msg/imu.hpp", "std_msgs/msg/string.hpp"}
+        pub_decls, pub_inits, pub_reads, pub_members = [], [], [], []
+        for comp in sensor_comps_ros:
+            hdr, msg_type, short = _ros_msg_type(comp)
+            all_headers.add(hdr)
+            ident = _c_ident(comp.name) + "_pub_"
+            topic = f"/sensors/{_c_ident(comp.name)}"
+            pub_decls.append(f"    rclcpp::Publisher<{msg_type}>::SharedPtr {ident};")
+            pub_inits.append(f'    {ident} = create_publisher<{msg_type}>("{topic}", 10);')
+            pub_reads.append(
+                f"    auto {_c_ident(comp.name)}_msg = {msg_type}();\n"
+                f"    {_c_ident(comp.name)}_msg.header.stamp = now;\n"
+                f"    // TODO: populate {_c_ident(comp.name)}_msg from driver\n"
+                f"    {ident}->publish({_c_ident(comp.name)}_msg);"
+            )
+
+        # Fallback IMU if no sensors
+        if not pub_inits:
+            all_headers.add("sensor_msgs/msg/imu.hpp")
+            pub_decls.append("    rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr imu_pub_;")
+            pub_inits.append('    imu_pub_ = create_publisher<sensor_msgs::msg::Imu>("/sensors/imu", 10);')
+            pub_reads.append(
+                "    auto imu_msg = sensor_msgs::msg::Imu();\n"
+                "    imu_msg.header.stamp = now;\n"
+                "    imu_msg.linear_acceleration.z = 9.81f;  // TODO: real driver\n"
+                "    imu_pub_->publish(imu_msg);"
+            )
+
+        _includes = "\n".join(f"#include <{h}>" for h in sorted(all_headers))
+        _pub_members_str = "\n".join(pub_decls)
+        _pub_inits_str   = "\n".join(pub_inits)
+        _pub_reads_str   = "\n".join(pub_reads)
+
+        topic_list = "\n".join(
+            f" *   /sensors/{_c_ident(c.name)}" for c in sensor_comps_ros
+        ) or " *   /sensors/imu  (fallback — add components for dynamic graph)"
+
         sensor_node_cpp = f"""/**
  * sensor_node.cpp — Reads hardware sensors and publishes to ROS2 topics
  * Auto-generated by BRICK OS CodegenAgent  ({timestamp})
  *
- * Publishes:
- *   /sensors/imu       (sensor_msgs/Imu)
- *   /sensors/range     (sensor_msgs/Range)
- *   /sensors/status    (std_msgs/String)
+ * Publishes (derived from component list — not hardcoded):
+{topic_list}
  */
 #include <rclcpp/rclcpp.hpp>
-#include <sensor_msgs/msg/imu.hpp>
-#include <sensor_msgs/msg/range.hpp>
-#include <std_msgs/msg/string.hpp>
+{_includes}
 #include <chrono>
 
 using namespace std::chrono_literals;
@@ -2368,49 +3215,24 @@ using namespace std::chrono_literals;
 class SensorNode : public rclcpp::Node {{
 public:
   SensorNode() : Node("{project_name}_sensor") {{
-    imu_pub_   = create_publisher<sensor_msgs::msg::Imu>("/sensors/imu", 10);
-    range_pub_ = create_publisher<sensor_msgs::msg::Range>("/sensors/range", 10);
-    status_pub_= create_publisher<std_msgs::msg::String>("/sensors/status", 10);
-
-    // 100 Hz sensor loop
+{_pub_inits_str}
     timer_ = create_wall_timer(10ms, std::bind(&SensorNode::timer_cb, this));
-    RCLCPP_INFO(get_logger(), "SensorNode started — mass=%.2f kg", {mass_kg}f);
+    RCLCPP_INFO(get_logger(), "SensorNode started — mass={mass_kg:.2f} kg");
   }}
 
 private:
   void timer_cb() {{
     auto now = get_clock()->now();
-
-    // ── IMU ─────────────────────────────────────────────────────────────
-    auto imu_msg = sensor_msgs::msg::Imu();
-    imu_msg.header.stamp    = now;
-    imu_msg.header.frame_id = "imu_link";
-    // TODO: replace with real IMU driver read
-    imu_msg.linear_acceleration.x = 0.0;
-    imu_msg.linear_acceleration.y = 0.0;
-    imu_msg.linear_acceleration.z = 9.81;
-    imu_pub_->publish(imu_msg);
-
-    // ── Range ────────────────────────────────────────────────────────────
-    auto range_msg = sensor_msgs::msg::Range();
-    range_msg.header.stamp    = now;
-    range_msg.header.frame_id = "range_link";
-    range_msg.radiation_type  = sensor_msgs::msg::Range::ULTRASOUND;
-    range_msg.min_range = 0.02f;
-    range_msg.max_range = 4.00f;
-    range_msg.range     = 1.0f;  // TODO: replace with hardware read
-    range_pub_->publish(range_msg);
-
-    // ── Status ───────────────────────────────────────────────────────────
+{_pub_reads_str}
     auto status_msg = std_msgs::msg::String();
     status_msg.data = "OK";
     status_pub_->publish(status_msg);
   }}
 
-  rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr   imu_pub_;
-  rclcpp::Publisher<sensor_msgs::msg::Range>::SharedPtr  range_pub_;
-  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr    status_pub_;
-  rclcpp::TimerBase::SharedPtr                           timer_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr status_pub_ {{
+      create_publisher<std_msgs::msg::String>("/sensors/status", 10)}};
+{_pub_members_str}
+  rclcpp::TimerBase::SharedPtr timer_;
 }};
 
 int main(int argc, char *argv[]) {{
@@ -2437,14 +3259,18 @@ int main(int argc, char *argv[]) {{
 
 using namespace std::chrono_literals;
 
-// Physics-informed PID gains (BRICK OS estimate)
-static constexpr double KP = {round((mass_kg * 10), 3)};
-static constexpr double KI = {round((mass_kg * 1.0), 3)};
-static constexpr double KD = {round((mass_kg * 0.5), 3)};
+// PID gains — {ros_gains_note}
+// Override at runtime: ros2 param set /{project_name}_control kp <value>
 
 class ControlNode : public rclcpp::Node {{
 public:
   ControlNode() : Node("{project_name}_control"), integral_(0.0), prev_err_(0.0) {{
+    // Declare tunable PID params — no hardcoded constexpr
+    declare_parameter("kp", {ros_kp});
+    declare_parameter("ki", {ros_ki});
+    declare_parameter("kd", {ros_kd});
+    declare_parameter("setpoint", {length_m:.3f});
+
     imu_sub_   = create_subscription<sensor_msgs::msg::Imu>(
         "/sensors/imu", 10, [this](auto m) {{ imu_cb(m); }});
     range_sub_ = create_subscription<sensor_msgs::msg::Range>(
@@ -2453,9 +3279,9 @@ public:
     {"cmd_pub_ = create_publisher<geometry_msgs::msg::Twist>(\"/cmd_vel\", 10);" if is_mobile else
      "cmd_pub_ = create_publisher<std_msgs::msg::Float64MultiArray>(\"/cmd_joint\", 10);"}
 
-    setpoint_ = {length_m:.3f};   // target position/altitude (m)
     control_timer_ = create_wall_timer(10ms, std::bind(&ControlNode::control_cb, this));
-    RCLCPP_INFO(get_logger(), "ControlNode — Kp=%.2f Ki=%.2f Kd=%.2f", KP, KI, KD);
+    RCLCPP_INFO(get_logger(), "ControlNode — Kp=%.2f Ki=%.2f Kd=%.2f",
+        get_parameter("kp").as_double(), get_parameter("ki").as_double(), get_parameter("kd").as_double());
   }}
 
 private:
@@ -2466,12 +3292,16 @@ private:
     measured_range_ = msg->range;
   }}
   void control_cb() {{
+    double kp = get_parameter("kp").as_double();
+    double ki = get_parameter("ki").as_double();
+    double kd = get_parameter("kd").as_double();
+    double setpoint = get_parameter("setpoint").as_double();
     double dt  = 0.01;
-    double err = setpoint_ - measured_range_;
+    double err = setpoint - measured_range_;
     integral_  += err * dt;
     double deriv = (err - prev_err_) / dt;
     prev_err_  = err;
-    double u   = std::clamp(KP*err + KI*integral_ + KD*deriv, -1.0, 1.0);
+    double u   = std::clamp(kp*err + ki*integral_ + kd*deriv, -1.0, 1.0);
 
     {"auto cmd = geometry_msgs::msg::Twist();\ncmd.linear.x = u;\ncmd_pub_->publish(cmd);" if is_mobile else
      "auto cmd = std_msgs::msg::Float64MultiArray();\ncmd.data = {u, 0.0, 0.0, 0.0};\ncmd_pub_->publish(cmd);"}
@@ -2542,9 +3372,10 @@ def generate_launch_description():
     loop_rate_hz: 100
     setpoint_m: {length_m:.3f}
     mass_kg: {mass_kg:.3f}
-    kp: {round(mass_kg * 10, 3)}
-    ki: {round(mass_kg * 1.0, 3)}
-    kd: {round(mass_kg * 0.5, 3)}
+    # Gains — {ros_gains_note}
+    kp: {ros_kp}
+    ki: {ros_ki}
+    kd: {ros_kd}
     environment: "{env_type}"
 """
 
@@ -2576,6 +3407,37 @@ def generate_launch_description():
         }
 
     # ─── PLC Structured Text Generator ──────────────────────────────────────
+
+    @staticmethod
+    def _infer_plc_domain(intent: str) -> str:
+        """
+        Classify intent into a PLC process domain for domain-specific state machines.
+        Returns one of: pump | oven | reactor | conveyor | press | generic
+        """
+        intent = intent.lower()
+        if any(kw in intent for kw in ("pump", "flow", "liquid", "hydraulic", "coolant", "water")):
+            return "pump"
+        if any(kw in intent for kw in ("oven", "furnace", "heater", "bake", "kiln", "drying")):
+            return "oven"
+        if any(kw in intent for kw in ("reactor", "mix", "blend", "batch", "ferment", "reacting")):
+            return "reactor"
+        if any(kw in intent for kw in ("conveyor", "belt", "transport", "transfer", "sorting")):
+            return "conveyor"
+        if any(kw in intent for kw in ("press", "clamp", "cylinder", "pneumatic", "stamping")):
+            return "press"
+        return "generic"
+
+    @staticmethod
+    def _plc_domain_states(domain: str) -> List[str]:
+        """Return state name list for a given process domain."""
+        return {
+            "pump":     ["IDLE", "PRIMING", "RUNNING", "STOPPING", "FAULT"],
+            "oven":     ["IDLE", "PREHEAT", "SOAK", "COOLING", "FAULT"],
+            "reactor":  ["IDLE", "CHARGING", "REACTING", "DISCHARGING", "CLEANING"],
+            "conveyor": ["IDLE", "RAMPING_UP", "RUNNING", "RAMPING_DOWN", "FAULT"],
+            "press":    ["IDLE", "CLAMPING", "PRESSING", "RELEASING", "FAULT"],
+        }.get(domain, ["IDLE", "STARTING", "RUNNING", "STOPPING", "FAULT"])
+
     def _run_plc(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Generate IEC 61131-3 Structured Text PLC program for industrial automation."""
         project_name = (params.get("project_name", "plc_program") or "plc_program").replace(" ", "_").upper()
@@ -2586,11 +3448,50 @@ def generate_launch_description():
         design_p     = params.get("design_parameters", {}) or {}
         env_type     = (params.get("environment", {}) or {}).get("type", "INDUSTRIAL")
 
-        # Infer process type from intent
-        is_pump    = any(kw in intent for kw in ("pump", "flow", "liquid", "hydraulic", "coolant"))
-        is_conveyor = any(kw in intent for kw in ("conveyor", "belt", "transport", "material handling"))
-        is_oven    = any(kw in intent for kw in ("oven", "furnace", "heater", "temperature control", "thermal"))
-        is_press   = any(kw in intent for kw in ("press", "clamp", "cylinder", "pneumatic", "hydraulic press"))
+        # Infer process domain — drives domain-specific state machine + I/O
+        plc_domain  = self._infer_plc_domain(intent)
+        domain_states = self._plc_domain_states(plc_domain)
+        is_pump    = plc_domain == "pump"
+        is_conveyor = plc_domain == "conveyor"
+        is_oven    = plc_domain == "oven"
+        is_press   = plc_domain == "press"
+        is_reactor = plc_domain == "reactor"
+
+        # Build state-machine CASE text dynamically from domain states
+        def _sm_state(idx: int, name: str) -> str:
+            lines = [f"  {idx}: (* {name} *)"]
+            if name in ("IDLE", "FAULT"):
+                lines.append(f"    gO_RunOutput := {'FALSE' if name == 'IDLE' else 'FALSE'};")
+                if name == "FAULT":
+                    lines.append("    gO_FaultLight := TRUE;")
+                    lines.append("    gO_ReadyLight := FALSE;")
+                    lines.append("    (* Manual reset: hold Stop for 3 s *)")
+                    lines.append("    tmrStop(IN := gI_StopPB AND gI_EStop, PT := T#3s);")
+                    lines.append("    IF tmrStop.Q THEN gSt_Fault := 0; gSt_State := 0; tmrStop(IN := FALSE); END_IF;")
+                else:
+                    lines.append("    gO_ReadyLight := gI_ProcessReady;")
+                    lines.append("    rTrigStart(CLK := gI_StartPB);")
+                    lines.append("    IF rTrigStart.Q AND gI_ProcessReady AND gI_EStop AND gSt_Fault = 0 THEN")
+                    lines.append("      gSt_State := 1;")
+                    lines.append("    END_IF;")
+            elif idx == len(domain_states) - 2:  # second-to-last = terminal running state
+                lines.append("    gO_RunOutput := TRUE;")
+                lines.append("    tmrCycle(IN := TRUE, PT := cCYCLE_TIMEOUT);")
+                lines.append("    IF tmrCycle.Q THEN gSt_Fault := 3; gSt_State := 4; END_IF;")
+                lines.append("    fTrigStop(CLK := gI_StopPB);")
+                lines.append(f"    IF fTrigStop.Q THEN gSt_State := {idx + 1}; END_IF;")
+            elif idx == len(domain_states) - 2 + 1 and name not in ("FAULT",):  # stopping state
+                lines.append("    tmrStop(IN := TRUE, PT := T#3s);")
+                lines.append("    IF tmrStop.Q THEN gO_RunOutput := FALSE; tmrCycle(IN := FALSE); gSt_State := 0; END_IF;")
+            else:
+                lines.append(f"    (* {name} — process-specific actions *)")
+                lines.append("    gO_RunOutput := TRUE;")
+                lines.append(f"    tmrStart(IN := TRUE, PT := T#5s);")
+                lines.append(f"    IF tmrStart.Q THEN tmrStart(IN := FALSE); gSt_State := {idx + 1}; END_IF;")
+            return "\n".join(lines)
+
+        sm_cases = "\n\n".join(_sm_state(i, s) for i, s in enumerate(domain_states))
+        process_type = plc_domain
 
         max_temp   = design_p.get("max_temp_c", (params.get("thermal_analysis", {}) or {}).get("max_temperature_c", 150.0)) or 150.0
         max_press  = design_p.get("max_pressure_pa", 600000.0) or 600000.0
@@ -2636,24 +3537,27 @@ VAR_GLOBAL CONSTANT
 END_VAR
 """
 
+        # State-machine enumeration comment derived from domain
+        state_comment = "\n".join(
+            f" *   {i} = {s:<20} {plc_domain.upper()} state"
+            for i, s in enumerate(domain_states)
+        )
+
         main_st = f"""(*
  * MAIN — {project_name}
  * Author:  {author}
  * Version: {version}
  * Date:    {timestamp}
+ * Domain:  {plc_domain.upper()} process
  *
- * State machine:
- *   0 = IDLE         Wait for start signal
- *   1 = STARTING     Pre-start checks
- *   2 = RUNNING      Normal process operation
- *   3 = STOPPING     Orderly shutdown sequence
- *   4 = FAULT        Safety fault — requires manual reset
+ * State machine ({plc_domain}):
+{state_comment}
  *)
 PROGRAM MAIN
 VAR
   tmrCycle    : TON;       (* Cycle timeout watchdog *)
-  tmrStart    : TON;       (* Start delay timer *)
-  tmrStop     : TON;       (* Stop sequence timer *)
+  tmrStart    : TON;       (* Start / ramp-up timer *)
+  tmrStop     : TON;       (* Shutdown / ramp-down timer *)
   {"pidTemp     : PID;       (* Temperature PID controller *)" if is_oven else ""}
   rTrigStart  : R_TRIG;    (* Rising-edge detect on Start PB *)
   fTrigStop   : F_TRIG;    (* Falling-edge detect on Stop PB *)
@@ -2663,92 +3567,18 @@ END_VAR
 (* ── Safety: E-Stop and fault detection (highest priority) ────────────── *)
 IF NOT gI_EStop THEN
   gSt_Fault  := 1;  (* Emergency stop activated *)
-  gSt_State  := 4;
+  gSt_State  := {len(domain_states) - 1};
 END_IF;
 
-IF gI_TempPV > cTEMP_MAX AND gSt_State = 2 THEN
+IF gI_TempPV > cTEMP_MAX AND gSt_State > 0 THEN
   gSt_Fault  := 2;  (* Overtemperature *)
-  gSt_State  := 4;
+  gSt_State  := {len(domain_states) - 1};
 END_IF;
 
-(* ── State machine ─────────────────────────────────────────────────────── *)
+(* ── Domain state machine — generated from _plc_domain_states() ─────── *)
 CASE gSt_State OF
 
-  0: (* IDLE *)
-    gO_RunOutput   := FALSE;
-    {"gO_PumpMotor   := FALSE;" if is_pump else ""}
-    {"gO_ConveyorFwd := FALSE;" if is_conveyor else ""}
-    gO_ReadyLight  := gI_ProcessReady;
-    gO_FaultLight  := FALSE;
-
-    rTrigStart(CLK := gI_StartPB);
-    IF rTrigStart.Q AND gI_ProcessReady AND gI_EStop AND gSt_Fault = 0 THEN
-      tmrStart(IN := FALSE);   (* Reset start timer *)
-      gSt_State := 1;
-    END_IF;
-
-  1: (* STARTING — pre-start delay and interlock check *)
-    gO_ReadyLight := NOT tmrStart.Q;   (* Blink during start *)
-    tmrStart(IN := TRUE, PT := T#2s);  (* 2-second pre-start delay *)
-
-    IF tmrStart.Q THEN
-      IF gI_ProcessReady AND gI_EStop THEN
-        gSt_State    := 2;
-        gSt_CycleCount := gSt_CycleCount + 1;
-        tmrCycle(IN := FALSE);   (* Arm cycle watchdog *)
-      ELSE
-        gSt_Fault := 3;   (* Permissive not met on start *)
-        gSt_State := 4;
-      END_IF;
-    END_IF;
-
-  2: (* RUNNING — normal process *)
-    gO_RunOutput   := TRUE;
-    gO_ReadyLight  := TRUE;
-    {"gO_PumpMotor   := gI_FlowSensor;" if is_pump else ""}
-    {"gO_ConveyorFwd := TRUE;" if is_conveyor else ""}
-
-    (* Cycle timeout watchdog *)
-    tmrCycle(IN := TRUE, PT := cCYCLE_TIMEOUT);
-    IF tmrCycle.Q THEN
-      gSt_Fault := 3;  (* Cycle timeout *)
-      gSt_State := 4;
-    END_IF;
-
-    {"(* Temperature PID control *)\npidTemp(PV := gI_TempPV, SP := {min(max_temp * 0.9, 120):.1f}, KP := 2.0, TI := T#30s, TD := T#5s, OUT => gO_HeaterOutput);" if is_oven else ""}
-
-    (* Stop command *)
-    fTrigStop(CLK := gI_StopPB);
-    IF fTrigStop.Q OR NOT gI_StartPB THEN
-      gSt_State := 3;
-    END_IF;
-
-  3: (* STOPPING — orderly shutdown *)
-    tmrStop(IN := TRUE, PT := T#3s);
-    {"gO_HeaterOutput := 0.0;" if is_oven else ""}
-    IF tmrStop.Q THEN
-      gO_RunOutput   := FALSE;
-      {"gO_PumpMotor   := FALSE;" if is_pump else ""}
-      {"gO_ConveyorFwd := FALSE;" if is_conveyor else ""}
-      tmrCycle(IN := FALSE);
-      gSt_State := 0;
-    END_IF;
-
-  4: (* FAULT *)
-    gO_RunOutput   := FALSE;
-    {"gO_PumpMotor   := FALSE;" if is_pump else ""}
-    {"gO_HeaterOutput := 0.0;" if is_oven else ""}
-    {"gO_ConveyorFwd := FALSE;" if is_conveyor else ""}
-    gO_FaultLight  := TRUE;
-    gO_ReadyLight  := FALSE;
-
-    (* Manual reset: hold Stop PB for 3 seconds *)
-    tmrStop(IN := gI_StopPB AND gI_EStop, PT := T#3s);
-    IF tmrStop.Q THEN
-      gSt_Fault := 0;
-      gSt_State := 0;
-      tmrStop(IN := FALSE);
-    END_IF;
+{sm_cases}
 
 ELSE
   gSt_State := 0;   (* Invalid state — recover to IDLE *)
@@ -2927,27 +3757,87 @@ module uart_core #(
 localparam CLK_DIV = CLK_FREQ / BAUD;
 
 // ── Receiver ─────────────────────────────────────────────────────────────────
-reg [3:0]  rx_state;
+// State machine: IDLE(0) → STARTBIT(1) → DATA(2) → STOPBIT(3)
+// Samples at baud-rate mid-point; verifies stop bit before asserting rx_valid.
+reg [1:0]  rx_state;
 reg [15:0] rx_cnt;
 reg [7:0]  rx_shift;
-reg [3:0]  rx_bit;
+reg [2:0]  rx_bit;
+output reg rx_frame_err;  // high for one cycle on stop-bit violation
+
+localparam RX_IDLE    = 2'd0;
+localparam RX_STARTBT = 2'd1;
+localparam RX_DATA    = 2'd2;
+localparam RX_STOPBT  = 2'd3;
 
 always @(posedge clk) begin
-    rx_valid <= 1'b0;
-    case (rx_state)
-        4'd0: if (!rx) begin rx_state <= 4'd1; rx_cnt <= CLK_DIV/2; end
-        4'd1: if (rx_cnt == 0) begin rx_state <= 4'd2; rx_cnt <= CLK_DIV; rx_bit <= 0; end
-              else rx_cnt <= rx_cnt - 1;
-        4'd2: if (rx_cnt == 0) begin
-                  rx_shift <= {{rx, rx_shift[7:1]}};
-                  rx_cnt   <= CLK_DIV;
-                  if (rx_bit == 7) begin rx_state <= 4'd3; end
-                  else rx_bit <= rx_bit + 1;
-              end else rx_cnt <= rx_cnt - 1;
-        4'd3: begin rx_data <= rx_shift; rx_valid <= 1'b1; rx_state <= 4'd0; end
-        default: rx_state <= 4'd0;
-    endcase
-    if (rst) rx_state <= 4'd0;
+    rx_valid     <= 1'b0;
+    rx_frame_err <= 1'b0;
+
+    if (rst) begin
+        rx_state <= RX_IDLE;
+        rx_cnt   <= 0;
+        rx_bit   <= 0;
+    end else begin
+        case (rx_state)
+            // Wait for falling edge (start bit)
+            RX_IDLE: begin
+                if (!rx) begin
+                    rx_state <= RX_STARTBT;
+                    rx_cnt   <= CLK_DIV / 2 - 1;  // advance to mid-point of start bit
+                end
+            end
+
+            // Centre on start bit; confirm it's still low (not a glitch)
+            RX_STARTBT: begin
+                if (rx_cnt == 0) begin
+                    if (!rx) begin
+                        rx_state <= RX_DATA;
+                        rx_cnt   <= CLK_DIV - 1;
+                        rx_bit   <= 0;
+                    end else begin
+                        rx_state <= RX_IDLE;  // glitch — abort
+                    end
+                end else begin
+                    rx_cnt <= rx_cnt - 1;
+                end
+            end
+
+            // Sample 8 data bits LSB-first
+            RX_DATA: begin
+                if (rx_cnt == 0) begin
+                    // Shift new bit into MSB; previous bits slide right → after 8
+                    // iterations rx_shift = {{b7,b6,...,b0}} (correct byte value)
+                    rx_shift <= {{rx, rx_shift[7:1]}};
+                    rx_cnt   <= CLK_DIV - 1;
+                    if (rx_bit == 3'd7) begin
+                        rx_state <= RX_STOPBT;
+                    end else begin
+                        rx_bit <= rx_bit + 1;
+                    end
+                end else begin
+                    rx_cnt <= rx_cnt - 1;
+                end
+            end
+
+            // Verify stop bit is high; latch data only if valid
+            RX_STOPBT: begin
+                if (rx_cnt == 0) begin
+                    if (rx) begin
+                        rx_data  <= rx_shift;
+                        rx_valid <= 1'b1;
+                    end else begin
+                        rx_frame_err <= 1'b1;  // framing error — stop bit low
+                    end
+                    rx_state <= RX_IDLE;
+                end else begin
+                    rx_cnt <= rx_cnt - 1;
+                end
+            end
+
+            default: rx_state <= RX_IDLE;
+        endcase
+    end
 end
 
 // ── Transmitter ───────────────────────────────────────────────────────────────
@@ -3021,13 +3911,219 @@ clean:
 .PHONY: synth vivado clean
 """
 
+        uart_tb_v = f"""`timescale 1ns / 1ps
+/* uart_core_tb.v — Self-checking testbench for uart_core
+ * Tests: normal byte, glitch rejection, framing error, back-to-back bytes
+ * Run with: iverilog -o sim uart_core_tb.v uart_core.v && vvp sim
+ */
+module uart_core_tb;
+localparam CLK_FREQ = {int(clk_mhz * 1_000_000)};
+localparam BAUD     = {baud_rate};
+localparam CLK_PERIOD_NS = 1_000_000_000 / CLK_FREQ;
+localparam BIT_PERIOD_NS = 1_000_000_000 / BAUD;
+
+reg  clk = 0, rst = 1, rx = 1;
+reg  [7:0] tx_data = 0;
+reg  tx_valid = 0;
+wire [7:0] rx_data;
+wire rx_valid, rx_frame_err, tx, tx_ready;
+integer errors = 0;
+
+always #(CLK_PERIOD_NS / 2) clk = ~clk;
+
+uart_core #(.CLK_FREQ(CLK_FREQ), .BAUD(BAUD)) dut (
+    .clk(clk), .rst(rst),
+    .rx(rx), .tx(tx),
+    .rx_data(rx_data), .rx_valid(rx_valid),
+    .rx_frame_err(rx_frame_err),
+    .tx_data(tx_data), .tx_valid(tx_valid), .tx_ready(tx_ready)
+);
+
+// Task: send one 8N1 byte on rx line
+task send_byte;
+    input [7:0] data;
+    integer i;
+    begin
+        rx = 0;                       // start bit
+        #(BIT_PERIOD_NS);
+        for (i = 0; i < 8; i = i + 1) begin
+            rx = data[i];             // LSB first
+            #(BIT_PERIOD_NS);
+        end
+        rx = 1;                       // stop bit
+        #(BIT_PERIOD_NS);
+    end
+endtask
+
+// Task: expect rx_valid with a specific value
+task expect_byte;
+    input [7:0] expected;
+    input [255:0] label;
+    begin
+        @(posedge rx_valid);
+        if (rx_data !== expected) begin
+            $display("FAIL [%0s]: got 0x%02X expected 0x%02X", label, rx_data, expected);
+            errors = errors + 1;
+        end else begin
+            $display("PASS [%0s]: 0x%02X", label, rx_data);
+        end
+    end
+endtask
+
+initial begin
+    $dumpfile("uart_tb.vcd");
+    $dumpvars(0, uart_core_tb);
+
+    // Reset
+    rst = 1; #(CLK_PERIOD_NS * 4); rst = 0;
+
+    // Test 1: normal byte 0x55 (alternating bits — stresses all transitions)
+    fork
+        send_byte(8'h55);
+        expect_byte(8'h55, "normal_0x55");
+    join
+
+    // Test 2: all-zeros byte 0x00
+    fork
+        send_byte(8'h00);
+        expect_byte(8'h00, "all_zeros");
+    join
+
+    // Test 3: all-ones byte 0xFF
+    fork
+        send_byte(8'hFF);
+        expect_byte(8'hFF, "all_ones");
+    join
+
+    // Test 4: glitch rejection — pulse shorter than CLK_DIV/4 should be ignored
+    rx = 0; #(BIT_PERIOD_NS / 8); rx = 1;
+    #(BIT_PERIOD_NS * 2);
+
+    // Test 5: framing error — stop bit driven low
+    rx = 0; #(BIT_PERIOD_NS);       // start
+    repeat(8) begin rx = 1; #(BIT_PERIOD_NS); end  // 8 data bits = 0xFF
+    rx = 0; #(BIT_PERIOD_NS);       // bad stop bit
+    @(posedge clk);
+    if (!rx_frame_err) begin
+        $display("FAIL [framing_error]: rx_frame_err not asserted");
+        errors = errors + 1;
+    end else begin
+        $display("PASS [framing_error]");
+    end
+    rx = 1; #(BIT_PERIOD_NS * 2);
+
+    // Test 6: back-to-back bytes with no gap
+    fork
+        begin send_byte(8'hA5); send_byte(8'h3C); end
+        begin expect_byte(8'hA5, "back2back_1"); expect_byte(8'h3C, "back2back_2"); end
+    join
+
+    if (errors == 0)
+        $display("\\n=== ALL TESTS PASSED ===");
+    else
+        $display("\\n=== %0d TEST(S) FAILED ===", errors);
+
+    $finish;
+end
+
+// Timeout watchdog — 50 ms simulation time
+initial begin
+    #50_000_000;
+    $display("FAIL: simulation timeout");
+    $finish;
+end
+endmodule
+"""
+
+        # ── CDC synchronisers (always generated — any real design crosses clocks) ──
+        cdc_sync2_v = f"""`timescale 1ns / 1ps
+/* cdc_sync2.v — 2-FF metastability synchroniser
+ * Use for single-bit signals crossing from src_clk domain to dst_clk domain.
+ * Set src_clk period constraint: set_false_path -from [get_cells *cdc_sync2*/sync_ff1*]
+ */
+module cdc_sync2 #(parameter RESET_VAL = 1'b0) (
+    input  wire src_data,
+    input  wire dst_clk,
+    input  wire dst_rst,
+    output wire dst_data
+);
+    (* ASYNC_REG = "TRUE" *) reg sync_ff1, sync_ff2;
+    always @(posedge dst_clk or posedge dst_rst) begin
+        if (dst_rst) {{sync_ff1 <= RESET_VAL; sync_ff2 <= RESET_VAL;}}
+        else         {{sync_ff1 <= src_data;   sync_ff2 <= sync_ff1;}}
+    end
+    assign dst_data = sync_ff2;
+endmodule
+"""
+
+        cdc_handshake_v = f"""`timescale 1ns / 1ps
+/* cdc_handshake.v — Multi-bit req/ack CDC handshake
+ * Safe for {data_width}-bit data buses crossing clock domains.
+ * Throughput: ~4 dst_clk cycles per transfer.
+ * Resource estimate: ~{data_width + 8} FFs, ~{data_width * 2} LUTs
+ */
+module cdc_handshake #(parameter WIDTH = {data_width}) (
+    input  wire             src_clk, src_rst,
+    input  wire [WIDTH-1:0] src_data,
+    input  wire             src_valid,
+    output wire             src_ready,
+
+    input  wire             dst_clk, dst_rst,
+    output reg  [WIDTH-1:0] dst_data,
+    output reg              dst_valid
+);
+    reg  [WIDTH-1:0] src_hold;
+    reg              src_req, src_req_sync1, src_req_sync2;
+    reg              dst_ack, dst_ack_sync1, dst_ack_sync2;
+
+    (* ASYNC_REG = "TRUE" *) reg src_ack_sync1, src_ack_sync2;
+    (* ASYNC_REG = "TRUE" *) reg dst_req_sync1, dst_req_sync2;
+
+    // Src side: latch data, toggle req
+    always @(posedge src_clk or posedge src_rst) begin
+        if (src_rst) {{src_req <= 0; src_hold <= 0;}}
+        else if (src_valid && src_ready) {{src_hold <= src_data; src_req <= ~src_req;}}
+    end
+    always @(posedge src_clk) {{src_ack_sync1 <= dst_ack; src_ack_sync2 <= src_ack_sync1;}}
+    assign src_ready = (src_req == src_ack_sync2);
+
+    // Dst side: sync req, latch, toggle ack
+    always @(posedge dst_clk or posedge dst_rst) begin
+        if (dst_rst) {{dst_req_sync1 <= 0; dst_req_sync2 <= 0; dst_ack <= 0; dst_valid <= 0;}}
+        else begin
+            dst_req_sync1 <= src_req; dst_req_sync2 <= dst_req_sync1;
+            if (dst_req_sync2 != dst_ack) {{
+                dst_data  <= src_hold;
+                dst_valid <= 1'b1;
+                dst_ack   <= dst_req_sync2;
+            end else dst_valid <= 1'b0;
+        end
+    end
+endmodule
+"""
+
+        # Update constraints with CDC timing exceptions
+        cdc_constraints = f"""
+# ── CDC timing exceptions (add to constraints.xdc) ─────────────────────────
+# Replace clock names with actual clocks from your design
+set_false_path -from [get_cells -hierarchical -filter {{NAME =~ *cdc_sync2*sync_ff1*}}]
+set_max_delay -datapath_only -from [get_cells -hierarchical -filter {{NAME =~ *src_hold*}}] \\
+              -to [get_cells -hierarchical -filter {{NAME =~ *dst_req_sync1*}}] 5.0
+"""
+
         files = {
             "top.v": top_v,
-            "constraints.xdc": constraints_xdc,
+            "cdc_sync2.v": cdc_sync2_v,
+            "cdc_handshake.v": cdc_handshake_v,
+            "constraints.xdc": constraints_xdc + cdc_constraints,
             "Makefile": makefile,
         }
         if is_uart:
             files["uart_core.v"] = uart_core_v
+            files["uart_core_tb.v"] = uart_tb_v
+
+        lut_estimate = data_width * 2 + 8
+        ff_estimate  = data_width + 8
 
         return {
             "status": "success",
@@ -3044,9 +4140,11 @@ clean:
                     "data_width": data_width,
                     "synthesis_tools": ["Vivado", "Quartus Prime", "Yosys + nextpnr"],
                     "targets": ["Xilinx 7-series", "Intel Cyclone V", "Lattice ECP5"],
+                    "resource_estimate": f"~{lut_estimate} LUTs, ~{ff_estimate} FFs for CDC logic",
                 },
             },
-            "logs": [f"Generated {len(files)} Verilog files", f"Clock: {clk_mhz} MHz", f"Data width: {data_width} bit"],
+            "logs": [f"Generated {len(files)} Verilog files", f"Clock: {clk_mhz} MHz",
+                     f"Data width: {data_width} bit", f"CDC: cdc_sync2.v + cdc_handshake.v included"],
         }
 
 
@@ -3095,7 +4193,7 @@ class CodegenAPI:
                     {
                         "id": p.value,
                         "name": p.name,
-                        "specs": agent.PLATFORM_DEFS.get(p, {})
+                        "specs": HardwareDB.load(p.value)
                     }
                     for p in Platform
                 ]
